@@ -2,6 +2,7 @@ const express = require('express');
 const app = express();
 const PORT = 3000;
 const projects = require('../execution/projects');
+const getProjectSummary = require('../execution/getProjectSummary');
 
 app.get('/', (req, res) => {
   res.send('RepoPulse backend is running');
@@ -9,6 +10,10 @@ app.get('/', (req, res) => {
 
 app.get('/projects', (req, res) => {
   res.json(projects);
+});
+
+app.get('/summary', (req, res) => {
+  res.json(getProjectSummary());
 });
 
 if (require.main === module) {
