@@ -16,6 +16,11 @@ app.get('/summary', (req, res) => {
   res.json(getProjectSummary());
 });
 
+app.get('/health', (req, res) => {
+  const { systemStatus, alertState, lastUpdated } = getProjectSummary();
+  res.json({ status: 'ok', systemStatus, alertState, lastUpdated });
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);

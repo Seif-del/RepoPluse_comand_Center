@@ -3470,7 +3470,7 @@ module.exports = stripe;
 Set the following environment variables in your `.env` file:
 
 ```plaintext
-STRIPE_SECRET_KEY=sk_test_REDACTED_EXAMPLE_ONLY
+STRIPE_SECRET_KEY=sk_test_REDACTED
 ```
 
 #### Step 4: Creating a Subscription
