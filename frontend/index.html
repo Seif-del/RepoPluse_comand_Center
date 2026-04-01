@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>RepoPulse Command Center</title>
+  <style>
+    body { font-family: monospace; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 1.2rem; margin-bottom: 24px; }
+    section { border: 1px solid #ccc; border-radius: 4px; padding: 16px; margin-bottom: 16px; }
+    h2 { font-size: 0.9rem; margin: 0 0 12px; text-transform: uppercase; color: #555; }
+    dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+    dt { font-weight: bold; }
+    dd { margin: 0; }
+    .error { color: red; }
+  </style>
+</head>
+<body>
+  <h1>RepoPulse Command Center</h1>
+
+  <section>
+    <h2>Summary</h2>
+    <dl id="summary-data"><dd class="error">Loading...</dd></dl>
+  </section>
+
+  <section>
+    <h2>Health</h2>
+    <dl id="health-data"><dd class="error">Loading...</dd></dl>
+  </section>
+
+  <section>
+    <h2>Alerts</h2>
+    <dl id="alerts-data"><dd class="error">Loading...</dd></dl>
+  </section>
+
+  <script>
+    function render(id, fields) {
+      const dl = document.getElementById(id);
+      dl.innerHTML = fields.map(([k, v]) =>
+        '<dt>' + k + '</dt><dd>' + v + '</dd>'
+      ).join('');
+    }
+
+    function renderError(id, err) {
+      document.getElementById(id).innerHTML =
+        '<dd class="error">Failed to load: ' + err + '</dd>';
+    }
+
+    fetch('/summary')
+      .then(r => r.json())
+      .then(d => render('summary-data', [
+        ['totalProjects',   d.totalProjects],
+        ['healthyProjects', d.healthyProjects],
+        ['atRiskProjects',  d.atRiskProjects],
+        ['systemStatus',    d.systemStatus],
+        ['riskScore',       d.riskScore],
+        ['trend',           d.trend],
+        ['alertState',      d.alertState],
+        ['lastUpdated',     d.lastUpdated],
+      ]))
+      .catch(e => renderError('summary-data', e));
+
+    fetch('/health')
+      .then(r => r.json())
+      .then(d => render('health-data', [
+        ['status', d.status],
+      ]))
+      .catch(e => renderError('health-data', e));
+
+    fetch('/alerts')
+      .then(r => r.json())
+      .then(d => render('alerts-data', [
+        ['alertState',  d.alertState],
+        ['systemStatus', d.systemStatus],
+        ['trend',       d.trend],
+        ['riskScore',   d.riskScore],
+        ['lastUpdated', d.lastUpdated],
+      ]))
+      .catch(e => renderError('alerts-data', e));
+  </script>
+</body>
+</html>

@@ -29,5 +29,8 @@ Desktop.ini
 tmp/
 temp/
 
+# Runtime-generated data files
+execution/summaryHistory.json
+
 # Claude Code
 .claude/

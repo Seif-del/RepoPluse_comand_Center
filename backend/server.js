@@ -1,8 +1,10 @@
 const express = require('express');
 const app = express();
-const PORT = 3000;
+const { PORT } = require('../config/paths');
 const projects = require('../execution/projects');
 const getProjectSummary = require('../execution/getProjectSummary');
+const summaryHistory = require('../execution/summaryHistory');
+const appendSummarySnapshot = require('../execution/appendSummarySnapshot');
 
 app.get('/', (req, res) => {
   res.send('RepoPulse backend is running');
@@ -14,6 +16,20 @@ app.get('/projects', (req, res) => {
 
 app.get('/summary', (req, res) => {
   res.json(getProjectSummary());
+});
+
+app.get('/history', (req, res) => {
+  res.json(summaryHistory);
+});
+
+app.post('/history/snapshot', (req, res) => {
+  const snapshot = appendSummarySnapshot();
+  res.json(snapshot);
+});
+
+app.get('/alerts', (req, res) => {
+  const { alertState, systemStatus, trend, riskScore, lastUpdated } = getProjectSummary();
+  res.json({ alertState, systemStatus, trend, riskScore, lastUpdated });
 });
 
 app.get('/health', (req, res) => {
