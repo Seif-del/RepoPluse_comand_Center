@@ -1,0 +1,6 @@
+[
+  { "id": 1, "name": "Alpha Dashboard", "status": "Healthy" },
+  { "id": 2, "name": "Beta API Integration", "status": "At Risk" },
+  { "id": 3, "name": "Gamma Reporting", "status": "At Risk" },
+  { "id": 4, "name": "Delta Pipeline", "status": "Healthy" }
+]
