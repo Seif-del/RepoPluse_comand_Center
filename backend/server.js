@@ -1,6 +1,7 @@
 const express = require('express');
 const app = express();
 const { PORT } = require('../config/paths');
+const startSnapshotWorker = require('../services/worker/snapshotWorker');
 const projects = require('../execution/projects');
 const getProjectSummary = require('../execution/getProjectSummary');
 const summaryHistory = require('../execution/summaryHistory');
@@ -38,6 +39,9 @@ app.get('/health', (req, res) => {
 });
 
 if (require.main === module) {
+  if (process.env.ENABLE_SNAPSHOT_WORKER === 'true') {
+    startSnapshotWorker();
+  }
   app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
   });
