@@ -1,11 +1,16 @@
 const fs = require('fs');
-const { PROJECTS_FILE } = require('../config/paths');
+const { PROJECTS_FILE, PROJECT_SOURCE } = require('../config/paths');
 
 const seed = [
   { id: 1, name: 'Alpha Dashboard', status: 'Healthy' },
   { id: 2, name: 'Beta API Integration', status: 'At Risk' },
   { id: 3, name: 'Gamma Reporting', status: 'Healthy' },
 ];
+
+// PROJECT_SOURCE is imported above for future use (e.g. 'github').
+// The GitHub fetch path requires async support across the call chain
+// and will be wired in a dedicated follow-up once callers are ready.
+// For now, only the file / seed path is active.
 
 if (PROJECTS_FILE && !fs.existsSync(PROJECTS_FILE)) {
   throw new Error(

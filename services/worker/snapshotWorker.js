@@ -1,11 +1,15 @@
 const appendSummarySnapshot = require('../../execution/appendSummarySnapshot');
-const { SNAPSHOT_INTERVAL_MS } = require('../../config/paths');
+const { SNAPSHOT_INTERVAL_MS, PROJECT_SOURCE } = require('../../config/paths');
+const syncGithubProjects = require('../../execution/syncGithubProjects');
 
 function startSnapshotWorker() {
   console.log(`[snapshotWorker] Started. Interval: ${SNAPSHOT_INTERVAL_MS}ms`);
 
-  setInterval(() => {
+  setInterval(async () => {
     try {
+      if (PROJECT_SOURCE === 'github') {
+        await syncGithubProjects();
+      }
       const snapshot = appendSummarySnapshot();
       console.log(`[snapshotWorker] Snapshot recorded at ${snapshot.lastUpdated}`);
     } catch (e) {
