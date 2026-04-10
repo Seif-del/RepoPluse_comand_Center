@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RepoPulse Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: monospace;
+      background: #f4f4f4;
+      color: #222;
+      padding: 32px 16px;
+    }
+
+    h1 {
+      font-size: 1.3rem;
+      margin-bottom: 28px;
+      letter-spacing: 0.05em;
+    }
+
+    h2 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #666;
+      margin-bottom: 14px;
+    }
+
+    section {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      max-width: 900px;
+    }
+
+    /* ── Summary cards ── */
+    .cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .card {
+      flex: 1 1 140px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 12px 16px;
+      background: #fafafa;
+    }
+
+    .card-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #888;
+      margin-bottom: 6px;
+    }
+
+    .card-value {
+      font-size: 1.15rem;
+      font-weight: bold;
+      word-break: break-word;
+    }
+
+    .card-value.at-risk   { color: #c0392b; }
+    .card-value.healthy   { color: #27ae60; }
+    .card-value.critical  { color: #c0392b; }
+    .card-value.monitor   { color: #e67e22; }
+    .card-value.worsening { color: #c0392b; }
+    .card-value.improving { color: #27ae60; }
+
+    /* ── Projects table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    thead th {
+      text-align: left;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      border-bottom: 1px solid #ddd;
+      padding: 6px 8px;
+    }
+
+    tbody tr:nth-child(even) { background: #f9f9f9; }
+
+    tbody td {
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .status-healthy  { color: #27ae60; font-weight: bold; }
+    .status-at-risk  { color: #c0392b; font-weight: bold; }
+
+    /* ── History list ── */
+    .history-list {
+      list-style: none;
+    }
+
+    .history-list li {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 24px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 0.88rem;
+    }
+
+    .history-list li:last-child { border-bottom: none; }
+
+    .history-list .field { color: #888; font-size: 0.72rem; }
+
+    /* ── Error state ── */
+    .error { color: #c0392b; font-size: 0.88rem; }
+  </style>
+</head>
+<body>
+  <h1>RepoPulse Dashboard</h1>
+
+  <!-- Summary cards -->
+  <section>
+    <h2>Summary</h2>
+    <div id="summary-cards" class="cards">
+      <p class="error">Loading…</p>
+    </div>
+  </section>
+
+  <!-- Projects table -->
+  <section>
+    <h2>Projects</h2>
+    <div id="projects-container">
+      <p class="error">Loading…</p>
+    </div>
+  </section>
+
+  <!-- History list -->
+  <section>
+    <h2>History</h2>
+    <ul id="history-list" class="history-list">
+      <li><p class="error">Loading…</p></li>
+    </ul>
+  </section>
+
+  <script>
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    function colorClass(field, value) {
+      if (typeof value !== 'string') return '';
+      const v = value.toLowerCase().replace(/\s+/g, '-');
+      if (field === 'systemStatus') return v === 'at-risk' ? 'at-risk' : 'healthy';
+      if (field === 'alertState')   return v; // critical / monitor / normal
+      if (field === 'trend')        return v; // worsening / stable / improving
+      return '';
+    }
+
+    function card(label, value, field) {
+      const cls = colorClass(field, value);
+      return '<div class="card">'
+        + '<div class="card-label">' + esc(label) + '</div>'
+        + '<div class="card-value' + (cls ? ' ' + cls : '') + '">' + esc(String(value)) + '</div>'
+        + '</div>';
+    }
+
+    function esc(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function showError(id, msg) {
+      document.getElementById(id).innerHTML =
+        '<p class="error">Failed to load: ' + esc(String(msg)) + '</p>';
+    }
+
+    // ── Summary ─────────────────────────────────────────────────────────────
+
+    fetch('/summary')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var fields = [
+          ['totalProjects',   d.totalProjects,   'totalProjects'],
+          ['healthyProjects', d.healthyProjects,  'healthyProjects'],
+          ['atRiskProjects',  d.atRiskProjects,   'atRiskProjects'],
+          ['riskScore',       d.riskScore + '%',  'riskScore'],
+          ['systemStatus',    d.systemStatus,     'systemStatus'],
+          ['alertState',      d.alertState,       'alertState'],
+          ['trend',           d.trend,            'trend'],
+        ];
+        document.getElementById('summary-cards').innerHTML =
+          fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
+      })
+      .catch(function(e) { showError('summary-cards', e.message); });
+
+    // ── Projects ─────────────────────────────────────────────────────────────
+
+    fetch('/projects')
+      .then(function(r) { return r.json(); })
+      .then(function(projects) {
+        if (!projects.length) {
+          document.getElementById('projects-container').innerHTML =
+            '<p>No projects found.</p>';
+          return;
+        }
+        var rows = projects.map(function(p) {
+          var statusClass = p.status === 'At Risk' ? 'status-at-risk' : 'status-healthy';
+          return '<tr>'
+            + '<td>' + esc(String(p.id)) + '</td>'
+            + '<td>' + esc(p.name) + '</td>'
+            + '<td class="' + statusClass + '">' + esc(p.status) + '</td>'
+            + '</tr>';
+        }).join('');
+        document.getElementById('projects-container').innerHTML =
+          '<table>'
+          + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
+          + '<tbody>' + rows + '</tbody>'
+          + '</table>';
+      })
+      .catch(function(e) { showError('projects-container', e.message); });
+
+    // ── History ──────────────────────────────────────────────────────────────
+
+    fetch('/history')
+      .then(function(r) { return r.json(); })
+      .then(function(history) {
+        if (!history.length) {
+          document.getElementById('history-list').innerHTML =
+            '<li>No history recorded yet.</li>';
+          return;
+        }
+        var items = history.slice().reverse().map(function(h) {
+          return '<li>'
+            + '<span><span class="field">lastUpdated </span>' + esc(h.lastUpdated) + '</span>'
+            + '<span><span class="field">riskScore </span>' + esc(String(h.riskScore)) + '%</span>'
+            + '<span><span class="field">systemStatus </span>' + esc(h.systemStatus) + '</span>'
+            + '</li>';
+        }).join('');
+        document.getElementById('history-list').innerHTML = items;
+      })
+      .catch(function(e) {
+        document.getElementById('history-list').innerHTML =
+          '<li><p class="error">Failed to load: ' + esc(String(e.message)) + '</p></li>';
+      });
+  </script>
+</body>
+</html>

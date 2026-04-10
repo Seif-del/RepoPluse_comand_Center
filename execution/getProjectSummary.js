@@ -1,8 +1,8 @@
-const projects = require('./projects');
 const getTrend = require('./getTrend');
 const summaryHistory = require('./summaryHistory');
 
 function getProjectSummary() {
+  const projects = require('./projects');
   const totalProjects = projects.length;
   const atRiskProjects = projects.filter(p => p.status === 'At Risk').length;
   const riskScore = Math.round((atRiskProjects / totalProjects) * 100);

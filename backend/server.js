@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const app = express();
 const { PORT, PROJECT_SOURCE } = require('../config/paths');
@@ -12,6 +13,10 @@ const summaryHistory = require('../execution/summaryHistory');
 
 app.get('/', (req, res) => {
   res.send('RepoPulse backend is running');
+});
+
+app.get('/dashboard', (req, res) => {
+  res.sendFile(path.resolve(__dirname, '../frontend/dashboard.html'));
 });
 
 app.get('/projects', (req, res) => {
