@@ -14,7 +14,14 @@ const PROJECTS_FILE = process.env.PROJECTS_FILE || null;
 
 const SNAPSHOT_INTERVAL_MS = parseInt(process.env.SNAPSHOT_INTERVAL_MS, 10) || 3600000;
 
+const STALE_DAYS = parseInt(process.env.STALE_DAYS, 10) || 90;
+
+const INACTIVE_DAYS = parseInt(process.env.INACTIVE_DAYS, 10) || 30;
+
 // Controls which data source projects.js loads from: "file" (default) or "github".
 const PROJECT_SOURCE = process.env.PROJECT_SOURCE || 'file';
 
-module.exports = { HISTORY_FILE, PORT, PROJECTS_FILE, SNAPSHOT_INTERVAL_MS, PROJECT_SOURCE };
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+const GITHUB_ORG   = process.env.GITHUB_ORG   || '';
+
+module.exports = { HISTORY_FILE, PORT, PROJECTS_FILE, SNAPSHOT_INTERVAL_MS, STALE_DAYS, INACTIVE_DAYS, PROJECT_SOURCE, GITHUB_TOKEN, GITHUB_ORG };

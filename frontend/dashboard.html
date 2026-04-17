@@ -5,102 +5,402 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RepoPulse Dashboard</title>
   <style>
+    /* ── Design tokens ────────────────────────────────────────────────────── */
+    :root {
+      --bg:           #f0f2f5;
+      --surface:      #ffffff;
+      --surface-2:    #f7f8fa;
+      --border:       #e2e5ea;
+      --border-focus: #3b82f6;
+
+      --text-primary:   #0f1117;
+      --text-secondary: #5a6272;
+      --text-muted:     #9aa1b1;
+
+      --blue:    #3b82f6;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --orange:  #f97316;
+
+      --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
+      --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.05);
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:           #0d0f14;
+        --surface:      #161b24;
+        --surface-2:    #1c2230;
+        --border:       #2a3144;
+        --border-focus: #3b82f6;
+
+        --text-primary:   #e8eaf0;
+        --text-secondary: #8b95a8;
+        --text-muted:     #4d576a;
+
+        --shadow-sm: 0 1px 3px rgba(0,0,0,.4),  0 1px 2px rgba(0,0,0,.3);
+        --shadow-md: 0 4px 16px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+      }
+    }
+
+    /* ── Reset ────────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ── Base ─────────────────────────────────────────────────────────────── */
     body {
-      font-family: monospace;
-      background: #f4f4f4;
-      color: #222;
-      padding: 32px 16px;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 0;
     }
 
-    h1 {
-      font-size: 1.3rem;
-      margin-bottom: 28px;
-      letter-spacing: 0.05em;
+    /* ── Top bar ──────────────────────────────────────────────────────────── */
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      padding: 0 32px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
 
-    h2 {
+    .topbar-logo {
+      width: 28px;
+      height: 28px;
+      background: var(--blue);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .topbar-logo svg { display: block; }
+
+    .topbar-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+    }
+
+    .topbar-subtitle {
       font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #666;
+      color: var(--text-muted);
+      margin-left: 4px;
+    }
+
+    .topbar-spacer { flex: 1; }
+
+    .pulse-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    /* ── Page layout ──────────────────────────────────────────────────────── */
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    .page-header {
+      margin-bottom: 28px;
+    }
+
+    .page-header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .page-header p {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* ── Section ──────────────────────────────────────────────────────────── */
+    .section {
+      margin-bottom: 24px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
       margin-bottom: 14px;
     }
 
-    section {
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      padding: 20px 24px;
-      margin-bottom: 20px;
-      max-width: 900px;
+    .section-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
     }
 
-    /* ── Summary cards ── */
-    .cards {
-      display: flex;
-      flex-wrap: wrap;
+    .section-divider {
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Card grid ────────────────────────────────────────────────────────── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
       gap: 12px;
     }
 
     .card {
-      flex: 1 1 140px;
-      border: 1px solid #ddd;
-      border-radius: 5px;
-      padding: 12px 16px;
-      background: #fafafa;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px 18px;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s ease, transform 0.15s ease;
+    }
+
+    .card:hover {
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
     }
 
     .card-label {
-      font-size: 0.68rem;
+      font-size: 0.67rem;
+      font-weight: 500;
       text-transform: uppercase;
       letter-spacing: 0.07em;
-      color: #888;
-      margin-bottom: 6px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
     }
 
     .card-value {
-      font-size: 1.15rem;
-      font-weight: bold;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      line-height: 1;
       word-break: break-word;
     }
 
-    .card-value.at-risk   { color: #c0392b; }
-    .card-value.healthy   { color: #27ae60; }
-    .card-value.critical  { color: #c0392b; }
-    .card-value.monitor   { color: #e67e22; }
-    .card-value.worsening { color: #c0392b; }
-    .card-value.improving { color: #27ae60; }
+    /* Status-aware value colors */
+    .card-value.at-risk,
+    .card-value.critical,
+    .card-value.worsening { color: var(--red); }
 
-    /* ── Projects table ── */
+    .card-value.healthy,
+    .card-value.improving  { color: var(--green); }
+
+    .card-value.monitor    { color: var(--orange); }
+
+    /* Status badge pill on cards */
+    .card-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 99px;
+    }
+
+    .card-badge.at-risk, .card-badge.critical, .card-badge.worsening {
+      background: rgba(239,68,68,.12);
+      color: var(--red);
+    }
+
+    .card-badge.healthy, .card-badge.improving {
+      background: rgba(34,197,94,.12);
+      color: var(--green);
+    }
+
+    .card-badge.monitor {
+      background: rgba(249,115,22,.12);
+      color: var(--orange);
+    }
+
+    .card-badge.normal, .card-badge.stable {
+      background: var(--surface-2);
+      color: var(--text-secondary);
+    }
+
+    .card-badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    /* ── Panel (shared surface for chart / table / history) ───────────────── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-head h2 {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+    }
+
+    .panel-head .panel-count {
+      margin-left: auto;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 2px 8px;
+    }
+
+    .panel-body { padding: 20px; }
+
+    /* ── Chart ────────────────────────────────────────────────────────────── */
+    .chart-svg {
+      display: block;
+      width: 100%;
+      height: 200px;
+    }
+
+    .chart-axis-label {
+      font-size: 10px;
+      fill: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .chart-line {
+      fill: none;
+      stroke: var(--blue);
+      stroke-width: 2.5;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+
+    .chart-area { fill: url(#areaGradient); }
+
+    .chart-dot {
+      fill: var(--blue);
+      stroke: var(--surface);
+      stroke-width: 2;
+    }
+
+    .chart-dot.risk-high { fill: var(--red); }
+
+    .chart-gridline {
+      stroke: var(--border);
+      stroke-width: 1;
+    }
+
+    /* ── Projects table ───────────────────────────────────────────────────── */
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.88rem;
+      font-size: 0.85rem;
     }
 
     thead th {
       text-align: left;
-      font-size: 0.72rem;
+      font-size: 0.67rem;
+      font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #666;
-      border-bottom: 1px solid #ddd;
-      padding: 6px 8px;
+      letter-spacing: 0.07em;
+      color: var(--text-muted);
+      padding: 0 12px 10px;
+      border-bottom: 1px solid var(--border);
     }
 
-    tbody tr:nth-child(even) { background: #f9f9f9; }
+    thead th:first-child { padding-left: 0; }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s ease;
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface-2); }
 
     tbody td {
-      padding: 8px;
-      border-bottom: 1px solid #eee;
+      padding: 11px 12px;
+      color: var(--text-primary);
+      font-size: 0.85rem;
     }
 
-    .status-healthy  { color: #27ae60; font-weight: bold; }
-    .status-at-risk  { color: #c0392b; font-weight: bold; }
+    tbody td:first-child {
+      padding-left: 0;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+    }
 
-    /* ── History list ── */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 99px;
+    }
+
+    .status-pill::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-pill.healthy  { background: rgba(34,197,94,.12);  color: var(--green); }
+    .status-pill.at-risk  { background: rgba(239,68,68,.12);  color: var(--red);   }
+
+    /* ── History list ─────────────────────────────────────────────────────── */
     .history-list {
       list-style: none;
     }
@@ -108,148 +408,365 @@
     .history-list li {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 24px;
-      padding: 8px 0;
-      border-bottom: 1px solid #eee;
-      font-size: 0.88rem;
+      gap: 6px 20px;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
     }
 
     .history-list li:last-child { border-bottom: none; }
 
-    .history-list .field { color: #888; font-size: 0.72rem; }
+    .history-field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
 
-    /* ── Error state ── */
-    .error { color: #c0392b; font-size: 0.88rem; }
+    .history-field-label {
+      font-size: 0.62rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .history-field-value {
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+    }
+
+    /* ── Error ────────────────────────────────────────────────────────────── */
+    .error-msg {
+      font-size: 0.82rem;
+      color: var(--red);
+      padding: 8px 0;
+    }
   </style>
 </head>
 <body>
-  <h1>RepoPulse Dashboard</h1>
 
-  <!-- Summary cards -->
-  <section>
-    <h2>Summary</h2>
-    <div id="summary-cards" class="cards">
-      <p class="error">Loading…</p>
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="topbar-logo">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="3" fill="white"/>
+        <circle cx="8" cy="8" r="6.5" stroke="white" stroke-width="1.5" fill="none" opacity="0.5"/>
+      </svg>
     </div>
-  </section>
-
-  <!-- Projects table -->
-  <section>
-    <h2>Projects</h2>
-    <div id="projects-container">
-      <p class="error">Loading…</p>
+    <span class="topbar-title">RepoPulse</span>
+    <span class="topbar-subtitle">Command Center</span>
+    <div class="topbar-spacer"></div>
+    <div class="pulse-indicator">
+      <div class="pulse-dot"></div>
+      Live · 3s
     </div>
-  </section>
+  </header>
 
-  <!-- History list -->
-  <section>
-    <h2>History</h2>
-    <ul id="history-list" class="history-list">
-      <li><p class="error">Loading…</p></li>
-    </ul>
-  </section>
+  <div class="page">
+
+    <div class="page-header">
+      <h1>Dashboard</h1>
+      <p>Real-time health and risk overview across all tracked repositories.</p>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Summary</span>
+        <div class="section-divider"></div>
+      </div>
+      <div id="summary-cards" class="card-grid">
+        <div class="card"><div class="card-label">Loading</div><div class="card-value">—</div></div>
+      </div>
+    </div>
+
+    <!-- Projects table -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Projects</span>
+        <div class="section-divider"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Repository Status</h2>
+          <span id="projects-count" class="panel-count">—</span>
+        </div>
+        <div class="panel-body">
+          <div id="projects-container"><p class="error-msg">Loading…</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History chart -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Risk Score Over Time</span>
+        <div class="section-divider"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Risk Score History</h2>
+          <span id="chart-count" class="panel-count">— snapshots</span>
+        </div>
+        <div class="panel-body" style="padding: 16px 20px 8px;">
+          <svg id="history-chart" class="chart-svg" aria-label="Risk score history chart">
+            <defs>
+              <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%"   stop-color="#3b82f6" stop-opacity="0.2"/>
+                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <text x="50%" y="50%" text-anchor="middle" class="chart-axis-label">Loading…</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- History list -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Snapshot Log</span>
+        <div class="section-divider"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Snapshot History</h2>
+        </div>
+        <div class="panel-body">
+          <ul id="history-list" class="history-list">
+            <li><p class="error-msg">Loading…</p></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /page -->
 
   <script>
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    function colorClass(field, value) {
-      if (typeof value !== 'string') return '';
-      const v = value.toLowerCase().replace(/\s+/g, '-');
-      if (field === 'systemStatus') return v === 'at-risk' ? 'at-risk' : 'healthy';
-      if (field === 'alertState')   return v; // critical / monitor / normal
-      if (field === 'trend')        return v; // worsening / stable / improving
-      return '';
-    }
-
-    function card(label, value, field) {
-      const cls = colorClass(field, value);
-      return '<div class="card">'
-        + '<div class="card-label">' + esc(label) + '</div>'
-        + '<div class="card-value' + (cls ? ' ' + cls : '') + '">' + esc(String(value)) + '</div>'
-        + '</div>';
-    }
-
     function esc(str) {
-      return str
+      return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
     }
 
-    function showError(id, msg) {
-      document.getElementById(id).innerHTML =
-        '<p class="error">Failed to load: ' + esc(String(msg)) + '</p>';
+    function colorClass(field, value) {
+      if (typeof value !== 'string') return '';
+      var v = value.toLowerCase().replace(/\s+/g, '-');
+      if (field === 'systemStatus') return v === 'at-risk' ? 'at-risk' : 'healthy';
+      if (field === 'alertState')   return v;
+      if (field === 'trend')        return v;
+      return '';
     }
 
-    // ── Summary ─────────────────────────────────────────────────────────────
+    function badgeFields() {
+      return { systemStatus: true, alertState: true, trend: true };
+    }
 
-    fetch('/summary')
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        var fields = [
-          ['totalProjects',   d.totalProjects,   'totalProjects'],
-          ['healthyProjects', d.healthyProjects,  'healthyProjects'],
-          ['atRiskProjects',  d.atRiskProjects,   'atRiskProjects'],
-          ['riskScore',       d.riskScore + '%',  'riskScore'],
-          ['systemStatus',    d.systemStatus,     'systemStatus'],
-          ['alertState',      d.alertState,       'alertState'],
-          ['trend',           d.trend,            'trend'],
-        ];
-        document.getElementById('summary-cards').innerHTML =
-          fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
-      })
-      .catch(function(e) { showError('summary-cards', e.message); });
+    function card(label, value, field) {
+      var cls = colorClass(field, value);
+      var useBadge = badgeFields()[field] && cls;
+      var valueHtml = useBadge
+        ? '<span class="card-badge ' + cls + '">' + esc(String(value)) + '</span>'
+        : '<div class="card-value' + (cls ? ' ' + cls : '') + '">' + esc(String(value)) + '</div>';
+      return '<div class="card">'
+        + '<div class="card-label">' + esc(label) + '</div>'
+        + valueHtml
+        + '</div>';
+    }
 
-    // ── Projects ─────────────────────────────────────────────────────────────
+    function showError(id, msg) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = '<p class="error-msg">Failed to load: ' + esc(String(msg)) + '</p>';
+    }
 
-    fetch('/projects')
-      .then(function(r) { return r.json(); })
-      .then(function(projects) {
-        if (!projects.length) {
-          document.getElementById('projects-container').innerHTML =
-            '<p>No projects found.</p>';
-          return;
-        }
-        var rows = projects.map(function(p) {
-          var statusClass = p.status === 'At Risk' ? 'status-at-risk' : 'status-healthy';
-          return '<tr>'
-            + '<td>' + esc(String(p.id)) + '</td>'
-            + '<td>' + esc(p.name) + '</td>'
-            + '<td class="' + statusClass + '">' + esc(p.status) + '</td>'
-            + '</tr>';
-        }).join('');
-        document.getElementById('projects-container').innerHTML =
-          '<table>'
-          + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
-          + '<tbody>' + rows + '</tbody>'
-          + '</table>';
-      })
-      .catch(function(e) { showError('projects-container', e.message); });
+    // ── Chart ────────────────────────────────────────────────────────────────
 
-    // ── History ──────────────────────────────────────────────────────────────
+    function renderChart(history) {
+      var svg = document.getElementById('history-chart');
+      var W = svg.clientWidth  || 880;
+      var H = svg.clientHeight || 200;
+      var PAD = { top: 20, right: 24, bottom: 36, left: 40 };
+      var innerW = W - PAD.left - PAD.right;
+      var innerH = H - PAD.top  - PAD.bottom;
 
-    fetch('/history')
-      .then(function(r) { return r.json(); })
-      .then(function(history) {
-        if (!history.length) {
-          document.getElementById('history-list').innerHTML =
-            '<li>No history recorded yet.</li>';
-          return;
-        }
-        var items = history.slice().reverse().map(function(h) {
-          return '<li>'
-            + '<span><span class="field">lastUpdated </span>' + esc(h.lastUpdated) + '</span>'
-            + '<span><span class="field">riskScore </span>' + esc(String(h.riskScore)) + '%</span>'
-            + '<span><span class="field">systemStatus </span>' + esc(h.systemStatus) + '</span>'
-            + '</li>';
-        }).join('');
-        document.getElementById('history-list').innerHTML = items;
-      })
-      .catch(function(e) {
-        document.getElementById('history-list').innerHTML =
-          '<li><p class="error">Failed to load: ' + esc(String(e.message)) + '</p></li>';
+      var countEl = document.getElementById('chart-count');
+      if (countEl) countEl.textContent = history.length + ' snapshot' + (history.length !== 1 ? 's' : '');
+
+      if (!history.length) {
+        svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" class="chart-axis-label">No data yet</text>';
+        return;
+      }
+
+      var yMin = 0, yMax = 100;
+
+      function xPos(i) {
+        return PAD.left + (history.length === 1 ? innerW / 2 : i * (innerW / (history.length - 1)));
+      }
+      function yPos(v) {
+        return PAD.top + innerH - ((v - yMin) / (yMax - yMin)) * innerH;
+      }
+      function shortDate(iso) {
+        var d = new Date(iso);
+        return (d.getMonth() + 1) + '/' + d.getDate()
+          + ' ' + String(d.getHours()).padStart(2,'0')
+          + ':' + String(d.getMinutes()).padStart(2,'0');
+      }
+
+      var p = [];
+
+      // Gradient def
+      p.push('<defs>'
+        + '<linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">'
+        + '<stop offset="0%"   stop-color="#3b82f6" stop-opacity="0.2"/>'
+        + '<stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>'
+        + '</linearGradient></defs>');
+
+      // Gridlines + Y labels
+      [0, 25, 50, 75, 100].forEach(function(v) {
+        var y = yPos(v);
+        p.push('<line class="chart-gridline"'
+          + ' x1="' + PAD.left + '" y1="' + y + '"'
+          + ' x2="' + (PAD.left + innerW) + '" y2="' + y + '"/>');
+        p.push('<text class="chart-axis-label"'
+          + ' x="' + (PAD.left - 8) + '" y="' + (y + 4) + '"'
+          + ' text-anchor="end">' + v + '</text>');
       });
+
+      // X labels — first and last
+      [[0,'start'], [history.length - 1, 'end']].forEach(function(pair) {
+        var i = pair[0], anchor = pair[1];
+        if (!history[i]) return;
+        p.push('<text class="chart-axis-label"'
+          + ' x="' + xPos(i) + '" y="' + (H - 8) + '"'
+          + ' text-anchor="' + anchor + '">'
+          + esc(shortDate(history[i].lastUpdated)) + '</text>');
+      });
+
+      // Area
+      var aD = 'M ' + xPos(0) + ' ' + yPos(history[0].riskScore);
+      history.forEach(function(h, i) { if (i > 0) aD += ' L ' + xPos(i) + ' ' + yPos(h.riskScore); });
+      aD += ' L ' + xPos(history.length - 1) + ' ' + yPos(yMin)
+          + ' L ' + xPos(0) + ' ' + yPos(yMin) + ' Z';
+      p.push('<path class="chart-area" d="' + aD + '"/>');
+
+      // Line
+      var lD = 'M ' + xPos(0) + ' ' + yPos(history[0].riskScore);
+      history.forEach(function(h, i) { if (i > 0) lD += ' L ' + xPos(i) + ' ' + yPos(h.riskScore); });
+      p.push('<path class="chart-line" d="' + lD + '"/>');
+
+      // Dots
+      history.forEach(function(h, i) {
+        var cls = 'chart-dot' + (h.riskScore >= 50 ? ' risk-high' : '');
+        p.push('<circle class="' + cls + '"'
+          + ' cx="' + xPos(i) + '" cy="' + yPos(h.riskScore) + '" r="4.5">'
+          + '<title>' + esc(shortDate(h.lastUpdated)) + ' — ' + h.riskScore + '%</title>'
+          + '</circle>');
+      });
+
+      svg.innerHTML = p.join('');
+    }
+
+    // ── Data fetchers ────────────────────────────────────────────────────────
+
+    function loadSummary() {
+      fetch('/summary')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var fields = [
+            ['totalProjects',   d.totalProjects,   'totalProjects'],
+            ['healthyProjects', d.healthyProjects,  'healthyProjects'],
+            ['atRiskProjects',  d.atRiskProjects,   'atRiskProjects'],
+            ['riskScore',       d.riskScore + '%',  'riskScore'],
+            ['systemStatus',    d.systemStatus,     'systemStatus'],
+            ['alertState',      d.alertState,       'alertState'],
+            ['trend',           d.trend,            'trend'],
+          ];
+          document.getElementById('summary-cards').innerHTML =
+            fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
+        })
+        .catch(function(e) { showError('summary-cards', e.message); });
+    }
+
+    function loadProjects() {
+      fetch('/projects')
+        .then(function(r) { return r.json(); })
+        .then(function(projects) {
+          var countEl = document.getElementById('projects-count');
+          if (countEl) countEl.textContent = projects.length + ' repo' + (projects.length !== 1 ? 's' : '');
+
+          if (!projects.length) {
+            document.getElementById('projects-container').innerHTML =
+              '<p style="color:var(--text-muted);font-size:0.85rem;">No projects found.</p>';
+            return;
+          }
+          var rows = projects.map(function(p) {
+            var pillClass = p.status === 'At Risk' ? 'at-risk' : 'healthy';
+            return '<tr>'
+              + '<td>' + esc(String(p.id)) + '</td>'
+              + '<td>' + esc(p.name) + '</td>'
+              + '<td><span class="status-pill ' + pillClass + '">' + esc(p.status) + '</span></td>'
+              + '</tr>';
+          }).join('');
+          document.getElementById('projects-container').innerHTML =
+            '<table>'
+            + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
+            + '<tbody>' + rows + '</tbody>'
+            + '</table>';
+        })
+        .catch(function(e) { showError('projects-container', e.message); });
+    }
+
+    function loadHistory() {
+      fetch('/history')
+        .then(function(r) { return r.json(); })
+        .then(function(history) {
+          renderChart(history);
+
+          if (!history.length) {
+            document.getElementById('history-list').innerHTML =
+              '<li><p style="color:var(--text-muted);font-size:0.85rem;">No history recorded yet.</p></li>';
+            return;
+          }
+          var items = history.slice().reverse().map(function(h) {
+            return '<li>'
+              + '<div class="history-field">'
+              +   '<span class="history-field-label">Timestamp</span>'
+              +   '<span class="history-field-value">' + esc(h.lastUpdated) + '</span>'
+              + '</div>'
+              + '<div class="history-field">'
+              +   '<span class="history-field-label">Risk Score</span>'
+              +   '<span class="history-field-value">' + esc(String(h.riskScore)) + '%</span>'
+              + '</div>'
+              + '<div class="history-field">'
+              +   '<span class="history-field-label">System Status</span>'
+              +   '<span class="history-field-value">' + esc(h.systemStatus) + '</span>'
+              + '</div>'
+              + '</li>';
+          }).join('');
+          document.getElementById('history-list').innerHTML = items;
+        })
+        .catch(function(e) {
+          document.getElementById('history-list').innerHTML =
+            '<li><p class="error-msg">Failed to load: ' + esc(String(e.message)) + '</p></li>';
+        });
+    }
+
+    // ── Initial load + auto-refresh ──────────────────────────────────────────
+
+    function refresh() {
+      loadSummary();
+      loadProjects();
+      loadHistory();
+    }
+
+    refresh();
+    setInterval(refresh, 3000);
   </script>
 </body>
 </html>
