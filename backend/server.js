@@ -5,6 +5,8 @@ const { PORT, PROJECT_SOURCE } = require('../config/paths');
 const syncGithubProjects = require('../execution/syncGithubProjects');
 const summaryHistory = require('../execution/summaryHistory');
 
+let _syncedProjects = null;
+
 // projects, getProjectSummary, and appendSummarySnapshot are required lazily
 // inside their route handlers rather than at module scope. This ensures they
 // are not loaded until after the async startup block (syncGithubProjects) has
@@ -20,6 +22,7 @@ app.get('/dashboard', (req, res) => {
 });
 
 app.get('/projects', (req, res) => {
+  if (_syncedProjects !== null) return res.json(_syncedProjects);
   const projects = require('../execution/projects');
   res.json(projects);
 });
@@ -54,7 +57,7 @@ app.get('/health', (req, res) => {
 if (require.main === module) {
   (async () => {
     if (PROJECT_SOURCE === 'github') {
-      await syncGithubProjects();
+      _syncedProjects = await syncGithubProjects();
     }
     if (process.env.ENABLE_SNAPSHOT_WORKER === 'true') {
       const startSnapshotWorker = require('../services/worker/snapshotWorker');

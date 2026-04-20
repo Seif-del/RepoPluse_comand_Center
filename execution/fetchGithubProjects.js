@@ -4,23 +4,16 @@
  * Returns a list of projects derived from GitHub repositories.
  * Each item conforms to the RepoPulse project shape: { id, name, status }.
  *
- * When GITHUB_ORG is set, calls the GitHub REST API:
+ * When GITHUB_TOKEN and GITHUB_ORG are set, calls the GitHub REST API:
  *   GET https://api.github.com/orgs/{org}/repos
- *
- * Authentication:
- *   If GITHUB_TOKEN is set, an Authorization header is included (5 000 req/hr).
- *   If GITHUB_TOKEN is absent, the request is made unauthenticated (60 req/hr).
  *
  * Mapping rules:
  *   id     → repo.id
  *   name   → repo.full_name
  *   status → "At Risk"  if repo.archived === true
- *                       OR repo.disabled === true
- *                       OR repo.pushed_at is older than STALE_DAYS days  (long-term abandonment)
- *                       OR repo.pushed_at is older than INACTIVE_DAYS days (short-term inactivity)
+ *                        OR repo.disabled === true
+ *                        OR score >= 2
  *            "Healthy"  otherwise
- *
- * STALE_DAYS and INACTIVE_DAYS are imported from config/paths.js (defaults: 90 and 30).
  *
  * Falls back to mock data when GITHUB_ORG is missing, preserving
  * existing behavior for local development and tests.
@@ -28,12 +21,13 @@
 
 const { GITHUB_TOKEN, GITHUB_ORG, STALE_DAYS, INACTIVE_DAYS } = require('../config/paths');
 
+const ISSUE_THRESHOLD = 20;
 const MOCK = [
-  { id: 101, name: 'colaberry/data-pipeline',       status: 'Healthy'  },
-  { id: 102, name: 'colaberry/auth-service',         status: 'At Risk'  },
-  { id: 103, name: 'colaberry/reporting-dashboard',  status: 'Healthy'  },
-  { id: 104, name: 'colaberry/ml-feature-store',     status: 'At Risk'  },
-  { id: 105, name: 'colaberry/infra-terraform',      status: 'Healthy'  },
+  { id: 101, name: 'colaberry/data-pipeline',      status: 'Healthy', archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
+  { id: 102, name: 'colaberry/auth-service',       status: 'At Risk', archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: false, score: 2 },
+  { id: 103, name: 'colaberry/reporting-dashboard', status: 'Healthy', archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
+  { id: 104, name: 'colaberry/ml-feature-store',   status: 'At Risk', archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: false, score: 2 },
+  { id: 105, name: 'colaberry/infra-terraform',    status: 'Healthy', archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
 ];
 
 async function fetchGithubProjects() {
@@ -41,28 +35,27 @@ async function fetchGithubProjects() {
     return MOCK;
   }
 
+  const url = 'https://api.github.com/orgs/' + encodeURIComponent(GITHUB_ORG) + '/repos';
   const headers = {
-    'Accept':              'application/vnd.github+json',
+    'Accept': 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
 
   if (GITHUB_TOKEN) {
-    headers['Authorization'] = 'Bearer ' + GITHUB_TOKEN;
+    headers.Authorization = 'Bearer ' + GITHUB_TOKEN;
   }
 
-  const url = 'https://api.github.com/orgs/' + encodeURIComponent(GITHUB_ORG) + '/repos';
   const response = await fetch(url, { headers });
 
   if (!response.ok) {
     throw new Error(
       'GitHub API request failed: ' + response.status + ' ' + response.statusText
-        + ' (org: ' + GITHUB_ORG + ')'
+      + ' (org: ' + GITHUB_ORG + ')'
     );
   }
 
   const repos = await response.json();
-
-  const staleThresholdMs    = STALE_DAYS    * 24 * 60 * 60 * 1000;
+  const staleThresholdMs = STALE_DAYS * 24 * 60 * 60 * 1000;
   const inactiveThresholdMs = INACTIVE_DAYS * 24 * 60 * 60 * 1000;
 
   return repos.map(function(repo) {
@@ -70,15 +63,33 @@ async function fetchGithubProjects() {
       ? Date.now() - new Date(repo.pushed_at).getTime()
       : Infinity;
 
-    const isStale    = msSinceLastPush > staleThresholdMs;
+    const isStale = msSinceLastPush > staleThresholdMs;
     const isInactive = msSinceLastPush > inactiveThresholdMs;
+    const hasHighIssues = repo.open_issues_count > ISSUE_THRESHOLD;
 
-    const atRisk = repo.archived === true || repo.disabled === true || isStale || isInactive;
+    let score = 0;
+    if (repo.archived === true) score++;
+    if (isStale)                score++;
+    if (hasHighIssues)          score++;
+
+    const status =
+      repo.disabled === true ||
+      score >= 2
+        ? 'At Risk'
+        : 'Healthy';
 
     return {
-      id:     repo.id,
-      name:   repo.full_name,
-      status: atRisk ? 'At Risk' : 'Healthy',
+      id: repo.id,
+      name: repo.full_name,
+      status,
+
+      // Temporary debug fields
+      archived: repo.archived === true,
+      disabled: repo.disabled === true,
+      isStale,
+      isInactive,
+      hasHighIssues,
+      score,
     };
   });
 }
