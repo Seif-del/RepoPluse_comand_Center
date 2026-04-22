@@ -361,10 +361,16 @@
     tbody tr {
       border-bottom: 1px solid var(--border);
       transition: background 0.1s ease;
+      cursor: pointer;
     }
 
     tbody tr:last-child { border-bottom: none; }
     tbody tr:hover { background: var(--surface-2); }
+    tbody tr.row-selected { background: rgba(59,130,246,.08); }
+    tbody tr.row-latest {
+      background: rgba(59,130,246,.05);
+      border-left: 3px solid var(--blue);
+    }
 
     tbody td {
       padding: 11px 12px;
@@ -437,6 +443,122 @@
       font-family: var(--font-mono);
     }
 
+    /* ── Filter bar ──────────────────────────────────────────────────────── */
+    .filter-bar {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .filter-btn {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+
+    .filter-btn:hover {
+      border-color: var(--border-focus);
+      color: var(--text-primary);
+    }
+
+    .filter-btn.active {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    /* ── Repo detail ─────────────────────────────────────────────────────── */
+    .repo-detail {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .repo-detail-label {
+      font-size: 0.67rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ── Repo trend section ──────────────────────────────────────────────── */
+    .repo-trend-section {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Repo status timeline ────────────────────────────────────────────── */
+    .repo-status-timeline {
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      height: 20px;
+      margin-bottom: 14px;
+    }
+
+    .repo-status-timeline svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+
+    /* ── Sparkline ───────────────────────────────────────────────────────── */
+    .sparkline-svg {
+      display: block;
+      width: 100%;
+      height: 48px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Alert banner ────────────────────────────────────────────────────── */
+    .alert-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      background: rgba(239,68,68,.08);
+      border: 1px solid rgba(239,68,68,.25);
+      border-left: 4px solid var(--red);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      margin-bottom: 24px;
+    }
+
+    .alert-banner[hidden] { display: none; }
+
+    .alert-banner-icon {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      color: var(--red);
+      margin-top: 1px;
+    }
+
+    .alert-banner-body { flex: 1; min-width: 0; }
+
+    .alert-banner-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--red);
+      margin-bottom: 3px;
+    }
+
+    .alert-banner-detail {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    .alert-banner-detail strong { color: var(--text-primary); }
+
     /* ── Error ────────────────────────────────────────────────────────────── */
     .error-msg {
       font-size: 0.82rem;
@@ -471,6 +593,19 @@
       <p>Real-time health and risk overview across all tracked repositories.</p>
     </div>
 
+    <!-- Alert banner -->
+    <div id="alert-banner" class="alert-banner" hidden>
+      <svg class="alert-banner-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path d="M10 2L2 17h16L10 2z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+        <path d="M10 8v4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        <circle cx="10" cy="14.5" r="0.75" fill="currentColor"/>
+      </svg>
+      <div class="alert-banner-body">
+        <div id="alert-banner-title" class="alert-banner-title"></div>
+        <div id="alert-banner-detail" class="alert-banner-detail"></div>
+      </div>
+    </div>
+
     <!-- Summary cards -->
     <div class="section">
       <div class="section-header">
@@ -494,7 +629,13 @@
           <span id="projects-count" class="panel-count">—</span>
         </div>
         <div class="panel-body">
+          <div class="filter-bar">
+            <button class="filter-btn active" data-filter="All">All</button>
+            <button class="filter-btn" data-filter="At Risk">At Risk</button>
+            <button class="filter-btn" data-filter="Healthy">Healthy</button>
+          </div>
           <div id="projects-container"><p class="error-msg">Loading…</p></div>
+          <div id="repo-detail" class="repo-detail" hidden></div>
         </div>
       </div>
     </div>
@@ -535,9 +676,8 @@
           <h2>Snapshot History</h2>
         </div>
         <div class="panel-body">
-          <ul id="history-list" class="history-list">
-            <li><p class="error-msg">Loading…</p></li>
-          </ul>
+          <svg id="history-sparkline" class="sparkline-svg" aria-label="Risk score sparkline — last 10 snapshots"></svg>
+          <div id="history-list"><p class="error-msg">Loading…</p></div>
         </div>
       </div>
     </div>
@@ -672,7 +812,69 @@
       svg.innerHTML = p.join('');
     }
 
+    // ── Sparkline ────────────────────────────────────────────────────────────
+
+    function renderSparkline(data) {
+      var svg = document.getElementById('history-sparkline');
+      if (!svg) return;
+      if (!data.length) { svg.innerHTML = ''; return; }
+      var W = svg.clientWidth || 600;
+      var H = 48;
+      var PAD = 4;
+      var innerW = W - PAD * 2;
+      var innerH = H - PAD * 2;
+
+      function xPos(i) {
+        return PAD + (data.length === 1 ? innerW / 2 : i * (innerW / (data.length - 1)));
+      }
+      function yPos(v) {
+        return PAD + innerH - (v / 100) * innerH;
+      }
+
+      var pts = data.map(function(h, i) {
+        return xPos(i) + ',' + yPos(h.riskScore);
+      }).join(' ');
+
+      var last = data[data.length - 1];
+      var dotColor = last.riskScore >= 50 ? 'var(--red)' : 'var(--blue)';
+
+      svg.innerHTML =
+        '<polyline points="' + pts + '"'
+        + ' fill="none" stroke="var(--blue)" stroke-width="2"'
+        + ' stroke-linejoin="round" stroke-linecap="round"/>'
+        + '<circle cx="' + xPos(data.length - 1) + '" cy="' + yPos(last.riskScore) + '" r="3.5"'
+        + ' fill="' + dotColor + '" stroke="var(--surface)" stroke-width="1.5">'
+        + '<title>Latest: ' + last.riskScore + '%</title>'
+        + '</circle>';
+    }
+
     // ── Data fetchers ────────────────────────────────────────────────────────
+
+    function updateAlertBanner(d) {
+      var isCritical  = d.alertState === 'Critical';
+      var isWorsening = d.trend === 'Worsening';
+      var banner      = document.getElementById('alert-banner');
+
+      if (!isCritical && !isWorsening) {
+        banner.hidden = true;
+        return;
+      }
+
+      var title = isCritical ? 'Critical Alert — Immediate Attention Required'
+                             : 'Risk Trending Up — Monitor Closely';
+
+      var reasons = [];
+      if (isCritical)  reasons.push('alert state is <strong>Critical</strong>');
+      if (isWorsening) reasons.push('trend is <strong>Worsening</strong>');
+
+      var detail = 'System status: <strong>' + esc(d.systemStatus) + '</strong>. '
+        + 'Risk score: <strong>' + esc(String(d.riskScore)) + '%</strong>. '
+        + reasons.join(' and ') + '.';
+
+      document.getElementById('alert-banner-title').textContent  = title;
+      document.getElementById('alert-banner-detail').innerHTML   = detail;
+      banner.hidden = false;
+    }
 
     function loadSummary() {
       fetch('/summary')
@@ -689,35 +891,194 @@
           ];
           document.getElementById('summary-cards').innerHTML =
             fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
+          updateAlertBanner(d);
         })
         .catch(function(e) { showError('summary-cards', e.message); });
+    }
+
+    var _projects = [];
+    var _selectedId = null;
+    var _activeFilter = 'All';
+
+    function buildRepoStatusTimeline(entries) {
+      if (!entries.length) return '';
+      var W = 400, H = 20;
+      var segW = W / entries.length;
+      var rects = entries.map(function(e, i) {
+        var x    = i * segW;
+        var fill = e.status === 'At Risk' ? 'var(--red)' : 'var(--green)';
+        var d    = new Date(e.lastUpdated);
+        var ts   = (d.getMonth() + 1) + '/' + d.getDate()
+          + ' ' + String(d.getHours()).padStart(2, '0')
+          + ':' + String(d.getMinutes()).padStart(2, '0');
+        return '<rect'
+          + ' x="' + x.toFixed(1) + '" y="0"'
+          + ' width="' + Math.max(1, segW - 1).toFixed(1) + '" height="' + H + '"'
+          + ' fill="' + fill + '" opacity="0.8">'
+          + '<title>' + esc(ts + ' — ' + e.status) + '</title>'
+          + '</rect>';
+      }).join('');
+      return '<div class="repo-status-timeline">'
+        + '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"'
+        + ' aria-label="Status timeline — ' + entries.length
+        + ' snapshot' + (entries.length !== 1 ? 's' : '') + ', oldest to newest">'
+        + rects
+        + '</svg>'
+        + '</div>';
+    }
+
+    function renderRepoHistorySection(entries) {
+      var section = document.getElementById('repo-history-section');
+      if (!section) return;
+
+      if (!entries.length) {
+        section.innerHTML =
+          '<p style="color:var(--text-muted);font-size:0.82rem;line-height:1.5;">'
+          + 'No snapshots recorded for this repo yet. '
+          + 'History collects automatically each worker cycle.'
+          + '</p>';
+        return;
+      }
+
+      // entries arrive oldest-first from the API — render in that order
+      var rows = entries.map(function(e) {
+        var pillClass = e.status === 'At Risk' ? 'at-risk' : 'healthy';
+        return '<tr>'
+          + '<td>' + esc(e.lastUpdated) + '</td>'
+          + '<td><span class="status-pill ' + pillClass + '">' + esc(e.status) + '</span></td>'
+          + '</tr>';
+      }).join('');
+
+      section.innerHTML =
+        buildRepoStatusTimeline(entries)
+        + '<table>'
+        + '<thead><tr><th>Timestamp</th><th>Status</th></tr></thead>'
+        + '<tbody>' + rows + '</tbody>'
+        + '</table>';
+    }
+
+    function selectRepo(project) {
+      _selectedId = project.id;
+
+      // Highlight selected row (only visible rows are in DOM)
+      var tbody = document.querySelector('#projects-container tbody');
+      if (tbody) {
+        Array.prototype.forEach.call(tbody.querySelectorAll('tr'), function(tr) {
+          tr.classList.toggle('row-selected', tr.dataset.id === String(project.id));
+        });
+      }
+
+      // Render static panel content immediately
+      var isAtRisk    = project.status === 'At Risk';
+      var badgeClass  = isAtRisk ? 'at-risk' : 'healthy';
+      var explanation = isAtRisk ? 'Multiple risk signals detected' : 'No risk signals triggered';
+      var actionHint  = isAtRisk ? 'Investigate recent activity and issue backlog' : 'No immediate action required';
+
+      var detail = document.getElementById('repo-detail');
+      detail.hidden = false;
+      detail.innerHTML =
+        '<div class="repo-detail-label">Selected Repository</div>'
+        + '<div class="card-grid">'
+        + '<div class="card"><div class="card-label">Name</div><div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(project.name) + '</div></div>'
+        + '<div class="card"><div class="card-label">ID</div><div class="card-value">' + esc(String(project.id)) + '</div></div>'
+        + '<div class="card"><div class="card-label">Status</div><div class="card-value"><span class="card-badge ' + badgeClass + '">' + esc(project.status) + '</span></div></div>'
+        + '<div class="card"><div class="card-label">Assessment</div><div class="card-value" style="font-size:0.82rem;font-weight:500;">' + esc(explanation) + '</div></div>'
+        + '<div class="card" style="grid-column:span 2"><div class="card-label">Recommended Action</div><div class="card-value" style="font-size:0.82rem;font-weight:500;color:var(--text-secondary);">' + esc(actionHint) + '</div></div>'
+        + '</div>'
+        + '<div class="repo-trend-section">'
+        + '<div class="repo-detail-label">Trend &amp; History</div>'
+        + '<div id="repo-history-section">'
+        + '<p style="color:var(--text-muted);font-size:0.82rem;">Loading history&hellip;</p>'
+        + '</div>'
+        + '</div>';
+
+      // Fetch repo history; discard result if the user has selected a different repo
+      var fetchedForId = project.id;
+      fetch('/repo-history/' + fetchedForId)
+        .then(function(r) { return r.json(); })
+        .then(function(entries) {
+          if (_selectedId !== fetchedForId) return;
+          renderRepoHistorySection(entries);
+        })
+        .catch(function() {
+          if (_selectedId !== fetchedForId) return;
+          var section = document.getElementById('repo-history-section');
+          if (section) section.innerHTML =
+            '<p style="color:var(--red);font-size:0.82rem;">Failed to load history.</p>';
+        });
+    }
+
+    function renderProjectsTable(filtered) {
+      var countEl = document.getElementById('projects-count');
+      if (countEl) {
+        countEl.textContent = _activeFilter === 'All'
+          ? filtered.length + ' repo' + (filtered.length !== 1 ? 's' : '')
+          : filtered.length + ' / ' + _projects.length + ' repo' + (_projects.length !== 1 ? 's' : '');
+      }
+
+      if (!filtered.length) {
+        document.getElementById('projects-container').innerHTML =
+          '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories match the current filter.</p>';
+        _selectedId = null;
+        var detail = document.getElementById('repo-detail');
+        detail.hidden = false;
+        detail.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories match the current filter.</p>';
+        return;
+      }
+
+      var rows = filtered.map(function(p) {
+        var pillClass = p.status === 'At Risk' ? 'at-risk' : 'healthy';
+        return '<tr data-id="' + esc(String(p.id)) + '">'
+          + '<td>' + esc(String(p.id)) + '</td>'
+          + '<td>' + esc(p.name) + '</td>'
+          + '<td><span class="status-pill ' + pillClass + '">' + esc(p.status) + '</span></td>'
+          + '</tr>';
+      }).join('');
+
+      document.getElementById('projects-container').innerHTML =
+        '<table>'
+        + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
+        + '<tbody>' + rows + '</tbody>'
+        + '</table>';
+
+      var tbody = document.querySelector('#projects-container tbody');
+      tbody.addEventListener('click', function(e) {
+        var tr = e.target.closest('tr');
+        if (!tr) return;
+        var project = _projects.find(function(p) { return String(p.id) === tr.dataset.id; });
+        if (project) selectRepo(project);
+      });
+
+      // Restore selection if still visible, else auto-select first visible
+      var toSelect = _selectedId !== null
+        ? filtered.find(function(p) { return p.id === _selectedId; })
+        : null;
+      selectRepo(toSelect || filtered[0]);
+    }
+
+    function applyFilter() {
+      Array.prototype.forEach.call(document.querySelectorAll('.filter-btn'), function(btn) {
+        btn.classList.toggle('active', btn.dataset.filter === _activeFilter);
+      });
+      var filtered = _activeFilter === 'All'
+        ? _projects
+        : _projects.filter(function(p) { return p.status === _activeFilter; });
+      renderProjectsTable(filtered);
     }
 
     function loadProjects() {
       fetch('/projects')
         .then(function(r) { return r.json(); })
         .then(function(projects) {
-          var countEl = document.getElementById('projects-count');
-          if (countEl) countEl.textContent = projects.length + ' repo' + (projects.length !== 1 ? 's' : '');
-
+          _projects = projects;
           if (!projects.length) {
+            document.getElementById('projects-count').textContent = '0 repos';
             document.getElementById('projects-container').innerHTML =
               '<p style="color:var(--text-muted);font-size:0.85rem;">No projects found.</p>';
+            document.getElementById('repo-detail').hidden = true;
             return;
           }
-          var rows = projects.map(function(p) {
-            var pillClass = p.status === 'At Risk' ? 'at-risk' : 'healthy';
-            return '<tr>'
-              + '<td>' + esc(String(p.id)) + '</td>'
-              + '<td>' + esc(p.name) + '</td>'
-              + '<td><span class="status-pill ' + pillClass + '">' + esc(p.status) + '</span></td>'
-              + '</tr>';
-          }).join('');
-          document.getElementById('projects-container').innerHTML =
-            '<table>'
-            + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
-            + '<tbody>' + rows + '</tbody>'
-            + '</table>';
+          applyFilter();
         })
         .catch(function(e) { showError('projects-container', e.message); });
     }
@@ -730,32 +1091,50 @@
 
           if (!history.length) {
             document.getElementById('history-list').innerHTML =
-              '<li><p style="color:var(--text-muted);font-size:0.85rem;">No history recorded yet.</p></li>';
+              '<p style="color:var(--text-muted);font-size:0.85rem;">No history recorded yet.</p>';
+            renderSparkline([]);
             return;
           }
-          var items = history.slice().reverse().map(function(h) {
-            return '<li>'
-              + '<div class="history-field">'
-              +   '<span class="history-field-label">Timestamp</span>'
-              +   '<span class="history-field-value">' + esc(h.lastUpdated) + '</span>'
-              + '</div>'
-              + '<div class="history-field">'
-              +   '<span class="history-field-label">Risk Score</span>'
-              +   '<span class="history-field-value">' + esc(String(h.riskScore)) + '%</span>'
-              + '</div>'
-              + '<div class="history-field">'
-              +   '<span class="history-field-label">System Status</span>'
-              +   '<span class="history-field-value">' + esc(h.systemStatus) + '</span>'
-              + '</div>'
-              + '</li>';
+
+          var sorted = history.slice().sort(function(a, b) {
+            return new Date(b.lastUpdated) - new Date(a.lastUpdated);
+          });
+          var recent = sorted.slice(0, 10);
+          renderSparkline(recent.slice().reverse());
+          var rows = recent.map(function(h, i) {
+            return '<tr' + (i === 0 ? ' class="row-latest"' : '') + '>'
+              + '<td>' + esc(h.lastUpdated) + '</td>'
+              + '<td>' + esc(String(h.totalProjects)) + '</td>'
+              + '<td>' + esc(String(h.healthyProjects)) + '</td>'
+              + '<td>' + esc(String(h.atRiskProjects)) + '</td>'
+              + '<td>' + esc(String(h.riskScore)) + '%</td>'
+              + '<td><span class="card-badge ' + colorClass('trend', h.trend) + '">' + esc(h.trend) + '</span></td>'
+              + '<td><span class="card-badge ' + colorClass('alertState', h.alertState) + '">' + esc(h.alertState) + '</span></td>'
+              + '</tr>';
           }).join('');
-          document.getElementById('history-list').innerHTML = items;
+          document.getElementById('history-list').innerHTML =
+            '<table>'
+            + '<thead><tr>'
+            + '<th>Timestamp</th><th>Total</th><th>Healthy</th>'
+            + '<th>At Risk</th><th>Risk Score</th><th>Trend</th><th>Alert State</th>'
+            + '</tr></thead>'
+            + '<tbody>' + rows + '</tbody>'
+            + '</table>';
         })
         .catch(function(e) {
           document.getElementById('history-list').innerHTML =
-            '<li><p class="error-msg">Failed to load: ' + esc(String(e.message)) + '</p></li>';
+            '<p class="error-msg">Failed to load: ' + esc(String(e.message)) + '</p>';
         });
     }
+
+    // ── Filter bar wiring ────────────────────────────────────────────────────
+
+    document.querySelector('.filter-bar').addEventListener('click', function(e) {
+      var btn = e.target.closest('.filter-btn');
+      if (!btn) return;
+      _activeFilter = btn.dataset.filter;
+      applyFilter();
+    });
 
     // ── Initial load + auto-refresh ──────────────────────────────────────────
 

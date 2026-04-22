@@ -1,5 +1,6 @@
 const path = require('path');
 const appendSummarySnapshot = require('../../execution/appendSummarySnapshot');
+const appendRepoHistorySnapshot = require('../../execution/appendRepoHistorySnapshot');
 const { SNAPSHOT_INTERVAL_MS, PROJECT_SOURCE } = require('../../config/paths');
 const syncGithubProjects = require('../../execution/syncGithubProjects');
 
@@ -14,6 +15,12 @@ function startSnapshotWorker() {
       }
       const snapshot = appendSummarySnapshot();
       console.log(`[snapshotWorker] Snapshot recorded at ${snapshot.lastUpdated}`);
+      try {
+        const repoEntries = appendRepoHistorySnapshot();
+        console.log(`[snapshotWorker] Repo history recorded: ${repoEntries.length} entries`);
+      } catch (repoErr) {
+        console.error(`[snapshotWorker] Repo history failed: ${repoErr.message}`);
+      }
     } catch (e) {
       console.error(`[snapshotWorker] Snapshot failed: ${e.message}`);
     }

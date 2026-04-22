@@ -1,7 +1,8 @@
 const path = require('path');
+const fs   = require('fs');
 const express = require('express');
 const app = express();
-const { PORT, PROJECT_SOURCE } = require('../config/paths');
+const { PORT, PROJECT_SOURCE, REPO_HISTORY_FILE } = require('../config/paths');
 const syncGithubProjects = require('../execution/syncGithubProjects');
 const summaryHistory = require('../execution/summaryHistory');
 
@@ -29,7 +30,7 @@ app.get('/projects', (req, res) => {
 
 app.get('/summary', (req, res) => {
   const getProjectSummary = require('../execution/getProjectSummary');
-  res.json(getProjectSummary());
+  res.json(getProjectSummary(_syncedProjects));
 });
 
 app.get('/history', (req, res) => {
@@ -42,15 +43,28 @@ app.post('/history/snapshot', (req, res) => {
   res.json(snapshot);
 });
 
+app.get('/repo-history/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.json([]);
+  let all = [];
+  if (fs.existsSync(REPO_HISTORY_FILE)) {
+    try { all = JSON.parse(fs.readFileSync(REPO_HISTORY_FILE, 'utf8')); } catch (_) {}
+  }
+  const entries = all
+    .filter(e => e.id === id)
+    .sort((a, b) => new Date(a.lastUpdated) - new Date(b.lastUpdated));
+  res.json(entries);
+});
+
 app.get('/alerts', (req, res) => {
   const getProjectSummary = require('../execution/getProjectSummary');
-  const { alertState, systemStatus, trend, riskScore, lastUpdated } = getProjectSummary();
+  const { alertState, systemStatus, trend, riskScore, lastUpdated } = getProjectSummary(_syncedProjects);
   res.json({ alertState, systemStatus, trend, riskScore, lastUpdated });
 });
 
 app.get('/health', (req, res) => {
   const getProjectSummary = require('../execution/getProjectSummary');
-  const { systemStatus, alertState, lastUpdated } = getProjectSummary();
+  const { systemStatus, alertState, lastUpdated } = getProjectSummary(_syncedProjects);
   res.json({ status: 'ok', systemStatus, alertState, lastUpdated });
 });
 

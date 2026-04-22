@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { HISTORY_FILE } = require('../config/paths');
+const { HISTORY_FILE, REPO_HISTORY_FILE } = require('../config/paths');
 const request = require('supertest');
 const app = require('../backend/server');
 
@@ -63,6 +63,65 @@ describe('POST /history/snapshot', () => {
     expect(after.body.length).toBe(initialLength + 1);
 
     expect(fs.existsSync(HISTORY_FILE)).toBe(true);
+  });
+});
+
+describe('GET /repo-history/:id', () => {
+  const appendRepoHistorySnapshot = require('../execution/appendRepoHistorySnapshot');
+  const repoHistory = require('../execution/repoHistory');
+
+  beforeAll(() => {
+    appendRepoHistorySnapshot();
+  });
+
+  afterAll(() => {
+    if (fs.existsSync(REPO_HISTORY_FILE)) fs.unlinkSync(REPO_HISTORY_FILE);
+    repoHistory.splice(0);
+  });
+
+  it('returns 200 and matching entries for a known repo id', async () => {
+    const res = await request(app).get('/repo-history/1');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBeGreaterThan(0);
+  });
+
+  it('returns only entries for the requested repo id', async () => {
+    const res = await request(app).get('/repo-history/1');
+    res.body.forEach(entry => expect(entry.id).toBe(1));
+  });
+
+  it('each entry has the required shape', async () => {
+    const res = await request(app).get('/repo-history/1');
+    res.body.forEach(entry => {
+      expect(entry).toHaveProperty('id');
+      expect(entry).toHaveProperty('name');
+      expect(entry).toHaveProperty('status');
+      expect(entry).toHaveProperty('lastUpdated');
+    });
+  });
+
+  it('returns an empty array for an unknown repo id', async () => {
+    const res = await request(app).get('/repo-history/9999');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it('returns an empty array for a non-numeric id', async () => {
+    const res = await request(app).get('/repo-history/foo');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it('entries are ordered oldest-first (ascending lastUpdated)', async () => {
+    appendRepoHistorySnapshot();
+    const res = await request(app).get('/repo-history/1');
+    expect(res.body.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < res.body.length; i++) {
+      const prev = new Date(res.body[i - 1].lastUpdated).getTime();
+      const curr = new Date(res.body[i].lastUpdated).getTime();
+      expect(curr).toBeGreaterThanOrEqual(prev);
+    }
   });
 });
 
