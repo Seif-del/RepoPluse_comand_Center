@@ -5,19 +5,24 @@
   "main": "server.js",
   "scripts": {
     "test": "jest",
-    "start": "node server.js"
+    "start": "node --env-file=../.env server.js"
   },
   "jest": {
     "rootDir": "..",
-    "testMatch": ["<rootDir>/tests/**/*.test.js"],
-    "modulePaths": ["<rootDir>/backend/node_modules"]
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.js"
+    ],
+    "modulePaths": [
+      "<rootDir>/backend/node_modules"
+    ]
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "nodemailer": "^8.0.5"
   },
   "devDependencies": {
     "jest": "^30.3.0",
