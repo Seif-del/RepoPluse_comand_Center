@@ -38,16 +38,16 @@ describe('getProjectSummary', () => {
 });
 
 describe('getTrend', () => {
-  it('returns "Stable" when riskScore equals previous (33)', () => {
+  it('returns "Stable" when no previous score exists (first reading)', () => {
     expect(getTrend(33)).toBe('Stable');
   });
 
-  it('returns "Worsening" when riskScore is higher than previous (50 > 33)', () => {
-    expect(getTrend(50)).toBe('Worsening');
+  it('returns "Worsening" when riskScore is higher than explicit previous (50 > 33)', () => {
+    expect(getTrend(50, 33)).toBe('Worsening');
   });
 
-  it('returns "Improving" when riskScore is lower than previous (0 < 33)', () => {
-    expect(getTrend(0)).toBe('Improving');
+  it('returns "Improving" when riskScore is lower than explicit previous (0 < 33)', () => {
+    expect(getTrend(0, 33)).toBe('Improving');
   });
 
   it('returns "Improving" when current (33) is lower than explicit previous (50)', () => {

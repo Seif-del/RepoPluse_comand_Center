@@ -1,12 +1,7 @@
-const summaryHistory = require('./summaryHistory');
-
 function getTrend(currentRiskScore, previousRiskScore) {
-  const previous = previousRiskScore !== undefined
-    ? previousRiskScore
-    : summaryHistory[summaryHistory.length - 1].riskScore;
-
-  if (currentRiskScore > previous) return 'Worsening';
-  if (currentRiskScore < previous) return 'Improving';
+  if (previousRiskScore === undefined || previousRiskScore === null) return 'Stable';
+  if (currentRiskScore > previousRiskScore) return 'Worsening';
+  if (currentRiskScore < previousRiskScore) return 'Improving';
   return 'Stable';
 }
 

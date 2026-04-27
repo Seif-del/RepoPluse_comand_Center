@@ -904,9 +904,13 @@
       if (!entries.length) return '';
       var W = 400, H = 20;
       var segW = W / entries.length;
+      var lastIdx = entries.length - 1;
       var rects = entries.map(function(e, i) {
-        var x    = i * segW;
-        var fill = e.status === 'At Risk' ? 'var(--red)' : 'var(--green)';
+        var x       = i * segW;
+        var fill    = e.status === 'At Risk' ? 'var(--red)' : 'var(--green)';
+        var isLast  = i === lastIdx;
+        var opacity = isLast ? '1' : '0.8';
+        var stroke  = isLast ? 'rgba(255,255,255,0.7)' : 'none';
         var d    = new Date(e.lastUpdated);
         var ts   = (d.getMonth() + 1) + '/' + d.getDate()
           + ' ' + String(d.getHours()).padStart(2, '0')
@@ -914,8 +918,9 @@
         return '<rect'
           + ' x="' + x.toFixed(1) + '" y="0"'
           + ' width="' + Math.max(1, segW - 1).toFixed(1) + '" height="' + H + '"'
-          + ' fill="' + fill + '" opacity="0.8">'
-          + '<title>' + esc(ts + ' — ' + e.status) + '</title>'
+          + ' fill="' + fill + '" opacity="' + opacity + '"'
+          + ' stroke="' + stroke + '" stroke-width="1.5">'
+          + '<title>' + esc(ts + ' — ' + e.status + (isLast ? ' (latest)' : '')) + '</title>'
           + '</rect>';
       }).join('');
       return '<div class="repo-status-timeline">'
@@ -940,8 +945,12 @@
         return;
       }
 
-      // entries arrive oldest-first from the API — render in that order
-      var rows = entries.map(function(e) {
+      var sorted = entries.slice().sort(function(a, b) {
+        return new Date(b.lastUpdated) - new Date(a.lastUpdated);
+      });
+      var recent5 = sorted.slice(0, 5);
+
+      var rows = recent5.map(function(e) {
         var pillClass = e.status === 'At Risk' ? 'at-risk' : 'healthy';
         return '<tr>'
           + '<td>' + esc(e.lastUpdated) + '</td>'
@@ -950,7 +959,7 @@
       }).join('');
 
       section.innerHTML =
-        buildRepoStatusTimeline(entries)
+        buildRepoStatusTimeline(recent5.slice().reverse())
         + '<table>'
         + '<thead><tr><th>Timestamp</th><th>Status</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
@@ -1099,9 +1108,9 @@
           var sorted = history.slice().sort(function(a, b) {
             return new Date(b.lastUpdated) - new Date(a.lastUpdated);
           });
-          var recent = sorted.slice(0, 10);
-          renderSparkline(recent.slice().reverse());
-          var rows = recent.map(function(h, i) {
+          var recent5 = sorted.slice(0, 5);
+          renderSparkline(recent5.slice().reverse());
+          var rows = recent5.map(function(h, i) {
             return '<tr' + (i === 0 ? ' class="row-latest"' : '') + '>'
               + '<td>' + esc(h.lastUpdated) + '</td>'
               + '<td>' + esc(String(h.totalProjects)) + '</td>'

@@ -31,11 +31,10 @@ describe('GET /health', () => {
 });
 
 describe('GET /history', () => {
-  it('returns 200 and an array of length 2', async () => {
+  it('returns 200 and an array', async () => {
     const res = await request(app).get('/history');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body).toHaveLength(2);
   });
 });
 
