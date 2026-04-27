@@ -10,24 +10,31 @@
  * Mapping rules:
  *   id     → repo.id
  *   name   → repo.full_name
- *   status → "At Risk"  if repo.archived === true
- *                        OR repo.disabled === true
+ *   status → "At Risk"  if repo.disabled === true          (hard stop)
  *                        OR score >= 2
  *            "Healthy"  otherwise
+ *
+ *   Score signals (each +1):
+ *     isStale       — last push older than STALE_DAYS
+ *     hasHighIssues — open_issues_count > ISSUE_THRESHOLD
+ *
+ *   archived is intentionally excluded from scoring. Archiving is a
+ *   deliberate human action (read-only retirement), not an operational
+ *   failure. Active signals (isStale, hasHighIssues) are still evaluated
+ *   for archived repos.
  *
  * Falls back to mock data when GITHUB_ORG is missing, preserving
  * existing behavior for local development and tests.
  */
 
-const { GITHUB_TOKEN, GITHUB_ORG, STALE_DAYS, INACTIVE_DAYS } = require('../config/paths');
+const { GITHUB_TOKEN, GITHUB_ORG, STALE_DAYS, INACTIVE_DAYS, ISSUE_THRESHOLD } = require('../config/paths');
 
-const ISSUE_THRESHOLD = 20;
 const MOCK = [
-  { id: 101, name: 'colaberry/data-pipeline',      status: 'Healthy', archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
-  { id: 102, name: 'colaberry/auth-service',       status: 'At Risk', archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: false, score: 2 },
-  { id: 103, name: 'colaberry/reporting-dashboard', status: 'Healthy', archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
-  { id: 104, name: 'colaberry/ml-feature-store',   status: 'At Risk', archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: false, score: 2 },
-  { id: 105, name: 'colaberry/infra-terraform',    status: 'Healthy', archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
+  { id: 101, name: 'colaberry/data-pipeline',      status: 'Healthy',  archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
+  { id: 102, name: 'colaberry/auth-service',        status: 'At Risk',  archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: true,  score: 2 },
+  { id: 103, name: 'colaberry/reporting-dashboard', status: 'Healthy',  archived: true,  disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
+  { id: 104, name: 'colaberry/ml-feature-store',    status: 'Healthy',  archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: false, score: 1 },
+  { id: 105, name: 'colaberry/infra-terraform',     status: 'At Risk',  archived: false, disabled: true,  isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
 ];
 
 async function fetchGithubProjects() {
@@ -55,7 +62,7 @@ async function fetchGithubProjects() {
   }
 
   const repos = await response.json();
-  const staleThresholdMs = STALE_DAYS * 24 * 60 * 60 * 1000;
+  const staleThresholdMs    = STALE_DAYS    * 24 * 60 * 60 * 1000;
   const inactiveThresholdMs = INACTIVE_DAYS * 24 * 60 * 60 * 1000;
 
   return repos.map(function(repo) {
@@ -63,34 +70,17 @@ async function fetchGithubProjects() {
       ? Date.now() - new Date(repo.pushed_at).getTime()
       : Infinity;
 
-    const isStale = msSinceLastPush > staleThresholdMs;
-    const isInactive = msSinceLastPush > inactiveThresholdMs;
-    const hasHighIssues = repo.open_issues_count > ISSUE_THRESHOLD;
+    const isStale        = msSinceLastPush > staleThresholdMs;
+    const isInactive     = msSinceLastPush > inactiveThresholdMs;
+    const hasHighIssues  = repo.open_issues_count > ISSUE_THRESHOLD;
 
     let score = 0;
-    if (repo.archived === true) score++;
-    if (isStale)                score++;
-    if (hasHighIssues)          score++;
+    if (isStale)       score++;
+    if (hasHighIssues) score++;
 
-    const status =
-      repo.disabled === true ||
-      score >= 2
-        ? 'At Risk'
-        : 'Healthy';
+    const status = repo.disabled === true || score >= 2 ? 'At Risk' : 'Healthy';
 
-    return {
-      id: repo.id,
-      name: repo.full_name,
-      status,
-
-      // Temporary debug fields
-      archived: repo.archived === true,
-      disabled: repo.disabled === true,
-      isStale,
-      isInactive,
-      hasHighIssues,
-      score,
-    };
+    return { id: repo.id, name: repo.full_name, status };
   });
 }
 
