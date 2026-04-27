@@ -2,7 +2,7 @@ const path = require('path');
 const fs   = require('fs');
 const express = require('express');
 const app = express();
-const { PORT, PROJECT_SOURCE, REPO_HISTORY_FILE } = require('../config/paths');
+const { PORT, PROJECT_SOURCE, REPO_HISTORY_FILE, HISTORY_FILE } = require('../config/paths');
 const syncGithubProjects = require('../execution/syncGithubProjects');
 const summaryHistory = require('../execution/summaryHistory');
 
@@ -72,6 +72,9 @@ if (require.main === module) {
   (async () => {
     if (PROJECT_SOURCE === 'github') {
       _syncedProjects = await syncGithubProjects();
+      if (!fs.existsSync(HISTORY_FILE)) {
+        require('../execution/appendSummarySnapshot')();
+      }
     }
     if (process.env.ENABLE_SNAPSHOT_WORKER === 'true') {
       const startSnapshotWorker = require('../services/worker/snapshotWorker');
