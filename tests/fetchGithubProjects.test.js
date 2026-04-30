@@ -67,10 +67,10 @@ describe('fetchGithubProjects — scoring model', () => {
     expect(repo.status).toBe('Healthy');
   });
 
-  it('high issues only → Healthy (score below threshold)', async () => {
+  it('high issues only → At Risk (score 2 meets threshold)', async () => {
     mockFetch([makeRepo({ pushed_at: RECENT_PUSH, open_issues_count: HIGH_ISSUES })]);
     const [repo] = await fetchGithubProjects();
-    expect(repo.status).toBe('Healthy');
+    expect(repo.status).toBe('At Risk');
   });
 
   it('archived + stale + high issues → At Risk (active signals are still scored)', async () => {
@@ -87,15 +87,81 @@ describe('fetchGithubProjects — scoring model', () => {
 });
 
 describe('fetchGithubProjects — output shape', () => {
-  it('each result has id, name, and status and nothing else', async () => {
+  it('each result has id, name, status, and reasons and nothing else', async () => {
     mockFetch([makeRepo()]);
     const [repo] = await fetchGithubProjects();
-    expect(Object.keys(repo).sort()).toEqual(['id', 'name', 'status']);
+    expect(Object.keys(repo).sort()).toEqual(['id', 'name', 'reasons', 'status']);
   });
 
   it('name maps from full_name', async () => {
     mockFetch([makeRepo({ full_name: 'myorg/my-repo' })]);
     const [repo] = await fetchGithubProjects();
     expect(repo.name).toBe('myorg/my-repo');
+  });
+});
+
+describe('fetchGithubProjects — At Risk / reasons invariant', () => {
+  it('every At Risk result has at least one reason (disabled path)', async () => {
+    mockFetch([makeRepo({ disabled: true })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.status).toBe('At Risk');
+    expect(repo.reasons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('every At Risk result has at least one reason (high issues path)', async () => {
+    mockFetch([makeRepo({ open_issues_count: HIGH_ISSUES })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.status).toBe('At Risk');
+    expect(repo.reasons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('every At Risk result has at least one reason (stale + high issues path)', async () => {
+    mockFetch([makeRepo({ pushed_at: OLD_PUSH, open_issues_count: HIGH_ISSUES })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.status).toBe('At Risk');
+    expect(repo.reasons.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('fetchGithubProjects — reasons field', () => {
+  it('healthy repo with no signals has empty reasons array', async () => {
+    mockFetch([makeRepo()]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.reasons).toEqual([]);
+  });
+
+  it('disabled repo has "Repository is disabled" reason', async () => {
+    mockFetch([makeRepo({ disabled: true })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.reasons).toContain('Repository is disabled');
+  });
+
+  it('stale repo has "No recent activity" reason', async () => {
+    mockFetch([makeRepo({ pushed_at: OLD_PUSH })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.reasons).toContain('No recent activity');
+  });
+
+  it('high issues repo has "High issue backlog" reason', async () => {
+    mockFetch([makeRepo({ open_issues_count: HIGH_ISSUES })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.reasons).toContain('High issue backlog');
+  });
+
+  it('stale + high issues → both reasons present', async () => {
+    mockFetch([makeRepo({ pushed_at: OLD_PUSH, open_issues_count: HIGH_ISSUES })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.reasons).toContain('No recent activity');
+    expect(repo.reasons).toContain('High issue backlog');
+    expect(repo.reasons).toHaveLength(2);
+  });
+
+  it('disabled + stale + high issues → all three reasons present', async () => {
+    mockFetch([makeRepo({ disabled: true, pushed_at: OLD_PUSH, open_issues_count: HIGH_ISSUES })]);
+    const [repo] = await fetchGithubProjects();
+    expect(repo.reasons).toContain('Repository is disabled');
+    expect(repo.reasons).toContain('No recent activity');
+    expect(repo.reasons).toContain('High issue backlog');
+    expect(repo.reasons).toHaveLength(3);
   });
 });

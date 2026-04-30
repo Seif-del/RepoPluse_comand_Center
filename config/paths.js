@@ -38,6 +38,12 @@ const REPO_HISTORY_FILE = process.env.REPO_HISTORY_FILE || (
     : path.join(__dirname, `../execution/repoHistory-${_sourceKey}.json`)
 );
 
+const MANAGED_REPOS_FILE = process.env.MANAGED_REPOS_FILE || (
+  process.env.NODE_ENV === 'test'
+    ? path.join(os.tmpdir(), 'repopulse-managedRepos.test.json')
+    : path.join(__dirname, '../execution/managedRepos.json')
+);
+
 const SNAPSHOT_INTERVAL_MS = parseInt(process.env.SNAPSHOT_INTERVAL_MS, 10) || 3600000;
 
 // --- Proactive alerting ---
@@ -57,7 +63,7 @@ const INACTIVE_DAYS = parseInt(process.env.INACTIVE_DAYS, 10) || 30;
 const ISSUE_THRESHOLD = parseInt(process.env.ISSUE_THRESHOLD, 10) || 20;
 
 module.exports = {
-  HISTORY_FILE, REPO_HISTORY_FILE, PORT, PROJECTS_FILE,
+  HISTORY_FILE, REPO_HISTORY_FILE, MANAGED_REPOS_FILE, PORT, PROJECTS_FILE,
   SNAPSHOT_INTERVAL_MS, STALE_DAYS, INACTIVE_DAYS, ISSUE_THRESHOLD,
   PROJECT_SOURCE, GITHUB_TOKEN, GITHUB_ORG,
   ENABLE_PROACTIVE_ALERTS, SLACK_WEBHOOK_URL,

@@ -14,12 +14,34 @@ let _syncedProjects = null;
 // written PROJECTS_FILE to disk. Node caches the result after the first call,
 // so there is no repeated file I/O on subsequent requests.
 
+app.use(express.json());
+
 app.get('/', (req, res) => {
   res.send('RepoPulse backend is running');
 });
 
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.resolve(__dirname, '../frontend/dashboard.html'));
+});
+
+app.get('/manage', (req, res) => {
+  res.sendFile(path.resolve(__dirname, '../frontend/manage.html'));
+});
+
+app.get('/managed-repos', (req, res) => {
+  const { loadManagedRepos } = require('../execution/managedRepos');
+  res.json(loadManagedRepos());
+});
+
+app.post('/managed-repos', (req, res) => {
+  const { registerRepo } = require('../execution/managedRepos');
+  const url = (req.body && typeof req.body.url === 'string') ? req.body.url : '';
+  if (!url.trim()) {
+    return res.status(400).json({ ok: false, error: 'URL is required.' });
+  }
+  const result = registerRepo(url);
+  if (!result.ok) return res.status(400).json(result);
+  res.status(201).json(result);
 });
 
 app.get('/projects', (req, res) => {

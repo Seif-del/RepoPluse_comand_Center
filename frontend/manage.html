@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RepoPulse — Repository Management</title>
+  <style>
+    :root {
+      --bg:           #f0f2f5;
+      --surface:      #ffffff;
+      --surface-2:    #f7f8fa;
+      --border:       #e2e5ea;
+      --border-focus: #3b82f6;
+
+      --text-primary:   #0f1117;
+      --text-secondary: #5a6272;
+      --text-muted:     #9aa1b1;
+
+      --blue:   #3b82f6;
+      --green:  #22c55e;
+      --red:    #ef4444;
+
+      --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
+      --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.05);
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:           #0d0f14;
+        --surface:      #161b24;
+        --surface-2:    #1c2230;
+        --border:       #2a3144;
+
+        --text-primary:   #e8eaf0;
+        --text-secondary: #8b95a8;
+        --text-muted:     #4d576a;
+
+        --shadow-sm: 0 1px 3px rgba(0,0,0,.4),  0 1px 2px rgba(0,0,0,.3);
+        --shadow-md: 0 4px 16px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      padding: 0 32px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .topbar-logo {
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -.3px;
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    .topbar-logo span { color: var(--blue); }
+
+    .topbar-sep {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+    }
+
+    .topbar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .topbar-spacer { flex: 1; }
+
+    .topbar-link {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--blue);
+      text-decoration: none;
+      padding: 5px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-focus);
+      transition: background .15s;
+    }
+
+    .topbar-link:hover { background: rgba(59,130,246,.08); }
+
+    /* ── Layout ── */
+    .page {
+      max-width: 780px;
+      margin: 40px auto;
+      padding: 0 24px 80px;
+    }
+
+    .page-header {
+      margin-bottom: 32px;
+    }
+
+    .page-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -.4px;
+      color: var(--text-primary);
+    }
+
+    .page-header p {
+      margin-top: 6px;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* ── Register card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      padding: 24px;
+      margin-bottom: 28px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 16px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .url-input {
+      flex: 1;
+      height: 38px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    .url-input:focus { border-color: var(--border-focus); }
+
+    .url-input::placeholder { color: var(--text-muted); }
+
+    .btn-register {
+      height: 38px;
+      padding: 0 18px;
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity .15s;
+    }
+
+    .btn-register:hover { opacity: .88; }
+    .btn-register:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Feedback banner ── */
+    .banner {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      display: none;
+    }
+
+    .banner.success {
+      display: block;
+      background: rgba(34,197,94,.12);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,.25);
+    }
+
+    .banner.error {
+      display: block;
+      background: rgba(239,68,68,.10);
+      color: var(--red);
+      border: 1px solid rgba(239,68,68,.22);
+    }
+
+    /* ── Repos table ── */
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .repos-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .repos-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text-muted);
+      padding: 0 12px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .repos-table td {
+      padding: 12px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .repos-table tr:last-child td { border-bottom: none; }
+
+    .repo-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .repo-url {
+      color: var(--blue);
+      text-decoration: none;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+
+    .repo-url:hover { text-decoration: underline; }
+
+    .repo-date {
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .empty-state {
+      padding: 40px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .count-badge {
+      display: inline-block;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 20px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a class="topbar-logo" href="/dashboard"><span>Repo</span>Pulse</a>
+    <div class="topbar-sep"></div>
+    <span class="topbar-title">Repository Management</span>
+    <div class="topbar-spacer"></div>
+    <a class="topbar-link" href="/dashboard">← Dashboard</a>
+  </header>
+
+  <main class="page">
+
+    <div class="page-header">
+      <h1>Repository Management</h1>
+      <p>Register GitHub repositories for RepoPulse to track. The dashboard is read-only; manage which repos are monitored here.</p>
+    </div>
+
+    <!-- Register form -->
+    <div class="card">
+      <div class="card-title">Register a Repository</div>
+      <div class="input-row">
+        <input
+          id="url-input"
+          class="url-input"
+          type="url"
+          placeholder="https://github.com/owner/repo"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="register-btn" class="btn-register">Register Repository</button>
+      </div>
+      <div id="banner" class="banner" role="alert"></div>
+    </div>
+
+    <!-- Registered repos list -->
+    <div class="card">
+      <div class="card-title">
+        Registered Repositories
+        <span id="count-badge" class="count-badge">0</span>
+      </div>
+      <div id="repos-container">
+        <div class="empty-state">No repositories registered yet.</div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    const input = document.getElementById('url-input');
+    const registerBtn = document.getElementById('register-btn');
+    const banner = document.getElementById('banner');
+    const reposContainer = document.getElementById('repos-container');
+    const countBadge = document.getElementById('count-badge');
+
+    function showBanner(msg, type) {
+      banner.textContent = msg;
+      banner.className = 'banner ' + type;
+      clearTimeout(banner._timer);
+      if (type === 'success') {
+        banner._timer = setTimeout(() => { banner.className = 'banner'; }, 4000);
+      }
+    }
+
+    function formatDate(iso) {
+      try {
+        return new Date(iso).toLocaleString(undefined, {
+          year: 'numeric', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        });
+      } catch (_) {
+        return iso;
+      }
+    }
+
+    function renderRepos(repos) {
+      countBadge.textContent = repos.length;
+      if (!repos.length) {
+        reposContainer.innerHTML = '<div class="empty-state">No repositories registered yet.</div>';
+        return;
+      }
+      const rows = repos.map(r => `
+        <tr>
+          <td class="repo-name">${escHtml(r.fullName)}</td>
+          <td><a class="repo-url" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(r.url)}</a></td>
+          <td class="repo-date">${formatDate(r.registeredAt)}</td>
+        </tr>
+      `).join('');
+      reposContainer.innerHTML = `
+        <table class="repos-table">
+          <thead>
+            <tr>
+              <th>Repository</th>
+              <th>URL</th>
+              <th>Registered</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    async function loadRepos() {
+      try {
+        const res = await fetch('/managed-repos');
+        const repos = await res.json();
+        renderRepos(Array.isArray(repos) ? repos : []);
+      } catch (_) {
+        reposContainer.innerHTML = '<div class="empty-state">Failed to load repositories.</div>';
+      }
+    }
+
+    async function handleRegister() {
+      const url = input.value.trim();
+      if (!url) {
+        showBanner('Please enter a GitHub repository URL.', 'error');
+        input.focus();
+        return;
+      }
+      registerBtn.disabled = true;
+      registerBtn.textContent = 'Registering…';
+      try {
+        const res = await fetch('/managed-repos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          input.value = '';
+          showBanner(`"${data.repo.fullName}" registered successfully.`, 'success');
+          await loadRepos();
+        } else {
+          showBanner(data.error || 'Registration failed.', 'error');
+        }
+      } catch (_) {
+        showBanner('Network error — could not reach the server.', 'error');
+      } finally {
+        registerBtn.disabled = false;
+        registerBtn.textContent = 'Register Repository';
+      }
+    }
+
+    registerBtn.addEventListener('click', handleRegister);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
+
+    loadRepos();
+  </script>
+
+</body>
+</html>

@@ -2,9 +2,9 @@ const fs = require('fs');
 const { PROJECTS_FILE, PROJECT_SOURCE } = require('../config/paths');
 
 const seed = [
-  { id: 1, name: 'Alpha Dashboard', status: 'Healthy' },
-  { id: 2, name: 'Beta API Integration', status: 'At Risk' },
-  { id: 3, name: 'Gamma Reporting', status: 'Healthy' },
+  { id: 1, name: 'Alpha Dashboard',      status: 'Healthy',  reasons: [] },
+  { id: 2, name: 'Beta API Integration', status: 'At Risk',  reasons: [] },
+  { id: 3, name: 'Gamma Reporting',      status: 'Healthy',  reasons: [] },
 ];
 
 // PROJECT_SOURCE is imported above for future use (e.g. 'github').
@@ -53,5 +53,17 @@ if (PROJECTS_FILE) {
 } else {
   projects = seed;
 }
+
+// Defensive invariant: every At Risk project must expose at least one reason.
+// The static seed has no signals to derive from, so this fallback covers that
+// gap. It also protects against PROJECTS_FILE entries that predate the reasons
+// field, or any future scoring path that adds a new At Risk trigger without a
+// matching deriveReasons entry.
+projects = projects.map(function(p) {
+  if (p.status === 'At Risk' && (!Array.isArray(p.reasons) || p.reasons.length === 0)) {
+    return Object.assign({}, p, { reasons: ['Risk signals detected'] });
+  }
+  return p;
+});
 
 module.exports = projects;

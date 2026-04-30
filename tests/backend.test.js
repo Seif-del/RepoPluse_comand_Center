@@ -13,9 +13,9 @@ describe('Backend entry point', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body).toEqual([
-      { id: 1, name: 'Alpha Dashboard', status: 'Healthy' },
-      { id: 2, name: 'Beta API Integration', status: 'At Risk' },
-      { id: 3, name: 'Gamma Reporting', status: 'Healthy' },
+      { id: 1, name: 'Alpha Dashboard',      status: 'Healthy', reasons: [] },
+      { id: 2, name: 'Beta API Integration', status: 'At Risk', reasons: ['Risk signals detected'] },
+      { id: 3, name: 'Gamma Reporting',      status: 'Healthy', reasons: [] },
     ]);
   });
 });

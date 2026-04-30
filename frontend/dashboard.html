@@ -68,7 +68,7 @@
       border-bottom: 1px solid var(--border);
       box-shadow: var(--shadow-sm);
       padding: 0 32px;
-      height: 56px;
+      height: 48px;
       display: flex;
       align-items: center;
       gap: 12px;
@@ -128,17 +128,17 @@
 
     /* ── Page layout ──────────────────────────────────────────────────────── */
     .page {
-      max-width: 960px;
+      max-width: 1100px;
       margin: 0 auto;
-      padding: 32px 24px 64px;
+      padding: 12px 20px 12px;
     }
 
     .page-header {
-      margin-bottom: 28px;
+      margin-bottom: 6px;
     }
 
     .page-header h1 {
-      font-size: 1.4rem;
+      font-size: 1.1rem;
       font-weight: 700;
       letter-spacing: -0.02em;
       color: var(--text-primary);
@@ -153,14 +153,14 @@
 
     /* ── Section ──────────────────────────────────────────────────────────── */
     .section {
-      margin-bottom: 24px;
+      margin-bottom: 8px;
     }
 
     .section-header {
       display: flex;
       align-items: baseline;
       gap: 8px;
-      margin-bottom: 14px;
+      margin-bottom: 6px;
     }
 
     .section-title {
@@ -180,15 +180,41 @@
     /* ── Card grid ────────────────────────────────────────────────────────── */
     .card-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 6px;
+    }
+
+    /* Summary bar: exactly 7 equal columns, full width */
+    #summary-cards {
+      grid-template-columns: repeat(7, 1fr);
+    }
+
+    @media (max-width: 900px) {
+      #summary-cards { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    @media (max-width: 560px) {
+      #summary-cards { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* Drill-down: 4 equal metadata columns, action card always full-width */
+    #repo-detail .card-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    #repo-detail .card-grid .card:last-child {
+      grid-column: 1 / -1;
+    }
+
+    @media (max-width: 700px) {
+      #repo-detail .card-grid { grid-template-columns: repeat(2, 1fr); }
     }
 
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
-      padding: 16px 18px;
+      padding: 9px 14px;
       box-shadow: var(--shadow-sm);
       transition: box-shadow 0.15s ease, transform 0.15s ease;
     }
@@ -199,16 +225,16 @@
     }
 
     .card-label {
-      font-size: 0.67rem;
+      font-size: 0.72rem;
       font-weight: 500;
       text-transform: uppercase;
       letter-spacing: 0.07em;
       color: var(--text-muted);
-      margin-bottom: 8px;
+      margin-bottom: 3px;
     }
 
     .card-value {
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       font-weight: 700;
       letter-spacing: -0.02em;
       color: var(--text-primary);
@@ -225,6 +251,25 @@
     .card-value.improving  { color: var(--green); }
 
     .card-value.monitor    { color: var(--orange); }
+
+    /* Risk score interpretation sub-line */
+    .card-sub {
+      font-size: 0.72rem;
+      font-weight: 600;
+      margin-top: 3px;
+      line-height: 1.1;
+    }
+
+    .card-sub.healthy { color: var(--green);  }
+    .card-sub.at-risk { color: var(--red);    }
+    .card-sub.monitor { color: var(--orange); }
+
+    /* ── Risk Score card — dominant KPI ──────────────────────────────────── */
+    .card--risk                { border-width: 2px; }
+    .card--risk.healthy        { background: rgba(34,197,94,.06);  border-color: rgba(34,197,94,.35);  }
+    .card--risk.monitor        { background: rgba(249,115,22,.07); border-color: rgba(249,115,22,.35); }
+    .card--risk.at-risk        { background: rgba(239,68,68,.08);  border-color: rgba(239,68,68,.35);  }
+    .card--risk .card-value    { font-size: 1.4rem; }
 
     /* Status badge pill on cards */
     .card-badge {
@@ -276,7 +321,7 @@
     }
 
     .panel-head {
-      padding: 16px 20px 14px;
+      padding: 8px 16px 6px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -300,13 +345,13 @@
       padding: 2px 8px;
     }
 
-    .panel-body { padding: 20px; }
+    .panel-body { padding: 10px; }
 
     /* ── Chart ────────────────────────────────────────────────────────────── */
     .chart-svg {
       display: block;
       width: 100%;
-      height: 200px;
+      height: 180px;
     }
 
     .chart-axis-label {
@@ -331,7 +376,10 @@
       stroke-width: 2;
     }
 
-    .chart-dot.risk-high { fill: var(--red); }
+    .chart-dot.risk-high  { fill: var(--red); }
+    .chart-dot-latest     { stroke-width: 2.5; }
+    .chart-dot-ring       { fill: none; stroke-width: 1.5; opacity: 0.3; }
+    .chart-trend-arrow    { font-size: 14px; font-weight: 700; }
 
     .chart-gridline {
       stroke: var(--border);
@@ -352,7 +400,7 @@
       text-transform: uppercase;
       letter-spacing: 0.07em;
       color: var(--text-muted);
-      padding: 0 12px 10px;
+      padding: 0 10px 5px;
       border-bottom: 1px solid var(--border);
     }
 
@@ -372,8 +420,13 @@
       border-left: 3px solid var(--blue);
     }
 
+    .delta      { font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+    .delta.up   { color: var(--red); }
+    .delta.down { color: var(--green); }
+    .delta.flat { color: var(--text-muted); }
+
     tbody td {
-      padding: 11px 12px;
+      padding: 6px 10px;
       color: var(--text-primary);
       font-size: 0.85rem;
     }
@@ -447,7 +500,7 @@
     .filter-bar {
       display: flex;
       gap: 6px;
-      margin-bottom: 16px;
+      margin-bottom: 8px;
     }
 
     .filter-btn {
@@ -475,8 +528,8 @@
 
     /* ── Repo detail ─────────────────────────────────────────────────────── */
     .repo-detail {
-      margin-top: 20px;
-      padding-top: 20px;
+      margin-top: 8px;
+      padding-top: 8px;
       border-top: 1px solid var(--border);
     }
 
@@ -486,37 +539,41 @@
       text-transform: uppercase;
       letter-spacing: 0.07em;
       color: var(--text-muted);
-      margin-bottom: 12px;
+      margin-bottom: 6px;
     }
 
-    /* ── Repo trend section ──────────────────────────────────────────────── */
-    .repo-trend-section {
-      margin-top: 20px;
-      padding-top: 20px;
-      border-top: 1px solid var(--border);
+    .action-checklist {
+      margin: 6px 0 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
-
-    /* ── Repo status timeline ────────────────────────────────────────────── */
-    .repo-status-timeline {
-      border-radius: var(--radius-sm);
-      overflow: hidden;
-      height: 20px;
-      margin-bottom: 14px;
+    .action-checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      color: var(--text-secondary);
     }
-
-    .repo-status-timeline svg {
-      display: block;
-      width: 100%;
-      height: 100%;
+    .action-checklist li::before {
+      content: '☐';
+      flex-shrink: 0;
+      font-size: 0.8rem;
+      margin-top: 0.05em;
+      color: var(--text-muted);
     }
-
+    .action-checklist.at-risk li::before { color: var(--red); }
+    .action-checklist.healthy li::before { color: var(--green); }
 
     /* ── Sparkline ───────────────────────────────────────────────────────── */
     .sparkline-svg {
       display: block;
       width: 100%;
-      height: 48px;
-      margin-bottom: 16px;
+      height: 24px;
+      margin-bottom: 4px;
     }
 
     /* ── Alert banner ────────────────────────────────────────────────────── */
@@ -528,8 +585,8 @@
       border: 1px solid rgba(239,68,68,.25);
       border-left: 4px solid var(--red);
       border-radius: var(--radius-md);
-      padding: 14px 18px;
-      margin-bottom: 24px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
     }
 
     .alert-banner[hidden] { display: none; }
@@ -564,6 +621,106 @@
       font-size: 0.82rem;
       color: var(--red);
       padding: 8px 0;
+    }
+
+    /* ── Executive insight strip ─────────────────────────────────────────── */
+    .insight-strip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-radius: var(--radius-md);
+      border-left: 4px solid;
+      font-size: 0.88rem;
+      font-weight: 500;
+      line-height: 1.4;
+      margin-top: 8px;
+      margin-bottom: 4px;
+    }
+
+    .insight-strip[hidden] { display: none; }
+
+    .insight-strip.healthy {
+      background: rgba(34,197,94,.06);
+      border-color: var(--green);
+      color: var(--text-primary);
+    }
+
+    .insight-strip.monitor {
+      background: rgba(249,115,22,.06);
+      border-color: var(--orange);
+      color: var(--text-primary);
+    }
+
+    .insight-strip.at-risk {
+      background: rgba(239,68,68,.06);
+      border-color: var(--red);
+      color: var(--text-primary);
+    }
+
+    .insight-strip-icon {
+      flex-shrink: 0;
+      font-size: 1rem;
+      line-height: 1;
+    }
+
+    /* ── Reason cell in table ───────────────────────────────────────────── */
+    .reason-cell {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      max-width: 220px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .reason-cell.no-signals {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* ── Risk drivers bullet list in drill-down ──────────────────────────── */
+    .risk-drivers-list {
+      margin: 6px 0 0;
+      padding: 0 0 0 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .risk-drivers-list li {
+      font-size: 0.78rem;
+      line-height: 1.35;
+      color: var(--text-secondary);
+    }
+
+    /* ── Chart insight sentence ──────────────────────────────────────────── */
+    .chart-insight {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+      margin-bottom: 6px;
+      padding: 0 2px;
+      min-height: 1em;
+    }
+
+    /* ── Internal table scrolling ─────────────────────────────────────────── */
+    #projects-container {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    #projects-container thead th,
+    #history-list thead th {
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      z-index: 1;
+    }
+
+    #history-list {
+      max-height: 200px;
+      overflow-y: auto;
     }
   </style>
 </head>
@@ -617,7 +774,13 @@
       </div>
     </div>
 
-    <!-- Projects table -->
+    <!-- Executive insight -->
+    <div id="insight-strip" class="insight-strip" hidden>
+      <span class="insight-strip-icon" id="insight-icon"></span>
+      <span id="insight-text"></span>
+    </div>
+
+    <!-- Repository Status -->
     <div class="section">
       <div class="section-header">
         <span class="section-title">Projects</span>
@@ -625,7 +788,7 @@
       </div>
       <div class="panel">
         <div class="panel-head">
-          <h2>Repository Status</h2>
+          <h2>Repository Health</h2>
           <span id="projects-count" class="panel-count">—</span>
         </div>
         <div class="panel-body">
@@ -640,7 +803,7 @@
       </div>
     </div>
 
-    <!-- History chart -->
+    <!-- Risk Score History -->
     <div class="section">
       <div class="section-header">
         <span class="section-title">Risk Score Over Time</span>
@@ -648,10 +811,11 @@
       </div>
       <div class="panel">
         <div class="panel-head">
-          <h2>Risk Score History</h2>
+          <h2>Risk Trend</h2>
           <span id="chart-count" class="panel-count">— snapshots</span>
         </div>
-        <div class="panel-body" style="padding: 16px 20px 8px;">
+        <div class="panel-body" style="padding: 8px 10px 4px;">
+          <p id="chart-insight" class="chart-insight"></p>
           <svg id="history-chart" class="chart-svg" aria-label="Risk score history chart">
             <defs>
               <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
@@ -665,7 +829,7 @@
       </div>
     </div>
 
-    <!-- History list -->
+    <!-- Snapshot Log -->
     <div class="section">
       <div class="section-header">
         <span class="section-title">Snapshot Log</span>
@@ -673,7 +837,7 @@
       </div>
       <div class="panel">
         <div class="panel-head">
-          <h2>Snapshot History</h2>
+          <h2>Recent Risk Snapshots</h2>
         </div>
         <div class="panel-body">
           <svg id="history-sparkline" class="sparkline-svg" aria-label="Risk score sparkline — last 10 snapshots"></svg>
@@ -720,6 +884,43 @@
         + '</div>';
     }
 
+    function riskScoreCard(score, trend) {
+      var label, cls;
+      if (score <= 20)      { label = 'Low Risk';      cls = 'healthy'; }
+      else if (score <= 50) { label = 'Moderate Risk'; cls = 'monitor'; }
+      else                  { label = 'High Risk';     cls = 'at-risk'; }
+      var arrow = trend === 'Improving' ? '↓' : trend === 'Worsening' ? '↑' : '→';
+      return '<div class="card card--risk ' + cls + '">'
+        + '<div class="card-label">Risk Score</div>'
+        + '<div class="card-value ' + cls + '">' + esc(String(score)) + '%</div>'
+        + '<div class="card-sub ' + cls + '">' + esc(label) + ' ' + arrow + '</div>'
+        + '</div>';
+    }
+
+    function renderInsightStrip(d) {
+      var strip = document.getElementById('insight-strip');
+      var textEl = document.getElementById('insight-text');
+      var iconEl = document.getElementById('insight-icon');
+      if (!strip || !textEl) return;
+
+      var riskCls, riskLabel, icon;
+      if (d.riskScore <= 20)      { riskCls = 'healthy'; riskLabel = 'Low';      icon = '✓'; }
+      else if (d.riskScore <= 50) { riskCls = 'monitor'; riskLabel = 'Moderate'; icon = '⚠'; }
+      else                        { riskCls = 'at-risk'; riskLabel = 'High';     icon = '✕'; }
+
+      var atRisk = d.atRiskProjects;
+      var total  = d.totalProjects;
+      var actionText = atRisk === 0
+        ? 'All ' + total + ' repositories are healthy.'
+        : atRisk + ' of ' + total + ' repositor' + (total === 1 ? 'y requires' : 'ies require') + ' attention.';
+
+      strip.className = 'insight-strip ' + riskCls;
+      strip.hidden = false;
+      iconEl.textContent = icon;
+      textEl.textContent = 'Current portfolio risk is ' + riskLabel
+        + ' at ' + d.riskScore + '%. ' + actionText;
+    }
+
     function showError(id, msg) {
       var el = document.getElementById(id);
       if (el) el.innerHTML = '<p class="error-msg">Failed to load: ' + esc(String(msg)) + '</p>';
@@ -730,7 +931,7 @@
     function renderChart(history) {
       var svg = document.getElementById('history-chart');
       var W = svg.clientWidth  || 880;
-      var H = svg.clientHeight || 200;
+      var H = svg.clientHeight || 130;
       var PAD = { top: 20, right: 24, bottom: 36, left: 40 };
       var innerW = W - PAD.left - PAD.right;
       var innerH = H - PAD.top  - PAD.bottom;
@@ -800,11 +1001,35 @@
       history.forEach(function(h, i) { if (i > 0) lD += ' L ' + xPos(i) + ' ' + yPos(h.riskScore); });
       p.push('<path class="chart-line" d="' + lD + '"/>');
 
-      // Dots
+      // Trend direction from last two points
+      var trendDir = 'stable';
+      if (history.length >= 2) {
+        var delta = history[history.length - 1].riskScore - history[history.length - 2].riskScore;
+        if (delta > 2)       trendDir = 'worsening';
+        else if (delta < -2) trendDir = 'improving';
+      }
+      var trendArrow = trendDir === 'worsening' ? '↑' : trendDir === 'improving' ? '↓' : '→';
+      var trendFill  = trendDir === 'worsening' ? 'var(--red)' : trendDir === 'improving' ? 'var(--green)' : 'var(--text-muted)';
+
+      // Trend arrow — top-right corner
+      p.push('<text class="chart-trend-arrow"'
+        + ' x="' + (PAD.left + innerW) + '" y="' + (PAD.top - 4) + '"'
+        + ' text-anchor="end" fill="' + trendFill + '">' + trendArrow + '</text>');
+
+      // Dots — latest gets larger radius + outer ring
       history.forEach(function(h, i) {
-        var cls = 'chart-dot' + (h.riskScore >= 50 ? ' risk-high' : '');
+        var isLatest  = i === history.length - 1;
+        var isHighRisk = h.riskScore >= 50;
+        var dotStroke = isHighRisk ? 'var(--red)' : 'var(--blue)';
+        var cls = 'chart-dot' + (isHighRisk ? ' risk-high' : '') + (isLatest ? ' chart-dot-latest' : '');
+        var r   = isLatest ? 6 : 4.5;
+        if (isLatest) {
+          p.push('<circle class="chart-dot-ring"'
+            + ' cx="' + xPos(i) + '" cy="' + yPos(h.riskScore) + '" r="10"'
+            + ' stroke="' + dotStroke + '"/>');
+        }
         p.push('<circle class="' + cls + '"'
-          + ' cx="' + xPos(i) + '" cy="' + yPos(h.riskScore) + '" r="4.5">'
+          + ' cx="' + xPos(i) + '" cy="' + yPos(h.riskScore) + '" r="' + r + '">'
           + '<title>' + esc(shortDate(h.lastUpdated)) + ' — ' + h.riskScore + '%</title>'
           + '</circle>');
       });
@@ -818,10 +1043,11 @@
       var svg = document.getElementById('history-sparkline');
       if (!svg) return;
       if (!data.length) { svg.innerHTML = ''; return; }
-      var W = svg.clientWidth || 600;
-      var H = 48;
-      var PAD = 4;
-      var innerW = W - PAD * 2;
+      var W      = svg.clientWidth || 600;
+      var H      = 24;
+      var PAD    = 4;
+      var ARROW  = 16; // reserve px on right for trend arrow
+      var innerW = W - PAD * 2 - ARROW;
       var innerH = H - PAD * 2;
 
       function xPos(i) {
@@ -831,21 +1057,76 @@
         return PAD + innerH - (v / 100) * innerH;
       }
 
+      // Trend direction across visible data range
+      var trendDir = 'stable';
+      if (data.length >= 2) {
+        var delta = data[data.length - 1].riskScore - data[0].riskScore;
+        if (delta > 2)       trendDir = 'worsening';
+        else if (delta < -2) trendDir = 'improving';
+      }
+      var trendArrow = trendDir === 'worsening' ? '↑' : trendDir === 'improving' ? '↓' : '→';
+      var trendFill  = trendDir === 'worsening' ? 'var(--red)' : trendDir === 'improving' ? 'var(--green)' : 'var(--text-muted)';
+
       var pts = data.map(function(h, i) {
         return xPos(i) + ',' + yPos(h.riskScore);
       }).join(' ');
 
-      var last = data[data.length - 1];
+      var last     = data[data.length - 1];
+      var lastX    = xPos(data.length - 1);
+      var lastY    = yPos(last.riskScore);
       var dotColor = last.riskScore >= 50 ? 'var(--red)' : 'var(--blue)';
 
       svg.innerHTML =
         '<polyline points="' + pts + '"'
         + ' fill="none" stroke="var(--blue)" stroke-width="2"'
         + ' stroke-linejoin="round" stroke-linecap="round"/>'
-        + '<circle cx="' + xPos(data.length - 1) + '" cy="' + yPos(last.riskScore) + '" r="3.5"'
+        + '<circle cx="' + lastX + '" cy="' + lastY + '" r="6"'
+        + ' fill="none" stroke="' + dotColor + '" stroke-width="1" opacity="0.3"/>'
+        + '<circle cx="' + lastX + '" cy="' + lastY + '" r="3.5"'
         + ' fill="' + dotColor + '" stroke="var(--surface)" stroke-width="1.5">'
         + '<title>Latest: ' + last.riskScore + '%</title>'
-        + '</circle>';
+        + '</circle>'
+        + '<text x="' + (W - PAD) + '" y="' + (H / 2 + 4) + '"'
+        + ' text-anchor="end" font-size="11" font-weight="700" fill="' + trendFill + '">'
+        + trendArrow + '</text>';
+    }
+
+    // ── Reason formatting ────────────────────────────────────────────────────
+
+    function formatReasons(reasons) {
+      if (!reasons || !reasons.length) return null;
+      if (reasons.length === 1) return reasons[0];
+      return reasons[0] + ' +' + (reasons.length - 1) + ' more';
+    }
+
+    // ── Chart insight sentence ───────────────────────────────────────────────
+
+    function renderChartInsight(history) {
+      var el = document.getElementById('chart-insight');
+      if (!el) return;
+      if (!history || history.length < 2) {
+        el.textContent = 'Not enough history yet to describe risk movement.';
+        return;
+      }
+      var sorted = history.slice().sort(function(a, b) {
+        return new Date(a.lastUpdated) - new Date(b.lastUpdated);
+      });
+      var oldest = sorted[0].riskScore;
+      var latest = sorted[sorted.length - 1].riskScore;
+      var delta  = latest - oldest;
+      var level  = latest <= 20 ? 'Low' : latest <= 50 ? 'Moderate' : 'High';
+      var movement;
+      if (delta > 0) {
+        movement = 'increased by ' + delta + ' point' + (delta === 1 ? '' : 's');
+      } else if (delta < 0) {
+        movement = 'decreased by ' + Math.abs(delta) + ' point' + (Math.abs(delta) === 1 ? '' : 's');
+      } else {
+        movement = 'remained stable';
+      }
+      var suffix = delta === 0
+        ? ' at ' + level + ' (' + latest + '%) across the latest snapshots.'
+        : ' to ' + level + ' (' + latest + '%) over the latest snapshots.';
+      el.textContent = 'Risk ' + movement + suffix;
     }
 
     // ── Data fetchers ────────────────────────────────────────────────────────
@@ -880,17 +1161,16 @@
       fetch('/summary')
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          var fields = [
-            ['totalProjects',   d.totalProjects,   'totalProjects'],
-            ['healthyProjects', d.healthyProjects,  'healthyProjects'],
-            ['atRiskProjects',  d.atRiskProjects,   'atRiskProjects'],
-            ['riskScore',       d.riskScore + '%',  'riskScore'],
-            ['systemStatus',    d.systemStatus,     'systemStatus'],
-            ['alertState',      d.alertState,       'alertState'],
-            ['trend',           d.trend,            'trend'],
-          ];
-          document.getElementById('summary-cards').innerHTML =
-            fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
+          document.getElementById('summary-cards').innerHTML = [
+            card('Total Repos',    d.totalProjects,   'totalProjects'),
+            card('Healthy',        d.healthyProjects,  'healthyProjects'),
+            card('At Risk',        d.atRiskProjects,   'atRiskProjects'),
+            riskScoreCard(d.riskScore, d.trend),
+            card('System Status',  d.systemStatus,     'systemStatus'),
+            card('Alert State',    d.alertState,       'alertState'),
+            card('Trend',          d.trend,            'trend'),
+          ].join('');
+          renderInsightStrip(d);
           updateAlertBanner(d);
         })
         .catch(function(e) { showError('summary-cards', e.message); });
@@ -899,72 +1179,6 @@
     var _projects = [];
     var _selectedId = null;
     var _activeFilter = 'All';
-
-    function buildRepoStatusTimeline(entries) {
-      if (!entries.length) return '';
-      var W = 400, H = 20;
-      var segW = W / entries.length;
-      var lastIdx = entries.length - 1;
-      var rects = entries.map(function(e, i) {
-        var x       = i * segW;
-        var fill    = e.status === 'At Risk' ? 'var(--red)' : 'var(--green)';
-        var isLast  = i === lastIdx;
-        var opacity = isLast ? '1' : '0.8';
-        var stroke  = isLast ? 'rgba(255,255,255,0.7)' : 'none';
-        var d    = new Date(e.lastUpdated);
-        var ts   = (d.getMonth() + 1) + '/' + d.getDate()
-          + ' ' + String(d.getHours()).padStart(2, '0')
-          + ':' + String(d.getMinutes()).padStart(2, '0');
-        return '<rect'
-          + ' x="' + x.toFixed(1) + '" y="0"'
-          + ' width="' + Math.max(1, segW - 1).toFixed(1) + '" height="' + H + '"'
-          + ' fill="' + fill + '" opacity="' + opacity + '"'
-          + ' stroke="' + stroke + '" stroke-width="1.5">'
-          + '<title>' + esc(ts + ' — ' + e.status + (isLast ? ' (latest)' : '')) + '</title>'
-          + '</rect>';
-      }).join('');
-      return '<div class="repo-status-timeline">'
-        + '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"'
-        + ' aria-label="Status timeline — ' + entries.length
-        + ' snapshot' + (entries.length !== 1 ? 's' : '') + ', oldest to newest">'
-        + rects
-        + '</svg>'
-        + '</div>';
-    }
-
-    function renderRepoHistorySection(entries) {
-      var section = document.getElementById('repo-history-section');
-      if (!section) return;
-
-      if (!entries.length) {
-        section.innerHTML =
-          '<p style="color:var(--text-muted);font-size:0.82rem;line-height:1.5;">'
-          + 'No snapshots recorded for this repo yet. '
-          + 'History collects automatically each worker cycle.'
-          + '</p>';
-        return;
-      }
-
-      var sorted = entries.slice().sort(function(a, b) {
-        return new Date(b.lastUpdated) - new Date(a.lastUpdated);
-      });
-      var recent5 = sorted.slice(0, 5);
-
-      var rows = recent5.map(function(e) {
-        var pillClass = e.status === 'At Risk' ? 'at-risk' : 'healthy';
-        return '<tr>'
-          + '<td>' + esc(e.lastUpdated) + '</td>'
-          + '<td><span class="status-pill ' + pillClass + '">' + esc(e.status) + '</span></td>'
-          + '</tr>';
-      }).join('');
-
-      section.innerHTML =
-        buildRepoStatusTimeline(recent5.slice().reverse())
-        + '<table>'
-        + '<thead><tr><th>Timestamp</th><th>Status</th></tr></thead>'
-        + '<tbody>' + rows + '</tbody>'
-        + '</table>';
-    }
 
     function selectRepo(project) {
       _selectedId = project.id;
@@ -978,10 +1192,34 @@
       }
 
       // Render static panel content immediately
-      var isAtRisk    = project.status === 'At Risk';
-      var badgeClass  = isAtRisk ? 'at-risk' : 'healthy';
-      var explanation = isAtRisk ? 'Multiple risk signals detected' : 'No risk signals triggered';
-      var actionHint  = isAtRisk ? 'Investigate recent activity and issue backlog' : 'No immediate action required';
+      var isAtRisk   = project.status === 'At Risk';
+      var badgeClass = isAtRisk ? 'at-risk' : 'healthy';
+      var explanation = isAtRisk
+        ? 'This repository has active risk signals. Left unresolved, these may delay releases or increase operational risk.'
+        : 'No issues detected. This repository is operating within expected health thresholds.';
+
+      var steps = isAtRisk
+        ? [ 'Triage open issues and identify anything blocking a release',
+            'Review recent commits for regressions or stalled work',
+            'Verify CI is passing and no deployments are blocked',
+            'Assign a clear owner to the issue backlog if unaddressed' ]
+        : [ 'Confirm the last deployment completed successfully',
+            'Verify open issues are being reviewed and not accumulating',
+            'Check that branch protection and code review rules remain enabled' ];
+
+      var listItems = steps.map(function(s) { return '<li>' + esc(s) + '</li>'; }).join('');
+
+      var reasons = project.reasons || [];
+      var driversHtml;
+      if (reasons.length) {
+        driversHtml = '<ul class="risk-drivers-list">'
+          + reasons.map(function(r) { return '<li>' + esc(r) + '</li>'; }).join('')
+          + '</ul>';
+      } else if (isAtRisk) {
+        driversHtml = '<p style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">Risk signals detected.</p>';
+      } else {
+        driversHtml = '<p style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">No risk signals detected.</p>';
+      }
 
       var detail = document.getElementById('repo-detail');
       detail.hidden = false;
@@ -992,29 +1230,10 @@
         + '<div class="card"><div class="card-label">ID</div><div class="card-value">' + esc(String(project.id)) + '</div></div>'
         + '<div class="card"><div class="card-label">Status</div><div class="card-value"><span class="card-badge ' + badgeClass + '">' + esc(project.status) + '</span></div></div>'
         + '<div class="card"><div class="card-label">Assessment</div><div class="card-value" style="font-size:0.82rem;font-weight:500;">' + esc(explanation) + '</div></div>'
-        + '<div class="card" style="grid-column:span 2"><div class="card-label">Recommended Action</div><div class="card-value" style="font-size:0.82rem;font-weight:500;color:var(--text-secondary);">' + esc(actionHint) + '</div></div>'
-        + '</div>'
-        + '<div class="repo-trend-section">'
-        + '<div class="repo-detail-label">Trend &amp; History</div>'
-        + '<div id="repo-history-section">'
-        + '<p style="color:var(--text-muted);font-size:0.82rem;">Loading history&hellip;</p>'
-        + '</div>'
+        + '<div class="card" style="grid-column: 1 / -1;"><div class="card-label">Risk Drivers</div>' + driversHtml + '</div>'
+        + '<div class="card"><div class="card-label">Recommended Actions</div>'
+        + '<ul class="action-checklist ' + badgeClass + '">' + listItems + '</ul></div>'
         + '</div>';
-
-      // Fetch repo history; discard result if the user has selected a different repo
-      var fetchedForId = project.id;
-      fetch('/repo-history/' + fetchedForId)
-        .then(function(r) { return r.json(); })
-        .then(function(entries) {
-          if (_selectedId !== fetchedForId) return;
-          renderRepoHistorySection(entries);
-        })
-        .catch(function() {
-          if (_selectedId !== fetchedForId) return;
-          var section = document.getElementById('repo-history-section');
-          if (section) section.innerHTML =
-            '<p style="color:var(--red);font-size:0.82rem;">Failed to load history.</p>';
-        });
     }
 
     function renderProjectsTable(filtered) {
@@ -1035,18 +1254,32 @@
         return;
       }
 
-      var rows = filtered.map(function(p) {
-        var pillClass = p.status === 'At Risk' ? 'at-risk' : 'healthy';
+      var sorted = filtered.slice().sort(function(a, b) {
+        return (a.status === 'At Risk' ? 0 : 1) - (b.status === 'At Risk' ? 0 : 1);
+      });
+
+      var rows = sorted.map(function(p) {
+        var pillClass  = p.status === 'At Risk' ? 'at-risk' : 'healthy';
+        var hasReasons = p.reasons && p.reasons.length > 0;
+        var reasonCell;
+        if (hasReasons) {
+          reasonCell = '<td class="reason-cell">' + esc(formatReasons(p.reasons)) + '</td>';
+        } else if (p.status === 'At Risk') {
+          reasonCell = '<td class="reason-cell">' + esc('Risk signals detected') + '</td>';
+        } else {
+          reasonCell = '<td class="reason-cell no-signals">No risk signals</td>';
+        }
         return '<tr data-id="' + esc(String(p.id)) + '">'
           + '<td>' + esc(String(p.id)) + '</td>'
           + '<td>' + esc(p.name) + '</td>'
           + '<td><span class="status-pill ' + pillClass + '">' + esc(p.status) + '</span></td>'
+          + reasonCell
           + '</tr>';
       }).join('');
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
+        + '<thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Reason</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 
@@ -1097,6 +1330,7 @@
         .then(function(r) { return r.json(); })
         .then(function(history) {
           renderChart(history);
+          renderChartInsight(history);
 
           if (!history.length) {
             document.getElementById('history-list').innerHTML =
@@ -1111,12 +1345,23 @@
           var recent5 = sorted.slice(0, 5);
           renderSparkline(recent5.slice().reverse());
           var rows = recent5.map(function(h, i) {
+            var prev = recent5[i + 1];
+            var deltaCell;
+            if (!prev) {
+              deltaCell = '<td class="delta flat">—</td>';
+            } else {
+              var d = h.riskScore - prev.riskScore;
+              if (d > 0)      deltaCell = '<td class="delta up">↑ +' + d + '</td>';
+              else if (d < 0) deltaCell = '<td class="delta down">↓ ' + d + '</td>';
+              else            deltaCell = '<td class="delta flat">→ 0</td>';
+            }
             return '<tr' + (i === 0 ? ' class="row-latest"' : '') + '>'
               + '<td>' + esc(h.lastUpdated) + '</td>'
               + '<td>' + esc(String(h.totalProjects)) + '</td>'
               + '<td>' + esc(String(h.healthyProjects)) + '</td>'
               + '<td>' + esc(String(h.atRiskProjects)) + '</td>'
               + '<td>' + esc(String(h.riskScore)) + '%</td>'
+              + deltaCell
               + '<td><span class="card-badge ' + colorClass('trend', h.trend) + '">' + esc(h.trend) + '</span></td>'
               + '<td><span class="card-badge ' + colorClass('alertState', h.alertState) + '">' + esc(h.alertState) + '</span></td>'
               + '</tr>';
@@ -1125,7 +1370,7 @@
             '<table>'
             + '<thead><tr>'
             + '<th>Timestamp</th><th>Total</th><th>Healthy</th>'
-            + '<th>At Risk</th><th>Risk Score</th><th>Trend</th><th>Alert State</th>'
+            + '<th>At Risk</th><th>Risk Score</th><th>Δ Score</th><th>Trend</th><th>Alert State</th>'
             + '</tr></thead>'
             + '<tbody>' + rows + '</tbody>'
             + '</table>';

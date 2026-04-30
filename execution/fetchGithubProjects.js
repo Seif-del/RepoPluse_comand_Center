@@ -14,9 +14,14 @@
  *                        OR score >= 2
  *            "Healthy"  otherwise
  *
- *   Score signals (each +1):
- *     isStale       — last push older than STALE_DAYS
- *     hasHighIssues — open_issues_count > ISSUE_THRESHOLD
+ *   Score signals (weighted):
+ *     isStale       — last push older than STALE_DAYS         (+1)
+ *     hasHighIssues — open_issues_count > ISSUE_THRESHOLD     (+2)
+ *
+ *   hasHighIssues outweighs isStale because an open-issue backlog represents
+ *   active, unresolved maintenance burden. Staleness alone may simply reflect
+ *   a stable or intentionally quiet repo — one weak signal is not enough to
+ *   declare risk.
  *
  *   archived is intentionally excluded from scoring. Archiving is a
  *   deliberate human action (read-only retirement), not an operational
@@ -31,7 +36,7 @@ const { GITHUB_TOKEN, GITHUB_ORG, STALE_DAYS, INACTIVE_DAYS, ISSUE_THRESHOLD } =
 
 const MOCK = [
   { id: 101, name: 'colaberry/data-pipeline',      status: 'Healthy',  archived: false, disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
-  { id: 102, name: 'colaberry/auth-service',        status: 'At Risk',  archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: true,  score: 2 },
+  { id: 102, name: 'colaberry/auth-service',        status: 'At Risk',  archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: true,  score: 3 },
   { id: 103, name: 'colaberry/reporting-dashboard', status: 'Healthy',  archived: true,  disabled: false, isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
   { id: 104, name: 'colaberry/ml-feature-store',    status: 'Healthy',  archived: false, disabled: false, isStale: true,  isInactive: true,  hasHighIssues: false, score: 1 },
   { id: 105, name: 'colaberry/infra-terraform',     status: 'At Risk',  archived: false, disabled: true,  isStale: false, isInactive: false, hasHighIssues: false, score: 0 },
@@ -39,7 +44,14 @@ const MOCK = [
 
 async function fetchGithubProjects() {
   if (!GITHUB_ORG) {
-    return MOCK;
+    return MOCK.map(function(repo) {
+      const reasons = [];
+      if (repo.isStale)       reasons.push('No recent activity');
+      if (repo.hasHighIssues) reasons.push('High issue backlog');
+      if (repo.disabled)      reasons.push('Repository is disabled');
+      if (repo.status === 'At Risk' && reasons.length === 0) reasons.push('Risk signals detected');
+      return { id: repo.id, name: repo.name, status: repo.status, reasons };
+    });
   }
 
   const url = 'https://api.github.com/orgs/' + encodeURIComponent(GITHUB_ORG) + '/repos';
@@ -75,12 +87,15 @@ async function fetchGithubProjects() {
     const hasHighIssues  = repo.open_issues_count > ISSUE_THRESHOLD;
 
     let score = 0;
-    if (isStale)       score++;
-    if (hasHighIssues) score++;
+    const reasons = [];
+    if (isStale)               { score += 1; reasons.push('No recent activity'); }
+    if (hasHighIssues)         { score += 2; reasons.push('High issue backlog'); }
+    if (repo.disabled === true)  reasons.push('Repository is disabled');
 
     const status = repo.disabled === true || score >= 2 ? 'At Risk' : 'Healthy';
+    if (status === 'At Risk' && reasons.length === 0) reasons.push('Risk signals detected');
 
-    return { id: repo.id, name: repo.full_name, status };
+    return { id: repo.id, name: repo.full_name, status, reasons };
   });
 }
 
