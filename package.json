@@ -1,0 +1,19 @@
+{
+  "name": "repopulse-command-center",
+  "version": "0.1.0",
+  "description": "AI-assisted project intelligence platform for GitHub repository monitoring.",
+  "main": "backend/server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "node backend/server.js",
+    "test": "jest",
+    "test:integration": "cross-env TEST_INTEGRATION=true jest --testPathPattern=tests/integration",
+    "db:migrate": "node-pg-migrate -m migrations up",
+    "db:migrate:down": "node-pg-migrate -m migrations down",
+    "db:migrate:status": "node-pg-migrate -m migrations status"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
