@@ -6,7 +6,10 @@
  */
 async function sendSlackAlert(summary) {
   const { SLACK_WEBHOOK_URL } = require('../../config/paths');
-  if (!SLACK_WEBHOOK_URL) return;
+  if (!SLACK_WEBHOOK_URL) {
+    console.log('[sendSlackAlert] SLACK_WEBHOOK_URL not configured — Slack notification skipped.');
+    return;
+  }
 
   const text = [
     `*RepoPulse Alert*`,
@@ -25,6 +28,7 @@ async function sendSlackAlert(summary) {
   if (!res.ok) {
     throw new Error(`Slack webhook returned ${res.status}`);
   }
+  console.log('[sendSlackAlert] Slack notification sent successfully.');
 }
 
 module.exports = { sendSlackAlert };

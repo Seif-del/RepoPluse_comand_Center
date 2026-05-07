@@ -20,7 +20,10 @@ function requireNodemailer() {
  */
 async function sendEmailAlert(summary) {
   const { ALERT_EMAIL_TO, ALERT_EMAIL_FROM, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = require('../../config/paths');
-  if (!SMTP_HOST || !ALERT_EMAIL_TO) return;
+  if (!SMTP_HOST || !ALERT_EMAIL_TO) {
+    console.log(`[sendEmailAlert] SMTP_HOST or ALERT_EMAIL_TO not configured — email notification skipped.`);
+    return;
+  }
 
   const nodemailer = requireNodemailer();
 
@@ -48,6 +51,7 @@ async function sendEmailAlert(summary) {
     subject,
     text,
   });
+  console.log(`[sendEmailAlert] Email notification sent to ${ALERT_EMAIL_TO}.`);
 }
 
 module.exports = { sendEmailAlert };
