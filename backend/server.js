@@ -9,6 +9,7 @@ const db            = require('../execution/db');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler  = require('./middleware/errorHandler');
 const authRoutes    = require('./routes/authRoutes');
+const repoRoutes    = require('./routes/repoRoutes');
 const syncGithubProjects = require('../execution/syncGithubProjects');
 const summaryHistory     = require('../execution/summaryHistory');
 
@@ -25,7 +26,8 @@ let _syncedProjects = null;
 
 app.use(requestLogger);
 
-app.use('/auth', authRoutes);
+app.use('/auth',     authRoutes);
+app.use('/api/repos', repoRoutes);
 
 app.get('/', (req, res) => {
   res.send('RepoPulse backend is running');

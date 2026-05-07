@@ -477,9 +477,15 @@
     <span class="topbar-title">RepoPulse</span>
     <span class="topbar-subtitle">Command Center</span>
     <div class="topbar-spacer"></div>
-    <div class="pulse-indicator">
+    <button id="sync-btn" onclick="syncRepos()" style="
+      font-size:0.75rem;font-weight:600;padding:5px 14px;border-radius:99px;
+      border:1px solid var(--border);background:var(--surface-2);
+      color:var(--text-secondary);cursor:pointer;transition:background 0.1s,color 0.1s;">
+      Sync Now
+    </button>
+    <div class="pulse-indicator" style="margin-left:12px;">
       <div class="pulse-dot"></div>
-      Live · 3s
+      <span id="pulse-label">Live · 60s</span>
     </div>
   </header>
 
@@ -579,25 +585,25 @@
         .replace(/"/g, '&quot;');
     }
 
-    function colorClass(field, value) {
-      if (typeof value !== 'string') return '';
-      var v = value.toLowerCase().replace(/\s+/g, '-');
-      if (field === 'systemStatus') return v === 'at-risk' ? 'at-risk' : 'healthy';
-      if (field === 'alertState')   return v;
-      if (field === 'trend')        return v;
+    function labelClass(label) {
+      if (!label) return '';
+      var v = label.toLowerCase();
+      if (v === 'critical') return 'at-risk';
+      if (v === 'at-risk')  return 'at-risk';
+      if (v === 'healthy')  return 'healthy';
       return '';
     }
 
-    function badgeFields() {
-      return { systemStatus: true, alertState: true, trend: true };
+    function trendArrow(trend) {
+      if (trend === 'improving')  return ' ↑';
+      if (trend === 'worsening')  return ' ↓';
+      return '';
     }
 
-    function card(label, value, field) {
-      var cls = colorClass(field, value);
-      var useBadge = badgeFields()[field] && cls;
-      var valueHtml = useBadge
+    function card(label, value, cls) {
+      var valueHtml = cls
         ? '<span class="card-badge ' + cls + '">' + esc(String(value)) + '</span>'
-        : '<div class="card-value' + (cls ? ' ' + cls : '') + '">' + esc(String(value)) + '</div>';
+        : '<div class="card-value">' + esc(String(value)) + '</div>';
       return '<div class="card">'
         + '<div class="card-label">' + esc(label) + '</div>'
         + valueHtml
@@ -606,12 +612,12 @@
 
     function showError(id, msg) {
       var el = document.getElementById(id);
-      if (el) el.innerHTML = '<p class="error-msg">Failed to load: ' + esc(String(msg)) + '</p>';
+      if (el) el.innerHTML = '<p class="error-msg">Error: ' + esc(String(msg)) + '</p>';
     }
 
-    // ── Chart ────────────────────────────────────────────────────────────────
+    // ── Chart (avg risk score per sync window) ────────────────────────────────
 
-    function renderChart(history) {
+    function renderChart(points) {
       var svg = document.getElementById('history-chart');
       var W = svg.clientWidth  || 880;
       var H = svg.clientHeight || 200;
@@ -620,20 +626,18 @@
       var innerH = H - PAD.top  - PAD.bottom;
 
       var countEl = document.getElementById('chart-count');
-      if (countEl) countEl.textContent = history.length + ' snapshot' + (history.length !== 1 ? 's' : '');
+      if (countEl) countEl.textContent = points.length + ' snapshot' + (points.length !== 1 ? 's' : '');
 
-      if (!history.length) {
-        svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" class="chart-axis-label">No data yet</text>';
+      if (!points.length) {
+        svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" class="chart-axis-label">No data yet — run a sync first</text>';
         return;
       }
 
-      var yMin = 0, yMax = 100;
-
       function xPos(i) {
-        return PAD.left + (history.length === 1 ? innerW / 2 : i * (innerW / (history.length - 1)));
+        return PAD.left + (points.length === 1 ? innerW / 2 : i * (innerW / (points.length - 1)));
       }
       function yPos(v) {
-        return PAD.top + innerH - ((v - yMin) / (yMax - yMin)) * innerH;
+        return PAD.top + innerH - (v / 100) * innerH;
       }
       function shortDate(iso) {
         var d = new Date(iso);
@@ -643,53 +647,38 @@
       }
 
       var p = [];
-
-      // Gradient def
       p.push('<defs>'
         + '<linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">'
         + '<stop offset="0%"   stop-color="#3b82f6" stop-opacity="0.2"/>'
         + '<stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>'
         + '</linearGradient></defs>');
 
-      // Gridlines + Y labels
       [0, 25, 50, 75, 100].forEach(function(v) {
         var y = yPos(v);
-        p.push('<line class="chart-gridline"'
-          + ' x1="' + PAD.left + '" y1="' + y + '"'
-          + ' x2="' + (PAD.left + innerW) + '" y2="' + y + '"/>');
-        p.push('<text class="chart-axis-label"'
-          + ' x="' + (PAD.left - 8) + '" y="' + (y + 4) + '"'
-          + ' text-anchor="end">' + v + '</text>');
+        p.push('<line class="chart-gridline" x1="' + PAD.left + '" y1="' + y + '" x2="' + (PAD.left + innerW) + '" y2="' + y + '"/>');
+        p.push('<text class="chart-axis-label" x="' + (PAD.left - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + v + '</text>');
       });
 
-      // X labels — first and last
-      [[0,'start'], [history.length - 1, 'end']].forEach(function(pair) {
+      [[0,'start'], [points.length - 1, 'end']].forEach(function(pair) {
         var i = pair[0], anchor = pair[1];
-        if (!history[i]) return;
-        p.push('<text class="chart-axis-label"'
-          + ' x="' + xPos(i) + '" y="' + (H - 8) + '"'
-          + ' text-anchor="' + anchor + '">'
-          + esc(shortDate(history[i].lastUpdated)) + '</text>');
+        if (!points[i]) return;
+        p.push('<text class="chart-axis-label" x="' + xPos(i) + '" y="' + (H - 8) + '" text-anchor="' + anchor + '">'
+          + esc(shortDate(points[i].at)) + '</text>');
       });
 
-      // Area
-      var aD = 'M ' + xPos(0) + ' ' + yPos(history[0].riskScore);
-      history.forEach(function(h, i) { if (i > 0) aD += ' L ' + xPos(i) + ' ' + yPos(h.riskScore); });
-      aD += ' L ' + xPos(history.length - 1) + ' ' + yPos(yMin)
-          + ' L ' + xPos(0) + ' ' + yPos(yMin) + ' Z';
+      var aD = 'M ' + xPos(0) + ' ' + yPos(points[0].score);
+      points.forEach(function(pt, i) { if (i > 0) aD += ' L ' + xPos(i) + ' ' + yPos(pt.score); });
+      aD += ' L ' + xPos(points.length - 1) + ' ' + yPos(0) + ' L ' + xPos(0) + ' ' + yPos(0) + ' Z';
       p.push('<path class="chart-area" d="' + aD + '"/>');
 
-      // Line
-      var lD = 'M ' + xPos(0) + ' ' + yPos(history[0].riskScore);
-      history.forEach(function(h, i) { if (i > 0) lD += ' L ' + xPos(i) + ' ' + yPos(h.riskScore); });
+      var lD = 'M ' + xPos(0) + ' ' + yPos(points[0].score);
+      points.forEach(function(pt, i) { if (i > 0) lD += ' L ' + xPos(i) + ' ' + yPos(pt.score); });
       p.push('<path class="chart-line" d="' + lD + '"/>');
 
-      // Dots
-      history.forEach(function(h, i) {
-        var cls = 'chart-dot' + (h.riskScore >= 50 ? ' risk-high' : '');
-        p.push('<circle class="' + cls + '"'
-          + ' cx="' + xPos(i) + '" cy="' + yPos(h.riskScore) + '" r="4.5">'
-          + '<title>' + esc(shortDate(h.lastUpdated)) + ' — ' + h.riskScore + '%</title>'
+      points.forEach(function(pt, i) {
+        var cls = 'chart-dot' + (pt.score >= 60 ? ' risk-high' : '');
+        p.push('<circle class="' + cls + '" cx="' + xPos(i) + '" cy="' + yPos(pt.score) + '" r="4.5">'
+          + '<title>' + esc(shortDate(pt.at)) + ' — avg score: ' + pt.score + '</title>'
           + '</circle>');
       });
 
@@ -703,49 +692,54 @@
       if (!svg) return;
       if (!data.length) { svg.innerHTML = ''; return; }
       var W = svg.clientWidth || 600;
-      var H = 48;
-      var PAD = 4;
-      var innerW = W - PAD * 2;
-      var innerH = H - PAD * 2;
-
-      function xPos(i) {
-        return PAD + (data.length === 1 ? innerW / 2 : i * (innerW / (data.length - 1)));
-      }
-      function yPos(v) {
-        return PAD + innerH - (v / 100) * innerH;
-      }
-
-      var pts = data.map(function(h, i) {
-        return xPos(i) + ',' + yPos(h.riskScore);
-      }).join(' ');
-
+      var H = 48, PAD = 4;
+      var innerW = W - PAD * 2, innerH = H - PAD * 2;
+      function xPos(i) { return PAD + (data.length === 1 ? innerW / 2 : i * (innerW / (data.length - 1))); }
+      function yPos(v) { return PAD + innerH - (v / 100) * innerH; }
+      var pts = data.map(function(pt, i) { return xPos(i) + ',' + yPos(pt.score); }).join(' ');
       var last = data[data.length - 1];
-      var dotColor = last.riskScore >= 50 ? 'var(--red)' : 'var(--blue)';
-
       svg.innerHTML =
-        '<polyline points="' + pts + '"'
-        + ' fill="none" stroke="var(--blue)" stroke-width="2"'
-        + ' stroke-linejoin="round" stroke-linecap="round"/>'
-        + '<circle cx="' + xPos(data.length - 1) + '" cy="' + yPos(last.riskScore) + '" r="3.5"'
-        + ' fill="' + dotColor + '" stroke="var(--surface)" stroke-width="1.5">'
-        + '<title>Latest: ' + last.riskScore + '%</title>'
-        + '</circle>';
+        '<polyline points="' + pts + '" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
+        + '<circle cx="' + xPos(data.length - 1) + '" cy="' + yPos(last.score) + '" r="3.5"'
+        + ' fill="' + (last.score >= 60 ? 'var(--red)' : 'var(--blue)') + '" stroke="var(--surface)" stroke-width="1.5">'
+        + '<title>Latest avg score: ' + last.score + '</title></circle>';
     }
 
-    // ── Data fetchers ────────────────────────────────────────────────────────
+    // ── Sync ─────────────────────────────────────────────────────────────────
+
+    function syncRepos() {
+      var btn = document.getElementById('sync-btn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      fetch('/api/repos/sync', { method: 'POST' })
+        .then(function(r) {
+          btn.textContent = r.ok ? 'Sync started' : 'Sync failed';
+          setTimeout(function() {
+            btn.textContent = 'Sync Now';
+            btn.disabled = false;
+            refresh();
+          }, 3000);
+        })
+        .catch(function() {
+          btn.textContent = 'Sync Now';
+          btn.disabled = false;
+        });
+    }
+
+    // ── Summary ───────────────────────────────────────────────────────────────
 
     function loadSummary() {
-      fetch('/summary')
+      fetch('/api/repos/summary')
         .then(function(r) { return r.json(); })
         .then(function(d) {
+          var lastSync = d.lastSyncedAt ? new Date(d.lastSyncedAt).toLocaleString() : 'Never';
           var fields = [
-            ['totalProjects',   d.totalProjects,   'totalProjects'],
-            ['healthyProjects', d.healthyProjects,  'healthyProjects'],
-            ['atRiskProjects',  d.atRiskProjects,   'atRiskProjects'],
-            ['riskScore',       d.riskScore + '%',  'riskScore'],
-            ['systemStatus',    d.systemStatus,     'systemStatus'],
-            ['alertState',      d.alertState,       'alertState'],
-            ['trend',           d.trend,            'trend'],
+            ['Repos',         d.totalRepos  != null ? d.totalRepos  : '—', ''],
+            ['Healthy',       d.healthy     != null ? d.healthy     : '—', 'healthy'],
+            ['At Risk',       d.atRisk      != null ? d.atRisk      : '—', d.atRisk > 0 ? 'at-risk' : ''],
+            ['Critical',      d.critical    != null ? d.critical    : '—', d.critical > 0 ? 'at-risk' : ''],
+            ['Avg Score',     d.avgScore    != null ? d.avgScore    : '—', ''],
+            ['Last Synced',   lastSync,                                    ''],
           ];
           document.getElementById('summary-cards').innerHTML =
             fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
@@ -753,72 +747,74 @@
         .catch(function(e) { showError('summary-cards', e.message); });
     }
 
-    // ── Projects: filter + drill-down ────────────────────────────────────────
+    // ── Repos table ───────────────────────────────────────────────────────────
 
-    var _projects = [];
+    var _repos = [];
     var _selectedId = null;
     var _activeFilter = 'All';
 
-    function selectRepo(project) {
-      _selectedId = project.id;
+    function selectRepo(repo) {
+      if (!repo) return;
+      _selectedId = repo.id;
 
-      // Highlight selected row (only visible rows are in DOM)
       var tbody = document.querySelector('#projects-container tbody');
       if (tbody) {
         Array.prototype.forEach.call(tbody.querySelectorAll('tr'), function(tr) {
-          tr.classList.toggle('row-selected', tr.dataset.id === String(project.id));
+          tr.classList.toggle('row-selected', tr.dataset.id === String(repo.id));
         });
       }
 
-      // Render detail panel
-      var isAtRisk    = project.status === 'At Risk';
-      var badgeClass  = isAtRisk ? 'at-risk' : 'healthy';
-      var explanation = isAtRisk ? 'Multiple risk signals detected' : 'No risk signals triggered';
-      var actionHint  = isAtRisk ? 'Investigate recent activity and issue backlog' : 'No immediate action required';
+      var cls     = labelClass(repo.label);
+      var factors = Array.isArray(repo.factors) && repo.factors.length
+        ? repo.factors.map(function(f) { return '<li>' + esc(f) + '</li>'; }).join('')
+        : '<li>No risk signals triggered</li>';
+      var syncTime = repo.lastSyncedAt ? new Date(repo.lastSyncedAt).toLocaleString() : 'Not synced yet';
 
       var detail = document.getElementById('repo-detail');
       detail.hidden = false;
       detail.innerHTML =
         '<div class="repo-detail-label">Selected Repository</div>'
         + '<div class="card-grid">'
-        + '<div class="card"><div class="card-label">Name</div><div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(project.name) + '</div></div>'
-        + '<div class="card"><div class="card-label">ID</div><div class="card-value">' + esc(String(project.id)) + '</div></div>'
-        + '<div class="card"><div class="card-label">Status</div><div class="card-value"><span class="card-badge ' + badgeClass + '">' + esc(project.status) + '</span></div></div>'
-        + '<div class="card"><div class="card-label">Assessment</div><div class="card-value" style="font-size:0.82rem;font-weight:500;">' + esc(explanation) + '</div></div>'
-        + '<div class="card" style="grid-column:span 2"><div class="card-label">Recommended Action</div><div class="card-value" style="font-size:0.82rem;font-weight:500;color:var(--text-secondary);">' + esc(actionHint) + '</div></div>'
-        + '</div>';
+        + '<div class="card" style="grid-column:span 2"><div class="card-label">Name</div>'
+        +   '<div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(repo.fullName) + '</div></div>'
+        + card('Risk Score', repo.score != null ? repo.score : '—', '')
+        + card('Label',      repo.label || '—',                     cls)
+        + card('Trend',      repo.trend  || '—',                    repo.trend === 'improving' ? 'healthy' : repo.trend === 'worsening' ? 'at-risk' : '')
+        + card('Last Synced', syncTime, '')
+        + '</div>'
+        + '<div class="repo-detail-label" style="margin-top:14px;">Risk Factors</div>'
+        + '<ul style="font-size:0.82rem;color:var(--text-secondary);padding-left:18px;line-height:1.8;">' + factors + '</ul>';
     }
 
-    function renderProjectsTable(filtered) {
+    function renderReposTable(filtered) {
       var countEl = document.getElementById('projects-count');
       if (countEl) {
         countEl.textContent = _activeFilter === 'All'
           ? filtered.length + ' repo' + (filtered.length !== 1 ? 's' : '')
-          : filtered.length + ' / ' + _projects.length + ' repo' + (_projects.length !== 1 ? 's' : '');
+          : filtered.length + ' / ' + _repos.length;
       }
 
       if (!filtered.length) {
         document.getElementById('projects-container').innerHTML =
-          '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories match the current filter.</p>';
-        _selectedId = null;
-        var detail = document.getElementById('repo-detail');
-        detail.hidden = false;
-        detail.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories match the current filter.</p>';
+          '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories match this filter.</p>';
+        document.getElementById('repo-detail').hidden = true;
         return;
       }
 
-      var rows = filtered.map(function(p) {
-        var pillClass = p.status === 'At Risk' ? 'at-risk' : 'healthy';
-        return '<tr data-id="' + esc(String(p.id)) + '">'
-          + '<td>' + esc(String(p.id)) + '</td>'
-          + '<td>' + esc(p.name) + '</td>'
-          + '<td><span class="status-pill ' + pillClass + '">' + esc(p.status) + '</span></td>'
+      var rows = filtered.map(function(r) {
+        var cls = labelClass(r.label);
+        var score = r.score != null ? r.score : '—';
+        return '<tr data-id="' + esc(String(r.id)) + '">'
+          + '<td>' + esc(String(r.id)) + '</td>'
+          + '<td>' + esc(r.fullName) + '</td>'
+          + '<td><span class="status-pill ' + cls + '">' + esc(r.label || 'unknown') + '</span></td>'
+          + '<td style="font-family:var(--font-mono);font-size:0.82rem;">' + esc(String(score)) + trendArrow(r.trend) + '</td>'
           + '</tr>';
       }).join('');
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>'
+        + '<thead><tr><th>ID</th><th>Repository</th><th>Label</th><th>Score</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 
@@ -826,13 +822,12 @@
       tbody.addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr) return;
-        var project = _projects.find(function(p) { return String(p.id) === tr.dataset.id; });
-        if (project) selectRepo(project);
+        var found = _repos.find(function(r) { return String(r.id) === tr.dataset.id; });
+        if (found) selectRepo(found);
       });
 
-      // Restore selection if still visible, else auto-select first visible
       var toSelect = _selectedId !== null
-        ? filtered.find(function(p) { return p.id === _selectedId; })
+        ? filtered.find(function(r) { return r.id === _selectedId; })
         : null;
       selectRepo(toSelect || filtered[0]);
     }
@@ -841,75 +836,50 @@
       Array.prototype.forEach.call(document.querySelectorAll('.filter-btn'), function(btn) {
         btn.classList.toggle('active', btn.dataset.filter === _activeFilter);
       });
-      var filtered = _activeFilter === 'All'
-        ? _projects
-        : _projects.filter(function(p) { return p.status === _activeFilter; });
-      renderProjectsTable(filtered);
+      var filtered = _repos.filter(function(r) {
+        if (_activeFilter === 'All')      return true;
+        if (_activeFilter === 'At Risk')  return r.label === 'critical' || r.label === 'at-risk';
+        if (_activeFilter === 'Healthy')  return r.label === 'healthy';
+        return true;
+      });
+      renderReposTable(filtered);
     }
 
-    function loadProjects() {
-      fetch('/projects')
+    function loadRepos() {
+      fetch('/api/repos')
         .then(function(r) { return r.json(); })
-        .then(function(projects) {
-          _projects = projects;
-          if (!projects.length) {
+        .then(function(d) {
+          _repos = d.repos || [];
+          if (!_repos.length) {
             document.getElementById('projects-count').textContent = '0 repos';
             document.getElementById('projects-container').innerHTML =
-              '<p style="color:var(--text-muted);font-size:0.85rem;">No projects found.</p>';
+              '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories synced yet — click Sync Now.</p>';
             document.getElementById('repo-detail').hidden = true;
             return;
           }
           applyFilter();
-        })
-        .catch(function(e) { showError('projects-container', e.message); });
-    }
 
-    function loadHistory() {
-      fetch('/history')
-        .then(function(r) { return r.json(); })
-        .then(function(history) {
-          renderChart(history);
-
-          if (!history.length) {
-            document.getElementById('history-list').innerHTML =
-              '<p style="color:var(--text-muted);font-size:0.85rem;">No history recorded yet.</p>';
-            renderSparkline([]);
-            return;
-          }
-
-          // Sort by timestamp descending (newest first), take 10
-          var sorted = history.slice().sort(function(a, b) {
-            return new Date(b.lastUpdated) - new Date(a.lastUpdated);
+          // Build chart points from risk scores (group by date, take avg)
+          var byDate = {};
+          _repos.forEach(function(r) {
+            if (r.scoredAt == null || r.score == null) return;
+            var day = r.scoredAt.slice(0, 10);
+            if (!byDate[day]) byDate[day] = { sum: 0, count: 0, at: r.scoredAt };
+            byDate[day].sum += r.score;
+            byDate[day].count++;
           });
-          var recent = sorted.slice(0, 10);
+          var points = Object.keys(byDate).sort().map(function(day) {
+            return { at: byDate[day].at, score: Math.round(byDate[day].sum / byDate[day].count) };
+          });
+          renderChart(points);
+          renderSparkline(points.slice(-10));
 
-          // Sparkline expects chronological order (oldest→newest left→right)
-          renderSparkline(recent.slice().reverse());
-
-          var rows = recent.map(function(h) {
-            return '<tr>'
-              + '<td>' + esc(h.lastUpdated) + '</td>'
-              + '<td>' + esc(String(h.totalProjects)) + '</td>'
-              + '<td>' + esc(String(h.healthyProjects)) + '</td>'
-              + '<td>' + esc(String(h.atRiskProjects)) + '</td>'
-              + '<td>' + esc(String(h.riskScore)) + '%</td>'
-              + '<td><span class="card-badge ' + colorClass('trend', h.trend) + '">' + esc(h.trend) + '</span></td>'
-              + '<td><span class="card-badge ' + colorClass('alertState', h.alertState) + '">' + esc(h.alertState) + '</span></td>'
-              + '</tr>';
-          }).join('');
-
-          document.getElementById('history-list').innerHTML =
-            '<table>'
-            + '<thead><tr>'
-            + '<th>Timestamp</th><th>Total</th><th>Healthy</th>'
-            + '<th>At Risk</th><th>Risk Score</th><th>Trend</th><th>Alert State</th>'
-            + '</tr></thead>'
-            + '<tbody>' + rows + '</tbody>'
-            + '</table>';
+          var countEl = document.getElementById('chart-count');
+          if (countEl) countEl.textContent = points.length + ' day' + (points.length !== 1 ? 's' : '');
         })
         .catch(function(e) {
-          document.getElementById('history-list').innerHTML =
-            '<p class="error-msg">Failed to load: ' + esc(String(e.message)) + '</p>';
+          showError('projects-container', e.message);
+          renderChart([]);
         });
     }
 
@@ -926,12 +896,11 @@
 
     function refresh() {
       loadSummary();
-      loadProjects();
-      loadHistory();
+      loadRepos();
     }
 
     refresh();
-    setInterval(refresh, 3000);
+    setInterval(refresh, 60000);
   </script>
 </body>
 </html>

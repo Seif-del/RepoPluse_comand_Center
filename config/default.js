@@ -25,6 +25,10 @@ module.exports = {
   // AI analysis thresholds (Phase 5+)
   minSnapshotsForFullConfidence: 28,
 
+  // Token encryption — TOKEN_ENCRYPTION_KEY must be a 64-character hex string (32 bytes).
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || null,
+
   // Logging
   logLevel: process.env.LOG_LEVEL || 'info',
 

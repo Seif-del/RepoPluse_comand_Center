@@ -228,9 +228,9 @@ describe('server — no Phase 2+ routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('GET /api/repos returns 404', async () => {
+  it('GET /api/repos returns 401 (route exists, auth required)', async () => {
     const res = await get('/api/repos');
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(401);
   });
 });
 

@@ -142,16 +142,22 @@ describe('upsertUser — success: db.query call shape', () => {
     expect(params[3]).toBe(DEFAULT_ROLE);
   });
 
-  it('passes now as the fifth query parameter (used for created_at and updated_at)', async () => {
+  it('passes now as the sixth query parameter (used for created_at and updated_at)', async () => {
     await upsertUser(validArgs());
     const params = mockDb.query.mock.calls[0][1];
-    expect(params[4]).toBe(NOW);
+    expect(params[5]).toBe(NOW);
   });
 
-  it('query has exactly five parameters', async () => {
+  it('query has exactly six parameters (includes accessTokenEnc)', async () => {
     await upsertUser(validArgs());
     const params = mockDb.query.mock.calls[0][1];
-    expect(params).toHaveLength(5);
+    expect(params).toHaveLength(6);
+  });
+
+  it('passes null accessTokenEnc as the fifth parameter when omitted', async () => {
+    await upsertUser(validArgs());
+    const params = mockDb.query.mock.calls[0][1];
+    expect(params[4]).toBeNull();
   });
 });
 

@@ -7,6 +7,7 @@ const { exchangeOAuthCode }     = require('../../execution/auth/exchangeOAuthCod
 const { upsertUser }            = require('../../execution/auth/upsertUser');
 const { createSession }         = require('../../execution/auth/createSession');
 const { invalidateSession }     = require('../../execution/auth/invalidateSession');
+const { encrypt }               = require('../../execution/crypto/encryptToken');
 
 const router = express.Router();
 
@@ -14,7 +15,6 @@ const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 
 // GET /github
 // Builds and issues a redirect to the GitHub OAuth authorization page.
-// config is read from req.app.locals.config.github (set during app bootstrap).
 router.get('/github', (req, res, next) => {
   const config = req.app.locals.config && req.app.locals.config.github;
 
@@ -38,7 +38,8 @@ router.get('/github', (req, res, next) => {
 
 // GET /callback
 // GitHub redirects here after the user authorises the OAuth app.
-// Exchanges the code, upserts the user, creates a session, and redirects.
+// Exchanges the code, encrypts and stores the access token, upserts the user,
+// creates a session, and redirects to the dashboard.
 router.get('/callback', async (req, res, next) => {
   const code = req.query && req.query.code;
 
@@ -52,10 +53,10 @@ router.get('/callback', async (req, res, next) => {
   const github    = appConfig && appConfig.github;
 
   if (
-    !github                      ||
-    !github.clientId             ||
-    !github.clientSecret         ||
-    !github.callbackUrl          ||
+    !github                       ||
+    !github.clientId              ||
+    !github.clientSecret          ||
+    !github.callbackUrl           ||
     !appConfig.sessionExpiryHours ||
     !appConfig.defaultUserRole
   ) {
@@ -82,6 +83,13 @@ router.get('/callback', async (req, res, next) => {
       fetchFn,
     });
 
+    // Encrypt the access token before storage. Falls back to null when no
+    // encryption key is configured (development without env vars set).
+    let accessTokenEnc = null;
+    if (appConfig.tokenEncryptionKey) {
+      accessTokenEnc = encrypt(oauthResult.accessToken, appConfig.tokenEncryptionKey);
+    }
+
     const now = new Date();
 
     const user = await upsertUser({
@@ -90,6 +98,7 @@ router.get('/callback', async (req, res, next) => {
       githubUsername: oauthResult.githubUsername,
       email:          oauthResult.email,
       defaultRole:    appConfig.defaultUserRole,
+      accessTokenEnc,
       now,
     });
 
