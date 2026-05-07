@@ -1,36 +1,43 @@
-# Node
+# ─── Node ─────────────────────────────────────────────────────────────────────
 node_modules/
 dist/
 build/
 .npm/
 
-# Environment
+# ─── Environment ──────────────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
 
-# Logs
+# ─── Logs ─────────────────────────────────────────────────────────────────────
 logs/
 *.log
 npm-debug.log*
 
-# OS
+# ─── Test output ──────────────────────────────────────────────────────────────
+coverage/
+*.test.js.snap
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Editor
+# ─── Editor ───────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Temp / scratch
+# ─── Temp / scratch ───────────────────────────────────────────────────────────
 tmp/
 temp/
 
-# Runtime-generated data files
-execution/summaryHistory.json
+# ─── Runtime-generated data files (legacy pre-MVP ingestion) ──────────────────
+execution/summaryHistory*.json
+execution/repoHistory*.json
+execution/projects.json
+execution/managedRepos.json
 
-# Claude Code
+# ─── Claude Code ──────────────────────────────────────────────────────────────
 .claude/
