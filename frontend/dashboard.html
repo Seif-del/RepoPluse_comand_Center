@@ -704,6 +704,19 @@
       min-height: 1em;
     }
 
+    /* ── Snapshot insight sentence ──────────────────────────────────────────── */
+    .snapshot-insight {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+      margin: 0 0 6px;
+      padding: 0 2px;
+      min-height: 1em;
+    }
+
+    .snapshot-insight.worsening { color: var(--red);   }
+    .snapshot-insight.improving { color: var(--green); }
+
     /* ── Internal table scrolling ─────────────────────────────────────────── */
     #projects-container {
       max-height: 300px;
@@ -841,6 +854,7 @@
         </div>
         <div class="panel-body">
           <svg id="history-sparkline" class="sparkline-svg" aria-label="Risk score sparkline — last 10 snapshots"></svg>
+          <p id="snapshot-insight" class="snapshot-insight"></p>
           <div id="history-list"><p class="error-msg">Loading…</p></div>
         </div>
       </div>
@@ -1129,6 +1143,33 @@
       el.textContent = 'Risk ' + movement + suffix;
     }
 
+    // ── Snapshot insight ─────────────────────────────────────────────────────
+
+    function renderSnapshotInsight(recent5) {
+      var el = document.getElementById('snapshot-insight');
+      if (!el) return;
+      if (!recent5 || recent5.length < 2) {
+        el.textContent = 'Not enough history yet to describe recent movement.';
+        el.className = 'snapshot-insight';
+        return;
+      }
+      var newest = recent5[0].riskScore;
+      var oldest = recent5[recent5.length - 1].riskScore;
+      var delta  = newest - oldest;
+      var n      = recent5.length;
+      var suffix = ' across the latest ' + n + ' snapshot' + (n !== 1 ? 's' : '') + '.';
+      if (delta > 0) {
+        el.textContent = 'Risk increased by ' + delta + ' point' + (delta === 1 ? '' : 's') + suffix;
+        el.className = 'snapshot-insight worsening';
+      } else if (delta < 0) {
+        el.textContent = 'Risk decreased by ' + Math.abs(delta) + ' point' + (Math.abs(delta) === 1 ? '' : 's') + suffix;
+        el.className = 'snapshot-insight improving';
+      } else {
+        el.textContent = 'Risk has remained stable' + suffix;
+        el.className = 'snapshot-insight';
+      }
+    }
+
     // ── Data fetchers ────────────────────────────────────────────────────────
 
     function updateAlertBanner(d) {
@@ -1336,6 +1377,7 @@
             document.getElementById('history-list').innerHTML =
               '<p style="color:var(--text-muted);font-size:0.85rem;">No history recorded yet.</p>';
             renderSparkline([]);
+            renderSnapshotInsight([]);
             return;
           }
 
@@ -1344,6 +1386,7 @@
           });
           var recent5 = sorted.slice(0, 5);
           renderSparkline(recent5.slice().reverse());
+          renderSnapshotInsight(recent5);
           var rows = recent5.map(function(h, i) {
             var prev = recent5[i + 1];
             var deltaCell;
