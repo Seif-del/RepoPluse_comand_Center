@@ -78,12 +78,15 @@ describe('server — export', () => {
     expect(app.listening).toBeUndefined();
   });
 
-  it('app.locals.db is null (placeholder)', () => {
-    expect(app.locals.db).toBeNull();
+  it('app.locals.db is the pg Pool instance (not null)', () => {
+    expect(app.locals.db).not.toBeNull();
+    expect(typeof app.locals.db.query).toBe('function');
   });
 
-  it('app.locals.config is null (placeholder)', () => {
-    expect(app.locals.config).toBeNull();
+  it('app.locals.config is the application config object (not null)', () => {
+    expect(app.locals.config).not.toBeNull();
+    expect(typeof app.locals.config).toBe('object');
+    expect(typeof app.locals.config.sessionExpiryHours).toBe('number');
   });
 });
 
@@ -120,7 +123,7 @@ describe('server — auth routes mounted at /auth', () => {
     expect(res.statusCode).not.toBe(404);
   });
 
-  it('GET /auth/github returns JSON from errorHandler (config is null → INVALID_OAUTH_CONFIG)', async () => {
+  it('GET /auth/github returns JSON from errorHandler (github sub-config absent → INVALID_OAUTH_CONFIG)', async () => {
     const res = await get('/auth/github');
     expect(typeof res.body).toBe('object');
     expect(res.body).toHaveProperty('ok', false);
@@ -228,5 +231,60 @@ describe('server — no Phase 2+ routes', () => {
   it('GET /api/repos returns 404', async () => {
     const res = await get('/api/repos');
     expect(res.statusCode).toBe(404);
+  });
+});
+
+// ── Legacy dashboard routes ───────────────────────────────────────────────────
+
+describe('server — legacy dashboard routes', () => {
+  it('GET / returns 200', async () => {
+    const res = await get('/');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('GET / returns plain text body', async () => {
+    const res = await get('/');
+    expect(typeof res.body).toBe('string');
+    expect(res.body).toMatch(/RepoPulse/);
+  });
+
+  it('GET /projects returns 200', async () => {
+    const res = await get('/projects');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('GET /projects returns an array', async () => {
+    const res = await get('/projects');
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it('GET /summary returns 200', async () => {
+    const res = await get('/summary');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('GET /summary returns totalProjects field', async () => {
+    const res = await get('/summary');
+    expect(typeof res.body.totalProjects).toBe('number');
+  });
+
+  it('GET /history returns 200', async () => {
+    const res = await get('/history');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('GET /history returns an array', async () => {
+    const res = await get('/history');
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it('GET /alerts returns 200', async () => {
+    const res = await get('/alerts');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('GET /alerts returns alertState field', async () => {
+    const res = await get('/alerts');
+    expect(res.body).toHaveProperty('alertState');
   });
 });

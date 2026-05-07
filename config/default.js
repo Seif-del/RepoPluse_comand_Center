@@ -9,6 +9,9 @@
 module.exports = {
   port: parseInt(process.env.PORT, 10) || 3000,
 
+  // Database — resolved from DATABASE_URL env var; null when unset (Phase 1 default).
+  databaseUrl: process.env.DATABASE_URL || null,
+
   // Session
   sessionExpiryHours: 24,
 

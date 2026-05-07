@@ -46,8 +46,22 @@ npm run dev
 npm test
 
 # Integration tests — requires a running PostgreSQL test database
-# Set TEST_DATABASE_URL in .env before running
+# 1. Apply migrations against your test database first:
+#      DATABASE_URL=postgres://...@localhost/repopulse_test npm run db:migrate
+#
+# 2. Set TEST_DATABASE_URL in .env to point at that test database.
+#    The URL must contain 'test', 'local', or 'localhost' — integration tests
+#    refuse to run against any other URL to protect production data.
+#
+#      TEST_DATABASE_URL=postgres://repopulse:password@localhost:5432/repopulse_test
+#
+# 3. Run:
 npm run test:integration
+#
+# .env is loaded automatically via Node's --env-file flag — no manual export
+# of TEST_DATABASE_URL is needed. TEST_INTEGRATION=true is set automatically
+# by cross-env. When TEST_INTEGRATION is not set, integration tests are
+# skipped (not failed) during normal npm test runs.
 ```
 
 ---

@@ -1,18 +1,23 @@
 'use strict';
 
 jest.mock('../../../../execution/rbac/checkPermission');
+jest.mock('../../../../execution/audit/logEvent');
 
 const authorize             = require('../../../../backend/middleware/authorize');
 const { checkPermission }   = require('../../../../execution/rbac/checkPermission');
+const { logEvent }          = require('../../../../execution/audit/logEvent');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const VALID_CAP  = 'analytics:view';
 const VALID_ROLE = 'project_manager';
 
+const mockDb = {};
+
 function makeReq(overrides = {}) {
   return {
     user: { userId: 'u-1', role: VALID_ROLE, githubUsername: 'dev' },
+    app:  { locals: { db: mockDb } },
     ...overrides,
   };
 }
@@ -29,6 +34,7 @@ function makeRes() {
 beforeEach(() => {
   jest.clearAllMocks();
   checkPermission.mockReturnValue(true);
+  logEvent.mockResolvedValue(null);
 });
 
 // ── Factory — invalid requiredCapability ──────────────────────────────────────
@@ -274,5 +280,127 @@ describe('authorize middleware — capability is captured at factory time', () =
     mw2(makeReq(), makeRes(), next2);
     expect(checkPermission.mock.calls[0][0].capability).toBe('analytics:view');
     expect(checkPermission.mock.calls[1][0].capability).toBe('audit:view');
+  });
+});
+
+// ── Audit logging on explicit permission denial ───────────────────────────────
+
+describe('authorize middleware — audit logging on denial', () => {
+  beforeEach(() => checkPermission.mockReturnValue(false));
+
+  it('calls logEvent once when checkPermission returns false', () => {
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls logEvent with action = permission.denied', () => {
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].action).toBe('permission.denied');
+  });
+
+  it('calls logEvent with resourceType = capability', () => {
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].resourceType).toBe('capability');
+  });
+
+  it('calls logEvent with resourceId = the required capability string', () => {
+    authorize('audit:view')(makeReq(), makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].resourceId).toBe('audit:view');
+  });
+
+  it('calls logEvent with actorId = req.user.userId', () => {
+    const req = makeReq({ user: { userId: 'user-77', role: VALID_ROLE } });
+    authorize(VALID_CAP)(req, makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].actorId).toBe('user-77');
+  });
+
+  it('calls logEvent with metadata = { role: req.user.role }', () => {
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].metadata).toEqual({ role: VALID_ROLE });
+  });
+
+  it('calls logEvent with a Date instance for now', () => {
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].now).toBeInstanceOf(Date);
+  });
+
+  it('calls logEvent with db from req.app.locals.db', () => {
+    const customDb = { query: jest.fn() };
+    const req      = makeReq({ app: { locals: { db: customDb } } });
+    authorize(VALID_CAP)(req, makeRes(), jest.fn());
+    expect(logEvent.mock.calls[0][0].db).toBe(customDb);
+  });
+
+  it('still calls next(err) with FORBIDDEN after logEvent is triggered', () => {
+    const next = jest.fn();
+    authorize(VALID_CAP)(makeReq(), makeRes(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next.mock.calls[0][0].code).toBe('FORBIDDEN');
+    expect(next.mock.calls[0][0].message).toBe('Forbidden');
+  });
+
+  it('calls next exactly once even when logEvent is triggered', () => {
+    const next = jest.fn();
+    authorize(VALID_CAP)(makeReq(), makeRes(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows logEvent rejection — next still called once with FORBIDDEN', async () => {
+    logEvent.mockRejectedValue(new Error('audit db failure'));
+    const next = jest.fn();
+    authorize(VALID_CAP)(makeReq(), makeRes(), next);
+    await Promise.resolve(); // drain microtask queue so the .catch() runs
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next.mock.calls[0][0].code).toBe('FORBIDDEN');
+  });
+
+  it('produces no unhandled rejection when logEvent rejects', async () => {
+    logEvent.mockRejectedValue(new Error('db down'));
+    const next = jest.fn();
+    authorize(VALID_CAP)(makeReq(), makeRes(), next);
+    await Promise.resolve(); // ensure the .catch() callback has executed
+    // reaching here without a test failure means no unhandled rejection occurred
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── logEvent NOT called on non-denial paths ───────────────────────────────────
+
+describe('authorize middleware — logEvent not called outside the denial path', () => {
+  it('does not call logEvent when checkPermission returns true (allowed)', () => {
+    checkPermission.mockReturnValue(true);
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not call logEvent when req.user is absent', () => {
+    authorize(VALID_CAP)(makeReq({ user: undefined }), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not call logEvent when req.user is null', () => {
+    authorize(VALID_CAP)(makeReq({ user: null }), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not call logEvent when req.user.role is absent', () => {
+    authorize(VALID_CAP)(makeReq({ user: { userId: 'u-1' } }), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not call logEvent when req.user.role is empty string', () => {
+    authorize(VALID_CAP)(makeReq({ user: { userId: 'u-1', role: '' } }), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not call logEvent when req.user.role is null', () => {
+    authorize(VALID_CAP)(makeReq({ user: { userId: 'u-1', role: null } }), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not call logEvent when checkPermission throws', () => {
+    checkPermission.mockImplementation(() => { throw new Error('internal error'); });
+    authorize(VALID_CAP)(makeReq(), makeRes(), jest.fn());
+    expect(logEvent).not.toHaveBeenCalled();
   });
 });

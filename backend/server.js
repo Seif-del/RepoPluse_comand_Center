@@ -1,31 +1,86 @@
 'use strict';
 
+const path          = require('path');
 const express       = require('express');
+const app           = express();
+const { PORT, PROJECT_SOURCE } = require('../config/paths');
+const config        = require('../config');
+const db            = require('../execution/db');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler  = require('./middleware/errorHandler');
 const authRoutes    = require('./routes/authRoutes');
+const syncGithubProjects = require('../execution/syncGithubProjects');
+const summaryHistory     = require('../execution/summaryHistory');
 
-const app = express();
+app.locals.db     = db;
+app.locals.config = config;
 
-// Placeholder locals — overridden by the process entry point before serving traffic.
-app.locals.db     = null;
-app.locals.config = null;
+let _syncedProjects = null;
 
-// 1. Correlation ID + request logging (must be first)
+// projects, getProjectSummary, and appendSummarySnapshot are required lazily
+// inside their route handlers rather than at module scope. This ensures they
+// are not loaded until after the async startup block (syncGithubProjects) has
+// written PROJECTS_FILE to disk. Node caches the result after the first call,
+// so there is no repeated file I/O on subsequent requests.
+
 app.use(requestLogger);
 
-// 2. Body parsing
-app.use(express.json());
-
-// 3. Auth routes (public — no authentication guard)
 app.use('/auth', authRoutes);
 
-// 4. Health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+app.get('/', (req, res) => {
+  res.send('RepoPulse backend is running');
 });
 
-// 5. Global error handler (must be last)
+app.get('/dashboard', (req, res) => {
+  res.sendFile(path.resolve(__dirname, '../frontend/dashboard.html'));
+});
+
+app.get('/projects', (req, res) => {
+  if (_syncedProjects !== null) return res.json(_syncedProjects);
+  const projects = require('../execution/projects');
+  res.json(projects);
+});
+
+app.get('/summary', (req, res) => {
+  const getProjectSummary = require('../execution/getProjectSummary');
+  res.json(getProjectSummary(_syncedProjects));
+});
+
+app.get('/history', (req, res) => {
+  res.json(summaryHistory);
+});
+
+app.post('/history/snapshot', (req, res) => {
+  const appendSummarySnapshot = require('../execution/appendSummarySnapshot');
+  const snapshot = appendSummarySnapshot();
+  res.json(snapshot);
+});
+
+app.get('/alerts', (req, res) => {
+  const getProjectSummary = require('../execution/getProjectSummary');
+  const { alertState, systemStatus, trend, riskScore, lastUpdated } = getProjectSummary(_syncedProjects);
+  res.json({ alertState, systemStatus, trend, riskScore, lastUpdated });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 app.use(errorHandler);
+
+if (require.main === module) {
+  (async () => {
+    if (PROJECT_SOURCE === 'github') {
+      _syncedProjects = await syncGithubProjects();
+    }
+    if (process.env.ENABLE_SNAPSHOT_WORKER === 'true') {
+      const startSnapshotWorker = require('../services/worker/snapshotWorker');
+      startSnapshotWorker();
+    }
+    app.listen(PORT, () => {
+      console.log(`Server listening on port ${PORT}`);
+    });
+  })();
+}
 
 module.exports = app;

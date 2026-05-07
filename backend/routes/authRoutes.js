@@ -1,7 +1,12 @@
 'use strict';
 
-const express      = require('express');
-const { logEvent } = require('../../execution/audit/logEvent');
+const express                   = require('express');
+const crypto                    = require('crypto');
+const { logEvent }              = require('../../execution/audit/logEvent');
+const { exchangeOAuthCode }     = require('../../execution/auth/exchangeOAuthCode');
+const { upsertUser }            = require('../../execution/auth/upsertUser');
+const { createSession }         = require('../../execution/auth/createSession');
+const { invalidateSession }     = require('../../execution/auth/invalidateSession');
 
 const router = express.Router();
 
@@ -33,8 +38,8 @@ router.get('/github', (req, res, next) => {
 
 // GET /callback
 // GitHub redirects here after the user authorises the OAuth app.
-// Token exchange is deferred until execution/auth/exchangeOAuthCode.js exists.
-router.get('/callback', (req, res, next) => {
+// Exchanges the code, upserts the user, creates a session, and redirects.
+router.get('/callback', async (req, res, next) => {
   const code = req.query && req.query.code;
 
   if (!code) {
@@ -43,14 +48,85 @@ router.get('/callback', (req, res, next) => {
     return next(err);
   }
 
-  const err = new Error('GitHub OAuth callback exchange is not implemented');
-  err.code = 'NOT_IMPLEMENTED';
-  next(err);
+  const appConfig = req.app.locals.config;
+  const github    = appConfig && appConfig.github;
+
+  if (
+    !github                      ||
+    !github.clientId             ||
+    !github.clientSecret         ||
+    !github.callbackUrl          ||
+    !appConfig.sessionExpiryHours ||
+    !appConfig.defaultUserRole
+  ) {
+    const err = new Error('OAuth configuration is invalid');
+    err.code = 'INVALID_OAUTH_CONFIG';
+    return next(err);
+  }
+
+  const fetchFn = req.app.locals.fetchFn ||
+    (typeof globalThis.fetch === 'function' ? globalThis.fetch : null);
+
+  if (typeof fetchFn !== 'function') {
+    const err = new Error('No fetch implementation available');
+    err.code = 'FETCH_NOT_AVAILABLE';
+    return next(err);
+  }
+
+  try {
+    const oauthResult = await exchangeOAuthCode({
+      code,
+      clientId:     github.clientId,
+      clientSecret: github.clientSecret,
+      callbackUrl:  github.callbackUrl,
+      fetchFn,
+    });
+
+    const now = new Date();
+
+    const user = await upsertUser({
+      db:             req.app.locals.db,
+      githubId:       oauthResult.githubId,
+      githubUsername: oauthResult.githubUsername,
+      email:          oauthResult.email,
+      defaultRole:    appConfig.defaultUserRole,
+      now,
+    });
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+
+    const session = await createSession({
+      db:                 req.app.locals.db,
+      userId:             String(user.userId),
+      rawToken,
+      now,
+      sessionExpiryHours: appConfig.sessionExpiryHours,
+    });
+
+    res.cookie('session_token', rawToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure:   false,
+    });
+
+    logEvent({
+      db:           req.app.locals.db,
+      actorId:      String(user.userId),
+      action:       'user.login',
+      resourceType: 'session',
+      resourceId:   String(session.id),
+      metadata:     { githubUsername: user.githubUsername },
+      now,
+    }).catch(() => {});
+
+    res.redirect(appConfig.postLoginRedirectPath || '/dashboard');
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /logout
-// Writes an audit event then clears the session cookie.
-// Session row invalidation is deferred to execution/auth/invalidateSession.js.
+// Deletes the session row, clears the cookie, and fires an audit event.
 router.post('/logout', async (req, res, next) => {
   if (!req.user || !req.session) {
     const err = new Error('Unauthorized');
@@ -59,19 +135,24 @@ router.post('/logout', async (req, res, next) => {
   }
 
   try {
-    await logEvent({
-      db:           req.app.locals.db,
-      actorId:      req.user.userId,
-      action:       'user.logout',
-      resourceType: 'session',
-      resourceId:   req.session.sessionId,
-      metadata:     {},
-      now:          new Date(),
+    await invalidateSession({
+      db:        req.app.locals.db,
+      sessionId: String(req.session.sessionId),
     });
 
     if (res.clearCookie) {
       res.clearCookie('session_token');
     }
+
+    logEvent({
+      db:           req.app.locals.db,
+      actorId:      String(req.user.userId),
+      action:       'user.logout',
+      resourceType: 'session',
+      resourceId:   String(req.session.sessionId),
+      metadata:     {},
+      now:          new Date(),
+    }).catch(() => {});
 
     res.status(204).end();
   } catch (err) {

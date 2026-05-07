@@ -1,6 +1,7 @@
 'use strict';
 
 const { checkPermission } = require('../../execution/rbac/checkPermission');
+const { logEvent }        = require('../../execution/audit/logEvent');
 
 /**
  * Middleware factory — returns a handler that gates a route on one capability.
@@ -39,6 +40,16 @@ function authorize(requiredCapability) {
     }
 
     if (!allowed) {
+      logEvent({
+        db:           req.app.locals.db,
+        actorId:      req.user.userId,
+        action:       'permission.denied',
+        resourceType: 'capability',
+        resourceId:   requiredCapability,
+        metadata:     { role: req.user.role },
+        now:          new Date(),
+      }).catch(() => {});
+
       const err = new Error('Forbidden');
       err.code = 'FORBIDDEN';
       return next(err);

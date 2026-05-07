@@ -4,10 +4,13 @@ module.exports = {
   testEnvironment: 'node',
 
   // Default run: unit tests and directive validation only.
-  // Integration tests are run separately via npm run test:integration.
+  // Integration tests are discovered here but skip automatically when
+  // TEST_INTEGRATION is not set — they require explicit opt-in via
+  // npm run test:integration (sets TEST_INTEGRATION=true via cross-env).
   testMatch: [
     '**/tests/unit/**/*.test.js',
     '**/tests/directives/**/*.test.js',
+    '**/tests/integration/**/*.test.js',
   ],
 
   // Coverage is collected from execution/ and backend/ only.
