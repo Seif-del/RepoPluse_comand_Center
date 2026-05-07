@@ -136,3 +136,28 @@ describe('GET /alerts', () => {
     expect(Object.keys(res.body)).toHaveLength(5);
   });
 });
+
+describe('POST /test-alert', () => {
+  it('returns 200 with ok, attempted, and correct synthetic summary', async () => {
+    const res = await request(app).post('/test-alert');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.attempted).toBe(true);
+    expect(res.body.summary).toMatchObject({
+      alertState: 'Critical',
+      trend: 'Worsening',
+      totalProjects: 30,
+      atRiskProjects: 20,
+      riskScore: 67,
+    });
+  });
+
+  it('returns 403 when NODE_ENV is production', async () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    const res = await request(app).post('/test-alert');
+    process.env.NODE_ENV = original;
+    expect(res.status).toBe(403);
+    expect(res.body.ok).toBe(false);
+  });
+});
