@@ -1,0 +1,14 @@
+The MVP SHALL be considered complete when:
+
+Users authenticate via GitHub successfully
+Repositories connect successfully
+Dashboards display repository metrics
+AI recommendations generate correctly
+Polling updates dashboard metrics automatically
+Notifications deliver successfully
+RBAC restrictions enforce correctly
+Historical metrics persist correctly
+Search performs within target latency
+Audit logging records permission changes
+APIs meet performance targets
+Production deployment succeeds without critical failures

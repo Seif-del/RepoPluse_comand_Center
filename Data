@@ -1,0 +1,22 @@
+9.1 Data Storage
+
+The system SHALL store:
+
+User accounts
+Project metadata
+Repository metrics
+Notifications
+AI recommendations
+Audit logs
+9.2 Data Retention
+DATA-001
+
+Operational analytics SHALL be retained for 365 days.
+
+DATA-002
+
+Audit logs SHALL be retained for 7 years.
+
+DATA-003
+
+Deleted users SHALL be soft-deleted for 30 days before permanent removal.

@@ -1,0 +1,180 @@
+6.1 Authentication Requirements
+FR-AUTH-001
+
+The system SHALL support GitHub OAuth authentication.
+
+Acceptance Criteria
+
+Given a valid GitHub account
+When a user authenticates via OAuth
+Then the user SHALL gain access to the application.
+
+FR-AUTH-002
+
+The system SHALL create user accounts automatically after first successful login.
+
+FR-AUTH-003
+
+The system SHALL maintain authenticated sessions securely.
+
+Constraints
+Sessions SHALL expire after 24 hours of inactivity.
+Tokens SHALL NOT be stored in plaintext.
+FR-AUTH-004
+
+The system SHALL deny access to unauthorized users.
+
+6.2 Project Requirements
+FR-PROJ-001
+
+Users SHALL be able to connect GitHub repositories.
+
+Acceptance Criteria
+
+Given a connected GitHub account
+When a repository is selected
+Then the repository SHALL appear in the dashboard.
+
+FR-PROJ-002
+
+The system SHALL support multiple projects per user.
+
+FR-PROJ-003
+
+Projects SHALL display:
+
+Repository activity
+Commit metrics
+Pull request metrics
+Contributor activity
+Risk indicators
+AI recommendations
+FR-PROJ-004
+
+The dashboard SHALL refresh automatically every 60 seconds.
+
+FR-PROJ-005
+
+The system SHALL maintain historical project metrics.
+
+Retention:
+
+Minimum retention SHALL be 365 days.
+6.3 Dashboard Requirements
+FR-DASH-001
+
+The dashboard SHALL display:
+
+Project health score
+Open pull requests
+Commit frequency
+Team activity
+Repository alerts
+Risk indicators
+FR-DASH-002
+
+Dashboard load time SHALL remain below 3 seconds under normal operating conditions.
+
+FR-DASH-003
+
+The dashboard SHALL support:
+
+Search
+Sorting
+Filtering
+FR-DASH-004
+
+Users SHALL be able to filter projects by:
+
+Risk level
+Activity level
+Assigned users
+Repository
+6.4 AI Recommendation Requirements
+FR-AI-001
+
+The system SHALL generate AI-assisted recommendations using statistical analysis.
+
+FR-AI-002
+
+AI recommendations SHALL include:
+
+Risk explanation
+Suggested intervention
+Confidence level
+FR-AI-003
+
+The AI system SHALL analyze:
+
+Commit activity
+Pull request velocity
+Activity trends
+Contributor engagement
+FR-AI-004
+
+The system SHALL classify projects into:
+
+Healthy
+Warning
+At Risk
+FR-AI-005
+
+AI processing SHALL complete within 30 seconds after new repository ingestion.
+
+6.5 Notification Requirements
+FR-NOTIF-001
+
+The system SHALL generate notifications for:
+
+Risk escalation
+Repository inactivity
+Pull request stagnation
+Deadline proximity
+FR-NOTIF-002
+
+Notifications SHALL support:
+
+In-app delivery
+Email delivery
+FR-NOTIF-003
+
+Users SHALL be able to configure notification preferences.
+
+6.6 Search Requirements
+FR-SEARCH-001
+
+Users SHALL be able to search:
+
+Projects
+Repositories
+Users
+Activities
+FR-SEARCH-002
+
+Search results SHALL return within 2 seconds for datasets under 100,000 records.
+
+6.7 Analytics Requirements
+FR-ANALYTICS-001
+
+The system SHALL track:
+
+Daily active users
+Repository activity
+Feature usage
+Notification interactions
+FR-ANALYTICS-002
+
+Analytics SHALL support historical trend visualization.
+
+6.8 Access Control Requirements
+FR-RBAC-001
+
+The system SHALL implement role-based access control.
+
+FR-RBAC-002
+
+Unauthorized resource access SHALL return HTTP 403 responses.
+
+FR-RBAC-003
+
+Permission changes SHALL be audit logged.

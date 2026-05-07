@@ -1,0 +1,20 @@
+RISK-001
+
+GitHub API rate limiting may degrade ingestion performance.
+
+Mitigation:
+Queue-based ingestion and caching.
+
+RISK-002
+
+Polling may increase infrastructure load.
+
+Mitigation:
+Adaptive refresh intervals.
+
+RISK-003
+
+AI recommendations may generate false positives.
+
+Mitigation:
+Confidence scoring and transparency explanations.

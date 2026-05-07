@@ -1,0 +1,20 @@
+ASSUMPTION-001
+
+GitHub APIs remain available and stable.
+
+Alternative:
+Implement provider abstraction layer.
+
+ASSUMPTION-002
+
+Users possess valid GitHub accounts.
+
+Alternative:
+Add local authentication later.
+
+ASSUMPTION-003
+
+Near real-time polling is sufficient for MVP.
+
+Alternative:
+Upgrade to WebSockets later.

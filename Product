@@ -1,0 +1,36 @@
+Primary Goals
+
+The system SHALL:
+
+Provide centralized visibility into project activity
+Aggregate GitHub repository data into actionable metrics
+Detect project risk indicators
+Provide AI-generated contextual recommendations
+Improve project manager response speed
+Support multiple projects per user
+Support scalable future feature expansion
+3.2 MVP Goals
+
+The MVP release SHALL include:
+
+GitHub OAuth authentication
+Project dashboard
+GitHub repository integration
+Project metrics aggregation
+Search and filtering
+Basic AI-driven insights (statistical analysis)
+Near real-time dashboard updates via polling
+Notifications
+Role-based access control
+Activity feed
+Usage analytics
+
+The MVP SHALL NOT include:
+
+Machine learning model training
+Predictive forecasting models
+Enterprise SSO
+Native mobile applications
+Multi-organization tenancy
+Real-time WebSocket streaming
+Custom workflow builders

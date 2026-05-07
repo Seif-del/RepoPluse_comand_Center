@@ -1,0 +1,12 @@
+External Dependencies
+GitHub API
+Email delivery provider
+PostgreSQL
+Redis or RabbitMQ
+Cloud hosting provider
+Internal Dependencies
+Authentication module
+Metrics ingestion service
+Analytics engine
+AI recommendation engine
+Notification service

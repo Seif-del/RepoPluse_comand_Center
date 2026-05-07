@@ -1,0 +1,21 @@
+8.1 GitHub Integration
+EXT-GH-001
+
+The system SHALL integrate with GitHub APIs.
+
+EXT-GH-002
+
+The system SHALL ingest:
+
+Commits
+Pull requests
+Repository metadata
+Contributors
+Activity timestamps
+EXT-GH-003
+
+GitHub rate limits SHALL be monitored continuously.
+
+EXT-GH-004
+
+GitHub ingestion failures SHALL NOT block dashboard access.

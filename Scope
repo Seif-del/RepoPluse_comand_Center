@@ -1,0 +1,41 @@
+4.1 In Scope
+User Management
+GitHub OAuth login
+Session management
+Role assignment
+User profiles
+Project Management
+Repository linking
+Project dashboard
+Activity tracking
+Risk visibility
+AI Insights
+Statistical anomaly detection
+Contextual recommendations
+Risk classification
+Analytics
+Repository activity metrics
+Team engagement metrics
+Trend analysis
+Dashboard visualizations
+Notifications
+In-app alerts
+Email notifications
+Search
+Repository search
+Activity filtering
+User filtering
+4.2 Out of Scope
+
+The following SHALL NOT be implemented in MVP:
+
+Direct repository modification
+Git write operations
+AI-generated code changes
+Chatbot interaction layer
+Enterprise billing system
+Marketplace integrations
+Offline support
+Native mobile applications
+Multi-region deployment
+Custom ML model training pipelines

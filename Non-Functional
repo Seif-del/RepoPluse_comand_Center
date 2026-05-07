@@ -1,0 +1,86 @@
+7.1 Performance Requirements
+NFR-PERF-001
+
+API response time SHALL remain below:
+
+500ms for standard requests
+2s for analytical queries
+NFR-PERF-002
+
+Dashboard rendering SHALL complete within 3 seconds.
+
+NFR-PERF-003
+
+The system SHALL support:
+
+5,000 concurrent users
+100,000 repositories
+10 million stored events
+7.2 Reliability Requirements
+NFR-REL-001
+
+System uptime SHALL be at least 99.5%.
+
+NFR-REL-002
+
+Critical failures SHALL generate alerts within 1 minute.
+
+NFR-REL-003
+
+Background jobs SHALL support retry behavior.
+
+Retry Policy:
+
+Maximum retries: 5
+Exponential backoff required
+7.3 Security Requirements
+NFR-SEC-001
+
+All traffic SHALL use HTTPS.
+
+NFR-SEC-002
+
+Sensitive data SHALL be encrypted at rest using AES-256.
+
+NFR-SEC-003
+
+Secrets SHALL NOT be stored in source code repositories.
+
+NFR-SEC-004
+
+Audit logs SHALL be immutable.
+
+7.4 Scalability Requirements
+NFR-SCALE-001
+
+The architecture SHALL support horizontal scaling.
+
+NFR-SCALE-002
+
+Background processing SHALL be independently scalable.
+
+7.5 Maintainability Requirements
+NFR-MAINT-001
+
+The system SHALL use modular boundaries.
+
+NFR-MAINT-002
+
+Modules SHALL expose internal APIs only through defined interfaces.
+
+NFR-MAINT-003
+
+All production services SHALL include structured logging.
+
+7.6 Observability Requirements
+NFR-OBS-001
+
+The system SHALL expose:
+
+Error metrics
+Request metrics
+Queue metrics
+AI processing metrics
+NFR-OBS-002
+
+Logs SHALL support correlation IDs.

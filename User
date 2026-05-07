@@ -1,0 +1,52 @@
+5.1 Project Manager
+
+Capabilities:
+
+View all assigned projects
+Configure repositories
+View analytics
+View risk indicators
+Receive recommendations
+Manage interns
+Receive notifications
+
+Restrictions:
+
+Cannot modify system-level settings
+5.2 Intern
+
+Capabilities:
+
+View assigned projects
+View assigned metrics
+View feedback
+View activity summaries
+
+Restrictions:
+
+Cannot access system analytics
+Cannot configure repositories
+Cannot manage users
+5.3 Stakeholder
+
+Capabilities:
+
+Read-only dashboard access
+View summary analytics
+View project status
+
+Restrictions:
+
+No editing permissions
+No repository configuration permissions
+5.4 Compliance Auditor
+
+Capabilities:
+
+View audit logs
+View access history
+Review permission assignments
+
+Restrictions:
+
+No operational editing permissions

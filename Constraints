@@ -1,0 +1,15 @@
+CONSTRAINT-001
+
+MVP SHALL use statistical AI analysis only.
+
+CONSTRAINT-002
+
+MVP SHALL remain deployable as a modular monolith.
+
+CONSTRAINT-003
+
+The frontend SHALL support modern Chromium-based browsers.
+
+CONSTRAINT-004
+
+The system SHALL NOT directly modify GitHub repositories.
