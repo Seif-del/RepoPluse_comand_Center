@@ -729,17 +729,18 @@
     // ── Summary ───────────────────────────────────────────────────────────────
 
     function loadSummary() {
-      fetch('/api/repos/summary')
+      fetch('/summary')
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          var lastSync = d.lastSyncedAt ? new Date(d.lastSyncedAt).toLocaleString() : 'Never';
+          var lastUpdated = d.lastUpdated ? new Date(d.lastUpdated).toLocaleString() : 'Never';
+          var statusCls = d.systemStatus === 'At Risk' ? 'at-risk' : 'healthy';
           var fields = [
-            ['Repos',         d.totalRepos  != null ? d.totalRepos  : '—', ''],
-            ['Healthy',       d.healthy     != null ? d.healthy     : '—', 'healthy'],
-            ['At Risk',       d.atRisk      != null ? d.atRisk      : '—', d.atRisk > 0 ? 'at-risk' : ''],
-            ['Critical',      d.critical    != null ? d.critical    : '—', d.critical > 0 ? 'at-risk' : ''],
-            ['Avg Score',     d.avgScore    != null ? d.avgScore    : '—', ''],
-            ['Last Synced',   lastSync,                                    ''],
+            ['Repos',       d.totalProjects    != null ? d.totalProjects    : '—', ''],
+            ['Healthy',     d.healthyProjects   != null ? d.healthyProjects   : '—', 'healthy'],
+            ['At Risk',     d.atRiskProjects    != null ? d.atRiskProjects    : '—', d.atRiskProjects > 0 ? 'at-risk' : ''],
+            ['Risk Score',  d.riskScore         != null ? d.riskScore         : '—', ''],
+            ['Status',      d.systemStatus      || '—',                             statusCls],
+            ['Updated',     lastUpdated,                                            ''],
           ];
           document.getElementById('summary-cards').innerHTML =
             fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
@@ -849,6 +850,15 @@
       fetch('/api/repos')
         .then(function(r) { return r.json(); })
         .then(function(d) {
+          if (d.ok === false) {
+            document.getElementById('projects-count').textContent = '—';
+            document.getElementById('projects-container').innerHTML =
+              '<p style="color:var(--text-muted);font-size:0.85rem;">'
+              + '<a href="/auth/github" style="color:var(--blue);">Login with GitHub</a>'
+              + ' to view and sync repositories.</p>';
+            document.getElementById('repo-detail').hidden = true;
+            return;
+          }
           _repos = d.repos || [];
           if (!_repos.length) {
             document.getElementById('projects-count').textContent = '0 repos';
@@ -892,11 +902,53 @@
       applyFilter();
     });
 
+    // ── History ──────────────────────────────────────────────────────────────
+
+    function loadHistory() {
+      fetch('/history')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var entries = Array.isArray(data) ? data : [];
+          var points = entries
+            .filter(function(e) { return e.riskScore != null && e.lastUpdated; })
+            .map(function(e) { return { score: e.riskScore, at: e.lastUpdated }; });
+
+          if (!_repos.length) {
+            renderChart(points);
+            renderSparkline(points.slice(-10));
+          }
+
+          var listEl = document.getElementById('history-list');
+          if (!entries.length) {
+            listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No snapshots yet.</p>';
+            return;
+          }
+          listEl.innerHTML = entries.slice().reverse().slice(0, 20).map(function(e) {
+            var cls = e.alertState === 'Critical' ? 'at-risk'
+                    : e.alertState === 'Monitor'  ? 'monitor'
+                    : 'healthy';
+            return '<div style="display:flex;justify-content:space-between;align-items:center;'
+              + 'padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">'
+              + '<span style="color:var(--text-secondary);">'
+              +   esc(new Date(e.lastUpdated).toLocaleString()) + '</span>'
+              + '<span class="card-badge ' + cls + '">' + esc(e.alertState || 'Normal') + '</span>'
+              + '<span style="font-family:var(--font-mono);color:var(--text-primary);">'
+              +   'Score: ' + esc(String(e.riskScore)) + '</span>'
+              + '</div>';
+          }).join('');
+        })
+        .catch(function(e) {
+          showError('history-list', e.message);
+          if (!_repos.length) renderChart([]);
+        });
+    }
+
     // ── Initial load + auto-refresh ──────────────────────────────────────────
 
     function refresh() {
       loadSummary();
       loadRepos();
+      loadHistory();
     }
 
     refresh();
