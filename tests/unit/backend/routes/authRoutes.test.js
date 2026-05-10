@@ -46,7 +46,7 @@ function extractHandler(r, method, path) {
 }
 
 const githubHandler   = extractHandler(router, 'GET',  '/github');
-const callbackHandler = extractHandler(router, 'GET',  '/callback');
+const callbackHandler = extractHandler(router, 'GET',  '/github/callback');
 const logoutHandler   = extractHandler(router, 'POST', '/logout');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ const MOCK_RAW_TOKEN = 'cafebabe'.repeat(8);
 const MOCK_GITHUB_CONFIG = {
   clientId:     'gh-client-id',
   clientSecret: 'gh-client-secret',
-  callbackUrl:  'http://localhost:3000/auth/callback',
+  callbackUrl:  'http://localhost:3000/auth/github/callback',
   scopes:       ['read:user', 'user:email'],
 };
 
@@ -140,7 +140,7 @@ describe('authRoutes — route registration', () => {
     expect(typeof githubHandler).toBe('function');
   });
 
-  it('registers GET /callback', () => {
+  it('registers GET /github/callback', () => {
     expect(typeof callbackHandler).toBe('function');
   });
 
@@ -177,7 +177,7 @@ describe('GET /github — success', () => {
     const res = makeRes();
     githubHandler(makeReq(), res, jest.fn());
     const url = new URL(res.redirect.mock.calls[0][0]);
-    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:3000/auth/callback');
+    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:3000/auth/github/callback');
   });
 
   it('joins array scopes with a space for the scope param', () => {
@@ -272,7 +272,7 @@ describe('GET /github — INVALID_OAUTH_CONFIG', () => {
 
 // ── GET /callback — INVALID_OAUTH_CODE ───────────────────────────────────────
 
-describe('GET /callback — INVALID_OAUTH_CODE', () => {
+describe('GET /github/callback — INVALID_OAUTH_CODE', () => {
   it('calls next with INVALID_OAUTH_CODE when code is absent', async () => {
     const next = jest.fn();
     await callbackHandler(makeReq(), makeRes(), next);
@@ -298,7 +298,7 @@ describe('GET /callback — INVALID_OAUTH_CODE', () => {
 
 // ── GET /callback — INVALID_OAUTH_CONFIG (callback-specific config check) ─────
 
-describe('GET /callback — INVALID_OAUTH_CONFIG', () => {
+describe('GET /github/callback — INVALID_OAUTH_CONFIG', () => {
   async function expectCallbackInvalidConfig(req) {
     const next = jest.fn();
     await callbackHandler(req, makeRes(), next);
@@ -390,7 +390,7 @@ describe('GET /callback — INVALID_OAUTH_CONFIG', () => {
 
 // ── GET /callback — FETCH_NOT_AVAILABLE ───────────────────────────────────────
 
-describe('GET /callback — FETCH_NOT_AVAILABLE', () => {
+describe('GET /github/callback — FETCH_NOT_AVAILABLE', () => {
   it('calls next with FETCH_NOT_AVAILABLE when fetchFn and global fetch are both absent', async () => {
     const savedFetch = globalThis.fetch;
     delete globalThis.fetch;
@@ -430,7 +430,7 @@ describe('GET /callback — FETCH_NOT_AVAILABLE', () => {
 
 // ── GET /callback — success: execution module call arguments ──────────────────
 
-describe('GET /callback — success: execution module arguments', () => {
+describe('GET /github/callback — success: execution module arguments', () => {
   function makeCallbackReq() {
     return makeReq({ query: { code: 'gh_code_abc123' } });
   }
@@ -528,7 +528,7 @@ describe('GET /callback — success: execution module arguments', () => {
 
 // ── GET /callback — success: session cookie ───────────────────────────────────
 
-describe('GET /callback — success: session cookie', () => {
+describe('GET /github/callback — success: session cookie', () => {
   function makeCallbackReq() {
     return makeReq({ query: { code: 'gh_code_abc123' } });
   }
@@ -563,11 +563,17 @@ describe('GET /callback — success: session cookie', () => {
     await callbackHandler(makeCallbackReq(), res, jest.fn());
     expect(res.cookie.mock.calls[0][2].secure).toBe(false);
   });
+
+  it('cookie maxAge equals sessionExpiryHours converted to milliseconds', async () => {
+    const res = makeRes();
+    await callbackHandler(makeCallbackReq(), res, jest.fn());
+    expect(res.cookie.mock.calls[0][2].maxAge).toBe(MOCK_APP_CONFIG.sessionExpiryHours * 60 * 60 * 1000);
+  });
 });
 
 // ── GET /callback — success: logEvent audit ───────────────────────────────────
 
-describe('GET /callback — success: logEvent', () => {
+describe('GET /github/callback — success: logEvent', () => {
   function makeCallbackReq() {
     return makeReq({ query: { code: 'gh_code_abc123' } });
   }
@@ -636,7 +642,7 @@ describe('GET /callback — success: logEvent', () => {
 
 // ── GET /callback — success: redirect ────────────────────────────────────────
 
-describe('GET /callback — success: redirect', () => {
+describe('GET /github/callback — success: redirect', () => {
   it('redirects to postLoginRedirectPath from config', async () => {
     const res = makeRes();
     await callbackHandler(makeReq({ query: { code: 'abc' } }), res, jest.fn());
@@ -668,7 +674,7 @@ describe('GET /callback — success: redirect', () => {
 
 // ── GET /callback — exchangeOAuthCode error propagation ───────────────────────
 
-describe('GET /callback — exchangeOAuthCode error propagation', () => {
+describe('GET /github/callback — exchangeOAuthCode error propagation', () => {
   it('passes the exact exchangeOAuthCode error to next() by identity', async () => {
     const oauthErr = new Error('invalid_grant');
     exchangeOAuthCode.mockRejectedValueOnce(oauthErr);
@@ -700,7 +706,7 @@ describe('GET /callback — exchangeOAuthCode error propagation', () => {
 
 // ── GET /callback — upsertUser error propagation ──────────────────────────────
 
-describe('GET /callback — upsertUser error propagation', () => {
+describe('GET /github/callback — upsertUser error propagation', () => {
   it('passes the exact upsertUser error to next() by identity', async () => {
     const dbErr = new Error('unique violation');
     upsertUser.mockRejectedValueOnce(dbErr);
@@ -725,7 +731,7 @@ describe('GET /callback — upsertUser error propagation', () => {
 
 // ── GET /callback — createSession error propagation ───────────────────────────
 
-describe('GET /callback — createSession error propagation', () => {
+describe('GET /github/callback — createSession error propagation', () => {
   it('passes the exact createSession error to next() by identity', async () => {
     const dbErr = new Error('connection lost');
     createSession.mockRejectedValueOnce(dbErr);
@@ -751,7 +757,7 @@ describe('GET /callback — createSession error propagation', () => {
 
 // ── GET /callback — security ──────────────────────────────────────────────────
 
-describe('GET /callback — security', () => {
+describe('GET /github/callback — security', () => {
   function makeCallbackReq() {
     return makeReq({ query: { code: 'gh_code_abc123' } });
   }

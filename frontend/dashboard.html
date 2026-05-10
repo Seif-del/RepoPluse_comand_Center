@@ -711,18 +711,30 @@
       var btn = document.getElementById('sync-btn');
       btn.disabled = true;
       btn.textContent = 'Syncing…';
-      fetch('/api/repos/sync', { method: 'POST' })
+      fetch('/api/repos/sync', { method: 'POST', credentials: 'include' })
         .then(function(r) {
-          btn.textContent = r.ok ? 'Sync started' : 'Sync failed';
+          return r.json().then(function(body) { return { ok: r.ok, status: r.status, body: body }; });
+        })
+        .then(function(result) {
+          if (result.ok) {
+            btn.textContent = 'Sync started';
+          } else {
+            var msg = (result.body && result.body.error) ? result.body.error : ('Sync failed (' + result.status + ')');
+            btn.textContent = 'Sync failed';
+            btn.title = msg;
+            console.warn('[Sync] ' + result.status + ':', msg);
+          }
           setTimeout(function() {
             btn.textContent = 'Sync Now';
+            btn.title = '';
             btn.disabled = false;
-            refresh();
+            if (result.ok) refresh();
           }, 3000);
         })
-        .catch(function() {
+        .catch(function(e) {
           btn.textContent = 'Sync Now';
           btn.disabled = false;
+          console.warn('[Sync] Network error:', e.message);
         });
     }
 
@@ -847,7 +859,7 @@
     }
 
     function loadRepos() {
-      fetch('/api/repos')
+      fetch('/api/repos', { credentials: 'include' })
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok === false) {

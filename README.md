@@ -6,6 +6,103 @@ See `CLAUDE.md` for full architecture rules and agent operating contract.
 
 ---
 
+## Quick Start
+
+Get a fully working RepoPulse instance running locally in under 10 minutes.
+
+### 1. Clone the repository
+
+```bash
+git clone <repo-url>
+cd RepoPluse_Comand_Center
+```
+
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in the following required values:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string — `postgres://user:pass@localhost:5432/repopulse_dev` |
+| `TOKEN_ENCRYPTION_KEY` | 32-byte hex key for encrypting GitHub tokens at rest (generate below) |
+| `GITHUB_CLIENT_ID` | OAuth App client ID from GitHub |
+| `GITHUB_CLIENT_SECRET` | OAuth App client secret from GitHub |
+| `GITHUB_CALLBACK_URL` | Must match the callback URL registered in your GitHub OAuth App |
+
+**Generate `TOKEN_ENCRYPTION_KEY`:**
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+Copy the output into `.env`. Keep this value secret — rotating it invalidates all stored tokens.
+
+### 4. Create the database and run migrations
+
+**macOS / Linux (bash):**
+```bash
+# Create the database (if it does not exist yet)
+# The name must match the database in DATABASE_URL (repopulse_dev by default in .env.example)
+createdb repopulse_dev
+
+# Load env vars, then apply all migrations
+export $(grep -v '^#' .env | xargs) && npm run db:migrate
+```
+
+**Windows (PowerShell):**
+```powershell
+# Create the database — run in a psql session or pgAdmin query tool:
+#   CREATE DATABASE repopulse_dev;
+
+# Set DATABASE_URL for this shell session, then migrate
+$env:DATABASE_URL = "postgres://repopulse:yourpassword@localhost:5432/repopulse_dev"
+npm run db:migrate
+```
+
+> **Node.js 20.6+ alternative (cross-platform):**
+> ```bash
+> node --env-file=.env ./node_modules/.bin/node-pg-migrate -m migrations up
+> ```
+
+This creates seven tables: `users`, `sessions`, `audit_logs`, `repositories`, `repo_metrics`, `risk_scores`, and the migration tracking table (`pgmigrations`).
+
+> **Already ran some migrations?** That is fine — `npm run db:migrate` only applies unapplied ones. Run `npm run db:migrate:status` to see which have been applied.
+
+### 5. Register a GitHub OAuth App
+
+1. Go to **GitHub → Settings → Developer Settings → OAuth Apps → New OAuth App**
+2. Set **Authorization callback URL** to `http://localhost:3000/auth/github/callback`
+3. Copy the **Client ID** and generate a **Client Secret**
+4. Paste both into `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`
+
+### 6. Start the development server
+
+```bash
+# Load .env into the shell, then start
+export $(grep -v '^#' .env | xargs) && npm run dev
+```
+
+The server starts on `http://localhost:3000` (or the port set in `PORT`).
+
+> **Note for Node.js 20.6+:** You can use `node --env-file=.env backend/server.js` instead of the `export` approach.
+
+### 7. Log in and sync your repositories
+
+1. Open `http://localhost:3000/auth/github` in your browser to start the OAuth flow
+2. Authorize the app on GitHub — you will be redirected back to the dashboard
+3. Click **Sync Now** on the dashboard
+4. RepoPulse will fetch your repositories, compute risk scores, and display results
+
+---
+
 ## Prerequisites
 
 - Node.js 18+

@@ -221,6 +221,15 @@ describe('checkPermission — called with no arguments', () => {
   });
 });
 
+// ── Default OAuth user role must allow Sync Now ───────────────────────────────
+
+describe('checkPermission — default OAuth user role has repositories:configure', () => {
+  const defaultConfig = require('../../../../config/default');
+  it('config.defaultUserRole can configure repositories (required for Sync Now)', () => {
+    expect(allows(defaultConfig.defaultUserRole, 'repositories:configure')).toBe(true);
+  });
+});
+
 // ── No mutation of role definitions ──────────────────────────────────────────
 
 describe('checkPermission — does not mutate role definitions', () => {

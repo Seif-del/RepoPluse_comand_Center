@@ -36,11 +36,11 @@ router.get('/github', (req, res, next) => {
   res.redirect(url.toString());
 });
 
-// GET /callback
+// GET /github/callback
 // GitHub redirects here after the user authorises the OAuth app.
 // Exchanges the code, encrypts and stores the access token, upserts the user,
 // creates a session, and redirects to the dashboard.
-router.get('/callback', async (req, res, next) => {
+router.get('/github/callback', async (req, res, next) => {
   const code = req.query && req.query.code;
 
   if (!code) {
@@ -116,6 +116,7 @@ router.get('/callback', async (req, res, next) => {
       httpOnly: true,
       sameSite: 'lax',
       secure:   false,
+      maxAge:   appConfig.sessionExpiryHours * 60 * 60 * 1000,
     });
 
     logEvent({

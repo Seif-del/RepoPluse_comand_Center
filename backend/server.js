@@ -2,6 +2,7 @@
 
 const path          = require('path');
 const express       = require('express');
+const cookieParser  = require('cookie-parser');
 const app           = express();
 const { PORT, PROJECT_SOURCE } = require('../config/paths');
 const config        = require('../config');
@@ -24,6 +25,7 @@ let _syncedProjects = null;
 // written PROJECTS_FILE to disk. Node caches the result after the first call,
 // so there is no repeated file I/O on subsequent requests.
 
+app.use(cookieParser());
 app.use(requestLogger);
 
 app.use('/auth',     authRoutes);

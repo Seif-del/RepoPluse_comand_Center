@@ -12,6 +12,18 @@ module.exports = {
   // Database — resolved from DATABASE_URL env var; null when unset (Phase 1 default).
   databaseUrl: process.env.DATABASE_URL || null,
 
+  // GitHub OAuth — wired from GITHUB_* env vars set in .env.
+  github: {
+    clientId:     process.env.GITHUB_CLIENT_ID     || null,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET || null,
+    callbackUrl:  process.env.GITHUB_CALLBACK_URL  || null,
+    scopes:       ['read:user', 'user:email', 'repo'],
+  },
+
+  // Auth defaults
+  defaultUserRole:       'project_manager',
+  postLoginRedirectPath: '/dashboard',
+
   // Session
   sessionExpiryHours: 24,
 
