@@ -22,6 +22,35 @@
       --red:     #ef4444;
       --orange:  #f97316;
 
+      /* ── Severity tokens ──────────────────────────── */
+      --sev-critical-bg:     rgba(239,68,68,.14);
+      --sev-critical-border: rgba(220,38,38,.42);
+      --sev-critical-text:   #b91c1c;
+
+      --sev-high-bg:         rgba(249,115,22,.12);
+      --sev-high-border:     rgba(234,88,12,.38);
+      --sev-high-text:       #c2410c;
+
+      --sev-medium-bg:       rgba(245,158,11,.11);
+      --sev-medium-border:   rgba(217,119,6,.32);
+      --sev-medium-text:     #92400e;
+
+      --sev-low-bg:          rgba(59,130,246,.09);
+      --sev-low-border:      rgba(59,130,246,.28);
+      --sev-low-text:        #1d4ed8;
+
+      --sev-healthy-bg:      rgba(34,197,94,.11);
+      --sev-healthy-border:  rgba(22,163,74,.32);
+      --sev-healthy-text:    #15803d;
+
+      --sev-unknown-bg:      rgba(234,179,8,.08);
+      --sev-unknown-border:  rgba(168,162,158,.32);
+      --sev-unknown-text:    #78716c;
+
+      --sev-neutral-bg:      var(--surface-2);
+      --sev-neutral-border:  var(--border);
+      --sev-neutral-text:    var(--text-muted);
+
       --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
       --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.05);
 
@@ -47,6 +76,30 @@
 
         --shadow-sm: 0 1px 3px rgba(0,0,0,.4),  0 1px 2px rgba(0,0,0,.3);
         --shadow-md: 0 4px 16px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+
+        --sev-critical-bg:     rgba(239,68,68,.18);
+        --sev-critical-border: rgba(239,68,68,.50);
+        --sev-critical-text:   #f87171;
+
+        --sev-high-bg:         rgba(249,115,22,.16);
+        --sev-high-border:     rgba(249,115,22,.45);
+        --sev-high-text:       #fb923c;
+
+        --sev-medium-bg:       rgba(245,158,11,.14);
+        --sev-medium-border:   rgba(245,158,11,.40);
+        --sev-medium-text:     #fbbf24;
+
+        --sev-low-bg:          rgba(59,130,246,.12);
+        --sev-low-border:      rgba(59,130,246,.32);
+        --sev-low-text:        #60a5fa;
+
+        --sev-healthy-bg:      rgba(34,197,94,.14);
+        --sev-healthy-border:  rgba(34,197,94,.38);
+        --sev-healthy-text:    #4ade80;
+
+        --sev-unknown-bg:      rgba(234,179,8,.11);
+        --sev-unknown-border:  rgba(163,163,163,.32);
+        --sev-unknown-text:    #d6d3d1;
       }
     }
 
@@ -235,26 +288,31 @@
       font-weight: 600;
       padding: 3px 10px;
       border-radius: 99px;
+      border: 1px solid transparent;
     }
 
     .card-badge.at-risk, .card-badge.critical, .card-badge.worsening {
-      background: rgba(239,68,68,.12);
-      color: var(--red);
+      background: var(--sev-critical-bg);
+      border-color: var(--sev-critical-border);
+      color: var(--sev-critical-text);
     }
 
     .card-badge.healthy, .card-badge.improving {
-      background: rgba(34,197,94,.12);
-      color: var(--green);
+      background: var(--sev-healthy-bg);
+      border-color: var(--sev-healthy-border);
+      color: var(--sev-healthy-text);
     }
 
     .card-badge.monitor {
-      background: rgba(249,115,22,.12);
-      color: var(--orange);
+      background: var(--sev-medium-bg);
+      border-color: var(--sev-medium-border);
+      color: var(--sev-medium-text);
     }
 
     .card-badge.normal, .card-badge.stable {
-      background: var(--surface-2);
-      color: var(--text-secondary);
+      background: var(--sev-neutral-bg);
+      border-color: var(--sev-neutral-border);
+      color: var(--sev-neutral-text);
     }
 
     .card-badge::before {
@@ -389,6 +447,7 @@
       font-weight: 600;
       padding: 3px 10px;
       border-radius: 99px;
+      border: 1px solid transparent;
     }
 
     .status-pill::before {
@@ -399,8 +458,8 @@
       background: currentColor;
     }
 
-    .status-pill.healthy  { background: rgba(34,197,94,.12);  color: var(--green); }
-    .status-pill.at-risk  { background: rgba(239,68,68,.12);  color: var(--red);   }
+    .status-pill.healthy  { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text); }
+    .status-pill.at-risk  { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); }
 
     /* ── Filter bar ──────────────────────────────────────────────────────── */
     .filter-bar {
@@ -462,6 +521,80 @@
       color: var(--red);
       padding: 8px 0;
     }
+
+    /* ── Attention queue ─────────────────────────────────────────────────── */
+    .aq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .aq-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      cursor: pointer;
+      transition: background 0.1s ease, border-color 0.1s ease;
+    }
+
+    .aq-item:hover { background: var(--surface); border-color: var(--border-focus); }
+
+    .aq-badge {
+      flex-shrink: 0;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 8px;
+      border-radius: 99px;
+      margin-top: 1px;
+    }
+
+    .aq-badge.severity-critical { background: var(--sev-critical-bg); border: 1px solid var(--sev-critical-border); color: var(--sev-critical-text); }
+    .aq-badge.severity-high     { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
+    .aq-badge.severity-medium   { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .aq-badge.severity-low      { background: var(--sev-low-bg);      border: 1px solid var(--sev-low-border);      color: var(--sev-low-text);      }
+    .aq-badge.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+    .aq-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+
+    /* Attention queue row-level severity tinting */
+    .aq-item.severity-critical { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); border-left: 3px solid var(--sev-critical-border); }
+    .aq-item.severity-high     { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     border-left: 3px solid var(--sev-high-border);     }
+    .aq-item.severity-medium   {                                                                                 border-left: 2px solid var(--sev-medium-border);   }
+    .aq-item.severity-unknown  { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  border-left: 2px solid var(--sev-unknown-border);  }
+
+    /* ── Reusable severity state classes ─────────────────────────────────────── */
+    .severity-critical { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); }
+    .severity-high     { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     color: var(--sev-high-text);     }
+    .severity-medium   { background: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .severity-low      { background: var(--sev-low-bg);      border-color: var(--sev-low-border);      color: var(--sev-low-text);      }
+    .severity-healthy  { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .severity-unknown  { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+    .severity-neutral  { background: var(--sev-neutral-bg);  border-color: var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
+
+    .aq-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      margin-bottom: 3px;
+    }
+
+    .aq-reasons {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .aq-empty {
+      font-size: 0.85rem;
+      color: var(--green);
+      padding: 12px 0 4px;
+    }
   </style>
 </head>
 <body>
@@ -504,6 +637,23 @@
       </div>
       <div id="summary-cards" class="card-grid">
         <div class="card"><div class="card-label">Loading</div><div class="card-value">—</div></div>
+      </div>
+    </div>
+
+    <!-- Attention queue -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Attention Queue</span>
+        <div class="section-divider"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Repos Needing Attention</h2>
+          <span id="aq-count" class="panel-count">—</span>
+        </div>
+        <div class="panel-body">
+          <div id="aq-container"><p class="error-msg">Loading…</p></div>
+        </div>
       </div>
     </div>
 
@@ -586,12 +736,16 @@
     }
 
     function labelClass(label) {
-      if (!label) return '';
+      if (!label) return 'severity-unknown';
       var v = label.toLowerCase();
-      if (v === 'critical') return 'at-risk';
-      if (v === 'at-risk')  return 'at-risk';
-      if (v === 'healthy')  return 'healthy';
-      return '';
+      if (v === 'critical') return 'severity-critical';
+      if (v === 'high')     return 'severity-high';
+      if (v === 'at-risk')  return 'severity-high';
+      if (v === 'medium')   return 'severity-medium';
+      if (v === 'low')      return 'severity-low';
+      if (v === 'healthy')  return 'severity-healthy';
+      if (v === 'unknown')  return 'severity-unknown';
+      return 'severity-neutral';
     }
 
     function trendArrow(trend) {
@@ -619,22 +773,22 @@
 
     function buildExplanationHtml(exp) {
       if (!exp || !exp.hasMetrics) {
-        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+        return '<p style="font-size:0.82rem;color:var(--sev-unknown-text);font-style:italic;padding:4px 0;">'
           + 'No metrics available yet. Click <strong>Sync Now</strong> to analyze this repository.'
           + '</p>';
       }
       var html = '';
       if (exp.allClear) {
-        html += '<p style="font-size:0.82rem;color:var(--green);padding:4px 0;">&#10003; No risk signals detected for this repository.</p>';
+        html += '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0;">&#10003; No risk signals detected for this repository.</p>';
       } else {
         html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:10px;">';
         exp.triggered.forEach(function(f) {
-          html += '<li style="color:var(--red);">&#9888;&#xFE0E; ' + esc(f) + '</li>';
+          html += '<li style="color:var(--sev-critical-text);">&#9888;&#xFE0E; ' + esc(f) + '</li>';
         });
         html += '</ul>';
       }
       if (exp.notMeasured && exp.notMeasured.length) {
-        html += '<ul style="font-size:0.78rem;color:var(--text-muted);padding-left:18px;line-height:1.8;">';
+        html += '<ul style="font-size:0.78rem;color:var(--sev-unknown-text);padding-left:18px;line-height:1.8;">';
         exp.notMeasured.forEach(function(m) {
           html += '<li>' + esc(m) + ': not yet measured</li>';
         });
@@ -774,12 +928,12 @@
         // /api/repos/summary field names (DB-backed, authenticated)
         var atRiskTotal = (d.atRisk || 0) + (d.critical || 0);
         var statusLabel = atRiskTotal > 0 ? 'At Risk' : 'Healthy';
-        var statusCls   = atRiskTotal > 0 ? 'at-risk' : 'healthy';
+        var statusCls   = atRiskTotal > 0 ? 'severity-high' : 'severity-healthy';
         var updated     = d.lastSyncedAt ? new Date(d.lastSyncedAt).toLocaleString() : 'Never';
         fields = [
           ['Repos',      d.totalRepos != null ? d.totalRepos : '—', ''],
-          ['Healthy',    d.healthy    != null ? d.healthy    : '—', 'healthy'],
-          ['At Risk',    atRiskTotal,                                atRiskTotal > 0 ? 'at-risk' : ''],
+          ['Healthy',    d.healthy    != null ? d.healthy    : '—', 'severity-healthy'],
+          ['At Risk',    atRiskTotal,                                atRiskTotal > 0 ? 'severity-high' : ''],
           ['Avg Score',  d.avgScore   != null ? d.avgScore   : '—', ''],
           ['Status',     statusLabel,                                statusCls],
           ['Last Sync',  updated,                                   ''],
@@ -787,11 +941,11 @@
       } else {
         // /summary field names (file-backed seed, unauthenticated fallback)
         var lastUpdated = d.lastUpdated ? new Date(d.lastUpdated).toLocaleString() : 'Never';
-        var demoCls = d.systemStatus === 'At Risk' ? 'at-risk' : 'healthy';
+        var demoCls = d.systemStatus === 'At Risk' ? 'severity-high' : 'severity-healthy';
         fields = [
           ['Repos',      d.totalProjects   != null ? d.totalProjects   : '—', ''],
-          ['Healthy',    d.healthyProjects  != null ? d.healthyProjects  : '—', 'healthy'],
-          ['At Risk',    d.atRiskProjects   != null ? d.atRiskProjects   : '—', d.atRiskProjects > 0 ? 'at-risk' : ''],
+          ['Healthy',    d.healthyProjects  != null ? d.healthyProjects  : '—', 'severity-healthy'],
+          ['At Risk',    d.atRiskProjects   != null ? d.atRiskProjects   : '—', d.atRiskProjects > 0 ? 'severity-high' : ''],
           ['Risk Score', d.riskScore        != null ? d.riskScore        : '—', ''],
           ['Status',     d.systemStatus     || '—',                            demoCls],
           ['Updated',    lastUpdated,                                          ''],
@@ -847,9 +1001,9 @@
       var ciLabel  = ciStatus === 'passing' ? 'Passing'
                    : ciStatus === 'failing' ? 'Failing'
                    : 'Unknown';
-      var ciCls    = ciStatus === 'passing' ? 'healthy'
-                   : ciStatus === 'failing' ? 'at-risk'
-                   : '';
+      var ciCls    = ciStatus === 'passing' ? 'severity-healthy'
+                   : ciStatus === 'failing' ? 'severity-critical'
+                   : 'severity-unknown';
 
       var relStatus = repo.releaseStatus || 'unknown';
       var relAge    = '';
@@ -861,10 +1015,10 @@
                     : relStatus === 'stale'   ? 'Stale'   + relAge
                     : relStatus === 'none'    ? 'No releases'
                     : 'Unknown';
-      var relCls    = relStatus === 'healthy' ? 'healthy'
-                    : relStatus === 'stale'   ? 'at-risk'
-                    : relStatus === 'none'    ? 'at-risk'
-                    : '';
+      var relCls    = relStatus === 'healthy' ? 'severity-healthy'
+                    : relStatus === 'stale'   ? 'severity-high'
+                    : relStatus === 'none'    ? 'severity-medium'
+                    : 'severity-unknown';
 
       var contrStatus = repo.contributorStatus || 'unknown';
       var contrCount  = repo.activeContributorCount != null ? repo.activeContributorCount : null;
@@ -878,11 +1032,11 @@
                       : contrStatus === 'bus_factor_risk' ? 'Bus-factor risk' + contrDetail
                       : contrStatus === 'abandoned'       ? 'Abandoned'
                       : 'Unknown';
-      var contrCls    = contrStatus === 'healthy'         ? 'healthy'
-                      : contrStatus === 'low_activity'    ? 'at-risk'
-                      : contrStatus === 'bus_factor_risk' ? 'at-risk'
-                      : contrStatus === 'abandoned'       ? 'at-risk'
-                      : '';
+      var contrCls    = contrStatus === 'healthy'         ? 'severity-healthy'
+                      : contrStatus === 'low_activity'    ? 'severity-medium'
+                      : contrStatus === 'bus_factor_risk' ? 'severity-high'
+                      : contrStatus === 'abandoned'       ? 'severity-critical'
+                      : 'severity-unknown';
 
       var detail = document.getElementById('repo-detail');
       detail.hidden = false;
@@ -893,7 +1047,7 @@
         +   '<div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(repo.fullName) + '</div></div>'
         + card('Risk Score',         repo.score != null ? repo.score : '—', '')
         + card('Label',              repo.label || '—',                     cls)
-        + card('Trend',              repo.trend  || '—',                    repo.trend === 'improving' ? 'healthy' : repo.trend === 'worsening' ? 'at-risk' : '')
+        + card('Trend',              repo.trend  || '—',                    repo.trend === 'improving' ? 'severity-healthy' : repo.trend === 'worsening' ? 'severity-high' : 'severity-neutral')
         + card('CI Status',          ciLabel,                               ciCls)
         + card('Release Status',     relLabel,                              relCls)
         + card('Latest Release',     repo.latestReleaseName || '—',         '')
@@ -1019,6 +1173,20 @@
       applyFilter();
     });
 
+    // ── Attention queue click wiring ─────────────────────────────────────────
+
+    document.getElementById('aq-container').addEventListener('click', function(e) {
+      var item = e.target.closest('.aq-item');
+      if (!item) return;
+      var repoId = parseInt(item.dataset.repoId, 10);
+      var found = _repos.find(function(r) { return r.id === repoId; });
+      if (!found) {
+        console.warn('[AttentionQueue] Repo id', repoId, 'not found in _repos — repos may still be loading.');
+        return;
+      }
+      selectRepo(found);
+    });
+
     // ── History ──────────────────────────────────────────────────────────────
 
     function loadHistory() {
@@ -1051,9 +1219,9 @@
             return;
           }
           listEl.innerHTML = sourceNote + entries.slice().reverse().slice(0, 20).map(function(e) {
-            var cls = e.alertState === 'Critical' ? 'at-risk'
-                    : e.alertState === 'Monitor'  ? 'monitor'
-                    : 'healthy';
+            var cls = e.alertState === 'Critical' ? 'severity-critical'
+                    : e.alertState === 'Monitor'  ? 'severity-medium'
+                    : 'severity-healthy';
             return '<div style="display:flex;justify-content:space-between;align-items:center;'
               + 'padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">'
               + '<span style="color:var(--text-secondary);">'
@@ -1070,11 +1238,59 @@
         });
     }
 
+    // ── Attention queue ───────────────────────────────────────────────────────
+
+    function renderAttentionQueue(items) {
+      var countEl = document.getElementById('aq-count');
+      var container = document.getElementById('aq-container');
+
+      var nonHealthy = items.filter(function(it) { return it.attentionLevel !== 'healthy'; });
+      if (countEl) countEl.textContent = nonHealthy.length + ' repo' + (nonHealthy.length !== 1 ? 's' : '');
+
+      if (!nonHealthy.length) {
+        container.innerHTML = '<p class="aq-empty">&#10003; All repositories look healthy — no attention needed.</p>';
+        return;
+      }
+
+      container.innerHTML = '<div class="aq-list">'
+        + nonHealthy.slice(0, 5).map(function(it) {
+            var sevCls = 'severity-' + esc(it.attentionLevel);
+            return '<div class="aq-item ' + sevCls + '" data-repo-id="' + esc(String(it.repoId)) + '">'
+              + '<span class="aq-badge ' + sevCls + '">' + esc(it.attentionLevel) + '</span>'
+              + '<div>'
+              + '<div class="aq-name">' + esc(it.name) + '</div>'
+              + '<div class="aq-reasons">' + it.reasons.map(function(r) { return esc(r); }).join(' &middot; ') + '</div>'
+              + '</div>'
+              + '</div>';
+          }).join('')
+        + '</div>';
+    }
+
+    function loadAttentionQueue() {
+      fetch('/api/repos/attention', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) {
+            document.getElementById('aq-container').innerHTML =
+              '<p style="color:var(--text-muted);font-size:0.85rem;">'
+              + '<a href="/auth/github" style="color:var(--blue);">Login with GitHub</a>'
+              + ' to see the attention queue.</p>';
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          renderAttentionQueue(d.attention || []);
+        })
+        .catch(function(e) { showError('aq-container', e.message); });
+    }
+
     // ── Initial load + auto-refresh ──────────────────────────────────────────
 
     function refresh() {
       loadSummary();
       loadRepos();
+      loadAttentionQueue();
       loadHistory();
     }
 
