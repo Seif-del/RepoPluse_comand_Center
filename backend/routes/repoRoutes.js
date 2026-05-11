@@ -30,7 +30,10 @@ router.get('/', async (req, res, next) => {
          rs.trend,
          rs.factors,
          rs.snapshot_at     AS "scoredAt",
-         rm.ci_status       AS "ciStatus"
+         rm.ci_status                  AS "ciStatus",
+         rm.latest_release_name        AS "latestReleaseName",
+         rm.latest_release_published_at AS "latestReleasePublishedAt",
+         rm.release_status             AS "releaseStatus"
        FROM repositories r
        LEFT JOIN LATERAL (
          SELECT score, label, trend, factors, snapshot_at
@@ -40,7 +43,7 @@ router.get('/', async (req, res, next) => {
          LIMIT 1
        ) rs ON true
        LEFT JOIN LATERAL (
-         SELECT ci_status
+         SELECT ci_status, latest_release_name, latest_release_published_at, release_status
          FROM repo_metrics
          WHERE repo_id = r.id
          ORDER BY snapshot_at DESC
@@ -54,10 +57,11 @@ router.get('/', async (req, res, next) => {
     const repos = result.rows.map(r => ({
       ...r,
       explanation: getRepoRiskFactors({
-        score:    r.score,
-        label:    r.label,
-        factors:  r.factors,
-        ciStatus: r.ciStatus,
+        score:         r.score,
+        label:         r.label,
+        factors:       r.factors,
+        ciStatus:      r.ciStatus,
+        releaseStatus: r.releaseStatus,
       }),
     }));
 

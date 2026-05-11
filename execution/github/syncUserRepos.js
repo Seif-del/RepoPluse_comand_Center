@@ -3,6 +3,7 @@
 const { fetchUserRepos }   = require('./fetchUserRepos');
 const { fetchRepoMetrics } = require('./fetchRepoMetrics');
 const { fetchCiStatus }    = require('./fetchCiStatus');
+const { fetchReleaseInfo } = require('./fetchReleaseInfo');
 const { scoreRepo }        = require('../risk/scoreRepo');
 
 const MS_PER_DAY = 86_400_000;
@@ -36,17 +37,20 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
       // Upsert repository row
       const repoRow = await _upsertRepository({ db, userId, repo, now });
 
-      // Fetch metrics and CI status in parallel
-      const [metrics, ciStatus] = await Promise.all([
+      // Fetch metrics, CI status, and release info in parallel
+      const UNKNOWN_RELEASE = { latestReleaseName: null, latestReleasePublishedAt: null, releaseStatus: 'unknown' };
+      const [metrics, ciStatus, releaseInfo] = await Promise.all([
         fetchRepoMetrics({ accessToken, fullName: repo.fullName, fetchFn, now }),
         fetchCiStatus({ accessToken, fullName: repo.fullName, fetchFn }).catch(() => 'unknown'),
+        fetchReleaseInfo({ accessToken, fullName: repo.fullName, fetchFn, now }).catch(() => UNKNOWN_RELEASE),
       ]);
 
       // Insert metrics snapshot
       await db.query(
         `INSERT INTO repo_metrics
-           (repo_id, snapshot_at, commits_7d, open_prs, stale_prs, open_issues, last_push_at, ci_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           (repo_id, snapshot_at, commits_7d, open_prs, stale_prs, open_issues, last_push_at,
+            ci_status, latest_release_name, latest_release_published_at, release_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           repoRow.id,
           now,
@@ -56,6 +60,9 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
           metrics.openIssues,
           metrics.lastPushAt,
           ciStatus,
+          releaseInfo.latestReleaseName,
+          releaseInfo.latestReleasePublishedAt,
+          releaseInfo.releaseStatus,
         ]
       );
 

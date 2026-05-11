@@ -851,6 +851,21 @@
                    : ciStatus === 'failing' ? 'at-risk'
                    : '';
 
+      var relStatus = repo.releaseStatus || 'unknown';
+      var relAge    = '';
+      if (repo.latestReleasePublishedAt) {
+        var days = Math.floor((Date.now() - new Date(repo.latestReleasePublishedAt).getTime()) / 86400000);
+        relAge   = days === 0 ? ' (today)' : ' (' + days + 'd ago)';
+      }
+      var relLabel  = relStatus === 'healthy' ? 'Healthy' + relAge
+                    : relStatus === 'stale'   ? 'Stale'   + relAge
+                    : relStatus === 'none'    ? 'No releases'
+                    : 'Unknown';
+      var relCls    = relStatus === 'healthy' ? 'healthy'
+                    : relStatus === 'stale'   ? 'at-risk'
+                    : relStatus === 'none'    ? 'at-risk'
+                    : '';
+
       var detail = document.getElementById('repo-detail');
       detail.hidden = false;
       detail.innerHTML =
@@ -858,11 +873,13 @@
         + '<div class="card-grid">'
         + '<div class="card" style="grid-column:span 2"><div class="card-label">Name</div>'
         +   '<div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(repo.fullName) + '</div></div>'
-        + card('Risk Score', repo.score != null ? repo.score : '—', '')
-        + card('Label',      repo.label || '—',                     cls)
-        + card('Trend',      repo.trend  || '—',                    repo.trend === 'improving' ? 'healthy' : repo.trend === 'worsening' ? 'at-risk' : '')
-        + card('CI Status',  ciLabel,                               ciCls)
-        + card('Last Synced', syncTime, '')
+        + card('Risk Score',      repo.score != null ? repo.score : '—', '')
+        + card('Label',           repo.label || '—',                     cls)
+        + card('Trend',           repo.trend  || '—',                    repo.trend === 'improving' ? 'healthy' : repo.trend === 'worsening' ? 'at-risk' : '')
+        + card('CI Status',       ciLabel,                               ciCls)
+        + card('Release Status',  relLabel,                              relCls)
+        + card('Latest Release',  repo.latestReleaseName || '—',         '')
+        + card('Last Synced',     syncTime,                              '')
         + '</div>'
         + '<div class="repo-detail-label" style="margin-top:14px;">Why this repo is risky</div>'
         + buildExplanationHtml(exp);

@@ -266,6 +266,127 @@ describe('getRepoRiskFactors — ciStatus unknown or absent', () => {
   });
 });
 
+// ── Release status — healthy ──────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — releaseStatus healthy', () => {
+  it('does not add a release factor to triggered when healthy', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'healthy' });
+    expect(triggered.some(f => f.toLowerCase().includes('release'))).toBe(false);
+  });
+
+  it('removes Release activity from notMeasured when status is known', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'healthy' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(false);
+  });
+
+  it('keeps dependency vulnerabilities in notMeasured', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'healthy' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('vulnerabilit'))).toBe(true);
+  });
+
+  it('allClear is true when release is healthy and no other factors', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'healthy' }).allClear).toBe(true);
+  });
+});
+
+// ── Release status — stale ────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — releaseStatus stale', () => {
+  it('adds stale release factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'stale' });
+    expect(triggered.some(f => f.toLowerCase().includes('90 days'))).toBe(true);
+  });
+
+  it('allClear is false when release is stale', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'stale' }).allClear).toBe(false);
+  });
+
+  it('removes Release activity from notMeasured when stale', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'stale' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(false);
+  });
+
+  it('accumulates stale factor alongside other triggered factors', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 40, factors: ['No commits in the last 7 days'], releaseStatus: 'stale',
+    });
+    expect(triggered).toHaveLength(2);
+    expect(triggered.some(f => f.toLowerCase().includes('90 days'))).toBe(true);
+  });
+});
+
+// ── Release status — none ─────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — releaseStatus none', () => {
+  it('adds no-releases factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'none' });
+    expect(triggered.some(f => f.toLowerCase().includes('no releases'))).toBe(true);
+  });
+
+  it('allClear is false when releaseStatus is none', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'none' }).allClear).toBe(false);
+  });
+
+  it('removes Release activity from notMeasured when none', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'none' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(false);
+  });
+});
+
+// ── Release status — unknown / absent ────────────────────────────────────────
+
+describe('getRepoRiskFactors — releaseStatus unknown or absent', () => {
+  it('keeps Release activity in notMeasured when releaseStatus is unknown', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'unknown' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(true);
+  });
+
+  it('keeps Release activity in notMeasured when releaseStatus is absent', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [] });
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(true);
+  });
+
+  it('does not add a release factor to triggered when releaseStatus is unknown', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], releaseStatus: 'unknown' });
+    expect(triggered.some(f => f.toLowerCase().includes('release'))).toBe(false);
+  });
+});
+
+// ── CI + Release combined ─────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — CI and release combined', () => {
+  it('removes both CI and Release from notMeasured when both are known', () => {
+    const { notMeasured } = getRepoRiskFactors({
+      score: 0, factors: [], ciStatus: 'passing', releaseStatus: 'healthy',
+    });
+    expect(notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(false);
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(false);
+    expect(notMeasured).toEqual(['Dependency vulnerabilities']);
+  });
+
+  it('accumulates CI failing + stale release factors together', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 60, factors: [], ciStatus: 'failing', releaseStatus: 'stale',
+    });
+    expect(triggered.some(f => f.toLowerCase().includes('ci'))).toBe(true);
+    expect(triggered.some(f => f.toLowerCase().includes('90 days'))).toBe(true);
+    expect(triggered).toHaveLength(2);
+  });
+
+  it('allClear is false when both CI is failing and release is stale', () => {
+    expect(getRepoRiskFactors({
+      score: 0, factors: [], ciStatus: 'failing', releaseStatus: 'stale',
+    }).allClear).toBe(false);
+  });
+
+  it('does not mutate the passed factors array with multiple additions', () => {
+    const factors = ['No commits in the last 7 days'];
+    const copy = factors.slice();
+    getRepoRiskFactors({ score: 50, factors, ciStatus: 'failing', releaseStatus: 'stale' });
+    expect(factors).toEqual(copy);
+  });
+});
+
 // ── Immutability ──────────────────────────────────────────────────────────────
 
 describe('getRepoRiskFactors — does not mutate inputs', () => {
