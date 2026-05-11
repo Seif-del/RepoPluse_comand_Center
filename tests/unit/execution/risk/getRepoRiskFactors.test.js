@@ -178,6 +178,94 @@ describe('getRepoRiskFactors — unsupported metrics are reported as not measure
   });
 });
 
+// ── CI status — passing ───────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — ciStatus passing', () => {
+  it('does not add a CI factor to triggered when passing', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'passing' });
+    expect(triggered.some(f => f.toLowerCase().includes('ci'))).toBe(false);
+  });
+
+  it('removes CI/CD pipeline status from notMeasured when status is known', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'passing' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(false);
+  });
+
+  it('keeps release activity and dependency vulnerabilities in notMeasured', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'passing' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(true);
+    expect(notMeasured.some(m => m.toLowerCase().includes('vulnerabilit'))).toBe(true);
+  });
+
+  it('allClear is true when CI is passing and no other factors', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'passing' }).allClear).toBe(true);
+  });
+});
+
+// ── CI status — failing ───────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — ciStatus failing', () => {
+  it('adds CI failing factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'failing' });
+    expect(triggered.some(f => f.toLowerCase().includes('ci'))).toBe(true);
+  });
+
+  it('allClear is false when CI is failing even if factors is empty', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'failing' }).allClear).toBe(false);
+  });
+
+  it('removes CI/CD pipeline status from notMeasured when failing', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'failing' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(false);
+  });
+
+  it('accumulates CI factor alongside other triggered factors', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 50, factors: ['No commits in the last 7 days'], ciStatus: 'failing',
+    });
+    expect(triggered).toHaveLength(2);
+    expect(triggered.some(f => f.toLowerCase().includes('ci'))).toBe(true);
+  });
+
+  it('does not mutate the passed factors array when CI is failing', () => {
+    const factors = ['No commits in the last 7 days'];
+    const copy = factors.slice();
+    getRepoRiskFactors({ score: 50, factors, ciStatus: 'failing' });
+    expect(factors).toEqual(copy);
+  });
+});
+
+// ── CI status — unknown / absent ──────────────────────────────────────────────
+
+describe('getRepoRiskFactors — ciStatus unknown or absent', () => {
+  it('keeps CI/CD in notMeasured when ciStatus is unknown', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'unknown' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(true);
+  });
+
+  it('keeps CI/CD in notMeasured when ciStatus is absent', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [] });
+    expect(notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(true);
+  });
+
+  it('does not add a CI factor to triggered when ciStatus is unknown', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], ciStatus: 'unknown' });
+    expect(triggered.some(f => f.toLowerCase().includes('ci'))).toBe(false);
+  });
+
+  it('hasMetrics is false and notMeasured includes CI when no score and ciStatus unknown', () => {
+    const result = getRepoRiskFactors({ score: null, ciStatus: 'unknown' });
+    expect(result.hasMetrics).toBe(false);
+    expect(result.notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(true);
+  });
+
+  it('hasMetrics is false and notMeasured drops CI when no score but ciStatus passing', () => {
+    const result = getRepoRiskFactors({ score: null, ciStatus: 'passing' });
+    expect(result.hasMetrics).toBe(false);
+    expect(result.notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(false);
+  });
+});
+
 // ── Immutability ──────────────────────────────────────────────────────────────
 
 describe('getRepoRiskFactors — does not mutate inputs', () => {

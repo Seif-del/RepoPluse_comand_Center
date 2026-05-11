@@ -2,6 +2,7 @@
 
 const { fetchUserRepos }   = require('./fetchUserRepos');
 const { fetchRepoMetrics } = require('./fetchRepoMetrics');
+const { fetchCiStatus }    = require('./fetchCiStatus');
 const { scoreRepo }        = require('../risk/scoreRepo');
 
 const MS_PER_DAY = 86_400_000;
@@ -35,19 +36,17 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
       // Upsert repository row
       const repoRow = await _upsertRepository({ db, userId, repo, now });
 
-      // Fetch live metrics
-      const metrics = await fetchRepoMetrics({
-        accessToken,
-        fullName: repo.fullName,
-        fetchFn,
-        now,
-      });
+      // Fetch metrics and CI status in parallel
+      const [metrics, ciStatus] = await Promise.all([
+        fetchRepoMetrics({ accessToken, fullName: repo.fullName, fetchFn, now }),
+        fetchCiStatus({ accessToken, fullName: repo.fullName, fetchFn }).catch(() => 'unknown'),
+      ]);
 
       // Insert metrics snapshot
       await db.query(
         `INSERT INTO repo_metrics
-           (repo_id, snapshot_at, commits_7d, open_prs, stale_prs, open_issues, last_push_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           (repo_id, snapshot_at, commits_7d, open_prs, stale_prs, open_issues, last_push_at, ci_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           repoRow.id,
           now,
@@ -56,6 +55,7 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
           metrics.stalePrs,
           metrics.openIssues,
           metrics.lastPushAt,
+          ciStatus,
         ]
       );
 

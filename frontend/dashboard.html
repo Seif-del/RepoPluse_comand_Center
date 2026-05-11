@@ -843,6 +843,14 @@
       var syncTime = repo.lastSyncedAt ? new Date(repo.lastSyncedAt).toLocaleString() : 'Not synced yet';
       var exp      = repo.explanation || {};
 
+      var ciStatus = repo.ciStatus || 'unknown';
+      var ciLabel  = ciStatus === 'passing' ? 'Passing'
+                   : ciStatus === 'failing' ? 'Failing'
+                   : 'Unknown';
+      var ciCls    = ciStatus === 'passing' ? 'healthy'
+                   : ciStatus === 'failing' ? 'at-risk'
+                   : '';
+
       var detail = document.getElementById('repo-detail');
       detail.hidden = false;
       detail.innerHTML =
@@ -853,6 +861,7 @@
         + card('Risk Score', repo.score != null ? repo.score : '—', '')
         + card('Label',      repo.label || '—',                     cls)
         + card('Trend',      repo.trend  || '—',                    repo.trend === 'improving' ? 'healthy' : repo.trend === 'worsening' ? 'at-risk' : '')
+        + card('CI Status',  ciLabel,                               ciCls)
         + card('Last Synced', syncTime, '')
         + '</div>'
         + '<div class="repo-detail-label" style="margin-top:14px;">Why this repo is risky</div>'
