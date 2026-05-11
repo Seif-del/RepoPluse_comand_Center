@@ -6,16 +6,18 @@ jest.mock('../../../../execution/github/fetchUserRepos');
 jest.mock('../../../../execution/github/fetchRepoMetrics');
 jest.mock('../../../../execution/github/fetchCiStatus');
 jest.mock('../../../../execution/github/fetchReleaseInfo');
+jest.mock('../../../../execution/github/fetchContributorInfo');
 jest.mock('../../../../execution/risk/scoreRepo');
 
 // ── Imports ────────────────────────────────────────────────────────────────────
 
-const { syncUserRepos }    = require('../../../../execution/github/syncUserRepos');
-const { fetchUserRepos }   = require('../../../../execution/github/fetchUserRepos');
-const { fetchRepoMetrics } = require('../../../../execution/github/fetchRepoMetrics');
-const { fetchCiStatus }    = require('../../../../execution/github/fetchCiStatus');
-const { fetchReleaseInfo } = require('../../../../execution/github/fetchReleaseInfo');
-const { scoreRepo }        = require('../../../../execution/risk/scoreRepo');
+const { syncUserRepos }       = require('../../../../execution/github/syncUserRepos');
+const { fetchUserRepos }      = require('../../../../execution/github/fetchUserRepos');
+const { fetchRepoMetrics }    = require('../../../../execution/github/fetchRepoMetrics');
+const { fetchCiStatus }       = require('../../../../execution/github/fetchCiStatus');
+const { fetchReleaseInfo }    = require('../../../../execution/github/fetchReleaseInfo');
+const { fetchContributorInfo } = require('../../../../execution/github/fetchContributorInfo');
+const { scoreRepo }           = require('../../../../execution/risk/scoreRepo');
 
 // ── Shared fixtures ────────────────────────────────────────────────────────────
 
@@ -38,6 +40,12 @@ const MOCK_RELEASE = {
   latestReleaseName:       'v1.0.0',
   latestReleasePublishedAt: new Date('2024-12-01T00:00:00.000Z'),
   releaseStatus:           'healthy',
+};
+
+const MOCK_CONTRIBUTORS = {
+  activeContributorCount:   5,
+  topContributorPercentage: 40.0,
+  contributorStatus:        'healthy',
 };
 
 const MOCK_SCORE = {
@@ -69,6 +77,7 @@ function resetMocks() {
   fetchRepoMetrics.mockReset();
   fetchCiStatus.mockReset();
   fetchReleaseInfo.mockReset();
+  fetchContributorInfo.mockReset();
   scoreRepo.mockReset();
 }
 
@@ -78,6 +87,7 @@ beforeEach(() => {
   fetchRepoMetrics.mockResolvedValue(MOCK_METRICS);
   fetchCiStatus.mockResolvedValue('passing');
   fetchReleaseInfo.mockResolvedValue(MOCK_RELEASE);
+  fetchContributorInfo.mockResolvedValue(MOCK_CONTRIBUTORS);
   scoreRepo.mockReturnValue(MOCK_SCORE);
 });
 
@@ -198,6 +208,43 @@ describe('syncUserRepos — release info', () => {
     await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
     const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
     expect(metricsCall[1]).toContain(null);
+  });
+});
+
+// ── Contributor info ───────────────────────────────────────────────────────────
+
+describe('syncUserRepos — contributor info', () => {
+  it('calls fetchContributorInfo with correct args', async () => {
+    const fetchFn = jest.fn();
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn, now: NOW });
+    expect(fetchContributorInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: 'tok', fullName: 'owner/repo', fetchFn })
+    );
+  });
+
+  it('inserts contributor_status into repo_metrics', async () => {
+    fetchContributorInfo.mockResolvedValue({ activeContributorCount: 1, topContributorPercentage: 100, contributorStatus: 'bus_factor_risk' });
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
+    expect(metricsCall[1]).toContain('bus_factor_risk');
+  });
+
+  it('uses unknown contributor status when fetchContributorInfo throws', async () => {
+    fetchContributorInfo.mockRejectedValue(new Error('API down'));
+    const db = makeDb();
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(1);
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
+    expect(metricsCall[1]).toContain('unknown');
+  });
+
+  it('inserts active_contributor_count into repo_metrics', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
+    expect(metricsCall[1]).toContain(5);
   });
 });
 

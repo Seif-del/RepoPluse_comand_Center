@@ -33,7 +33,10 @@ router.get('/', async (req, res, next) => {
          rm.ci_status                  AS "ciStatus",
          rm.latest_release_name        AS "latestReleaseName",
          rm.latest_release_published_at AS "latestReleasePublishedAt",
-         rm.release_status             AS "releaseStatus"
+         rm.release_status             AS "releaseStatus",
+         rm.active_contributor_count   AS "activeContributorCount",
+         rm.top_contributor_percentage AS "topContributorPercentage",
+         rm.contributor_status         AS "contributorStatus"
        FROM repositories r
        LEFT JOIN LATERAL (
          SELECT score, label, trend, factors, snapshot_at
@@ -43,7 +46,8 @@ router.get('/', async (req, res, next) => {
          LIMIT 1
        ) rs ON true
        LEFT JOIN LATERAL (
-         SELECT ci_status, latest_release_name, latest_release_published_at, release_status
+         SELECT ci_status, latest_release_name, latest_release_published_at, release_status,
+                active_contributor_count, top_contributor_percentage, contributor_status
          FROM repo_metrics
          WHERE repo_id = r.id
          ORDER BY snapshot_at DESC
@@ -57,11 +61,12 @@ router.get('/', async (req, res, next) => {
     const repos = result.rows.map(r => ({
       ...r,
       explanation: getRepoRiskFactors({
-        score:         r.score,
-        label:         r.label,
-        factors:       r.factors,
-        ciStatus:      r.ciStatus,
-        releaseStatus: r.releaseStatus,
+        score:             r.score,
+        label:             r.label,
+        factors:           r.factors,
+        ciStatus:          r.ciStatus,
+        releaseStatus:     r.releaseStatus,
+        contributorStatus: r.contributorStatus,
       }),
     }));
 

@@ -361,6 +361,13 @@ describe('getRepoRiskFactors — CI and release combined', () => {
     });
     expect(notMeasured.some(m => m.toLowerCase().includes('ci'))).toBe(false);
     expect(notMeasured.some(m => m.toLowerCase().includes('release'))).toBe(false);
+    expect(notMeasured).toEqual(['Contributor activity', 'Dependency vulnerabilities']);
+  });
+
+  it('removes CI, Release, and Contributor from notMeasured when all three are known', () => {
+    const { notMeasured } = getRepoRiskFactors({
+      score: 0, factors: [], ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    });
     expect(notMeasured).toEqual(['Dependency vulnerabilities']);
   });
 
@@ -384,6 +391,130 @@ describe('getRepoRiskFactors — CI and release combined', () => {
     const copy = factors.slice();
     getRepoRiskFactors({ score: 50, factors, ciStatus: 'failing', releaseStatus: 'stale' });
     expect(factors).toEqual(copy);
+  });
+});
+
+// ── Contributor status — healthy ──────────────────────────────────────────────
+
+describe('getRepoRiskFactors — contributorStatus healthy', () => {
+  it('does not add any contributor factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'healthy' });
+    expect(triggered.some(f => f.toLowerCase().includes('contributor'))).toBe(false);
+  });
+
+  it('removes Contributor activity from notMeasured when status is known', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'healthy' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(false);
+  });
+
+  it('allClear is true when contributor is healthy and no other factors', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'healthy' }).allClear).toBe(true);
+  });
+});
+
+// ── Contributor status — low_activity ─────────────────────────────────────────
+
+describe('getRepoRiskFactors — contributorStatus low_activity', () => {
+  it('adds low-activity factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'low_activity' });
+    expect(triggered.some(f => f.toLowerCase().includes('low contributor'))).toBe(true);
+  });
+
+  it('allClear is false when low_activity', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'low_activity' }).allClear).toBe(false);
+  });
+
+  it('removes Contributor activity from notMeasured', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'low_activity' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(false);
+  });
+});
+
+// ── Contributor status — bus_factor_risk ──────────────────────────────────────
+
+describe('getRepoRiskFactors — contributorStatus bus_factor_risk', () => {
+  it('adds bus-factor factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'bus_factor_risk' });
+    expect(triggered.some(f => f.toLowerCase().includes('bus-factor'))).toBe(true);
+  });
+
+  it('allClear is false when bus_factor_risk', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'bus_factor_risk' }).allClear).toBe(false);
+  });
+
+  it('removes Contributor activity from notMeasured', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'bus_factor_risk' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(false);
+  });
+});
+
+// ── Contributor status — abandoned ────────────────────────────────────────────
+
+describe('getRepoRiskFactors — contributorStatus abandoned', () => {
+  it('adds abandoned factor to triggered', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned' });
+    expect(triggered.some(f => f.toLowerCase().includes('abandoned'))).toBe(true);
+  });
+
+  it('allClear is false when abandoned', () => {
+    expect(getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned' }).allClear).toBe(false);
+  });
+
+  it('removes Contributor activity from notMeasured', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(false);
+  });
+});
+
+// ── Contributor status — unknown / absent ─────────────────────────────────────
+
+describe('getRepoRiskFactors — contributorStatus unknown or absent', () => {
+  it('keeps Contributor activity in notMeasured when unknown', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'unknown' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(true);
+  });
+
+  it('keeps Contributor activity in notMeasured when absent', () => {
+    const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [] });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(true);
+  });
+
+  it('does not add any factor to triggered when unknown', () => {
+    const { triggered } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'unknown' });
+    expect(triggered.some(f => f.toLowerCase().includes('contributor'))).toBe(false);
+  });
+});
+
+// ── All signals combined ───────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — all intelligence signals combined', () => {
+  it('accumulates CI + release stale + bus factor in triggered', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 80, factors: [],
+      ciStatus: 'failing', releaseStatus: 'stale', contributorStatus: 'bus_factor_risk',
+    });
+    expect(triggered.some(f => f.toLowerCase().includes('ci'))).toBe(true);
+    expect(triggered.some(f => f.toLowerCase().includes('90 days'))).toBe(true);
+    expect(triggered.some(f => f.toLowerCase().includes('bus-factor'))).toBe(true);
+    expect(triggered).toHaveLength(3);
+  });
+
+  it('does not mutate the factors array with three additions', () => {
+    const factors = ['No commits in the last 7 days'];
+    const copy = factors.slice();
+    getRepoRiskFactors({
+      score: 80, factors,
+      ciStatus: 'failing', releaseStatus: 'stale', contributorStatus: 'bus_factor_risk',
+    });
+    expect(factors).toEqual(copy);
+  });
+
+  it('notMeasured is only Dependency vulnerabilities when all three are known', () => {
+    const { notMeasured } = getRepoRiskFactors({
+      score: 0, factors: [],
+      ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    });
+    expect(notMeasured).toEqual(['Dependency vulnerabilities']);
   });
 });
 
