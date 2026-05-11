@@ -26,6 +26,7 @@ let _syncedProjects = null;
 // so there is no repeated file I/O on subsequent requests.
 
 app.use(cookieParser());
+app.use(express.json());
 app.use(requestLogger);
 
 app.use('/auth',     authRoutes);
@@ -37,6 +38,10 @@ app.get('/', (req, res) => {
 
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.resolve(__dirname, '../frontend/dashboard.html'));
+});
+
+app.get('/manage/repos', (req, res) => {
+  res.sendFile(path.resolve(__dirname, '../frontend/manage-repos.html'));
 });
 
 app.get('/projects', (req, res) => {

@@ -1,10 +1,13 @@
 'use strict';
 
-const express            = require('express');
-const authenticate       = require('../middleware/authenticate');
-const authorize          = require('../middleware/authorize');
-const { decrypt }        = require('../../execution/crypto/encryptToken');
-const { syncUserRepos }  = require('../../execution/github/syncUserRepos');
+const express              = require('express');
+const authenticate         = require('../middleware/authenticate');
+const authorize            = require('../middleware/authorize');
+const { decrypt }          = require('../../execution/crypto/encryptToken');
+const { syncUserRepos }    = require('../../execution/github/syncUserRepos');
+const { parseGithubUrl }     = require('../../execution/github/parseGithubUrl');
+const { fetchRepo }          = require('../../execution/github/fetchRepo');
+const { getRepoRiskFactors } = require('../../execution/risk/getRepoRiskFactors');
 
 const router = express.Router();
 
@@ -40,7 +43,12 @@ router.get('/', async (req, res, next) => {
       [req.user.userId]
     );
 
-    res.json({ repos: result.rows });
+    const repos = result.rows.map(r => ({
+      ...r,
+      explanation: getRepoRiskFactors({ score: r.score, label: r.label, factors: r.factors }),
+    }));
+
+    res.json({ repos });
   } catch (err) {
     next(err);
   }
@@ -140,6 +148,85 @@ router.get('/summary', async (req, res, next) => {
     );
 
     res.json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/repos/register
+// Manually registers a single GitHub repository for the current user.
+// Fetches repo metadata from GitHub (to obtain the stable github_repo_id), then upserts
+// into the repositories table. Idempotent: re-registering the same repo is safe.
+// Requires repositories:configure capability.
+router.post('/register', authorize('repositories:configure'), async (req, res, next) => {
+  const appConfig = req.app.locals.config;
+
+  if (!appConfig.tokenEncryptionKey) {
+    return res.status(503).json({ ok: false, error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY' });
+  }
+
+  let parsed;
+  try {
+    parsed = parseGithubUrl(req.body && req.body.url);
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+
+  try {
+    const tokenResult = await req.app.locals.db.query(
+      `SELECT access_token_enc FROM users WHERE id = $1 AND deleted_at IS NULL`,
+      [req.user.userId]
+    );
+
+    if (tokenResult.rows.length === 0 || !tokenResult.rows[0].access_token_enc) {
+      return res.status(422).json({ ok: false, error: 'No stored access token — user must re-login' });
+    }
+
+    const accessToken = decrypt(
+      tokenResult.rows[0].access_token_enc,
+      appConfig.tokenEncryptionKey
+    );
+
+    const fetchFn = req.app.locals.fetchFn ||
+      (typeof globalThis.fetch === 'function' ? globalThis.fetch : null);
+
+    if (typeof fetchFn !== 'function') {
+      return res.status(503).json({ ok: false, error: 'No fetch implementation available' });
+    }
+
+    let repoMeta;
+    try {
+      repoMeta = await fetchRepo({ accessToken, fullName: parsed.fullName, fetchFn });
+    } catch (err) {
+      if (err.code === 'REPO_NOT_FOUND') {
+        return res.status(404).json({ ok: false, error: `Repository not found on GitHub: ${parsed.fullName}` });
+      }
+      return res.status(502).json({ ok: false, error: 'Failed to fetch repository from GitHub' });
+    }
+
+    const now = new Date();
+
+    const result = await req.app.locals.db.query(
+      `INSERT INTO repositories
+         (user_id, github_repo_id, github_full_name, is_active, linked_at)
+       VALUES ($1, $2, $3, true, $4)
+       ON CONFLICT (github_repo_id) DO UPDATE SET
+         github_full_name = EXCLUDED.github_full_name,
+         is_active        = true
+       RETURNING id, github_full_name AS "fullName", linked_at AS "linkedAt"`,
+      [req.user.userId, repoMeta.githubRepoId, repoMeta.fullName, now]
+    );
+
+    const row = result.rows[0];
+    return res.status(201).json({
+      ok: true,
+      repo: {
+        id:       row.id,
+        fullName: row.fullName,
+        linkedAt: row.linkedAt,
+        url:      `https://github.com/${row.fullName}`,
+      },
+    });
   } catch (err) {
     next(err);
   }

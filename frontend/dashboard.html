@@ -615,6 +615,34 @@
       if (el) el.innerHTML = '<p class="error-msg">Error: ' + esc(String(msg)) + '</p>';
     }
 
+    // ── Risk explanation panel ───────────────────────────────────────────────
+
+    function buildExplanationHtml(exp) {
+      if (!exp || !exp.hasMetrics) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+          + 'No metrics available yet. Click <strong>Sync Now</strong> to analyze this repository.'
+          + '</p>';
+      }
+      var html = '';
+      if (exp.allClear) {
+        html += '<p style="font-size:0.82rem;color:var(--green);padding:4px 0;">&#10003; No risk signals detected for this repository.</p>';
+      } else {
+        html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:10px;">';
+        exp.triggered.forEach(function(f) {
+          html += '<li style="color:var(--red);">&#9888;&#xFE0E; ' + esc(f) + '</li>';
+        });
+        html += '</ul>';
+      }
+      if (exp.notMeasured && exp.notMeasured.length) {
+        html += '<ul style="font-size:0.78rem;color:var(--text-muted);padding-left:18px;line-height:1.8;">';
+        exp.notMeasured.forEach(function(m) {
+          html += '<li>' + esc(m) + ': not yet measured</li>';
+        });
+        html += '</ul>';
+      }
+      return html;
+    }
+
     // ── Chart (avg risk score per sync window) ────────────────────────────────
 
     function renderChart(points) {
@@ -740,22 +768,56 @@
 
     // ── Summary ───────────────────────────────────────────────────────────────
 
+    function renderSummaryCards(d, source) {
+      var fields;
+      if (source === 'db') {
+        // /api/repos/summary field names (DB-backed, authenticated)
+        var atRiskTotal = (d.atRisk || 0) + (d.critical || 0);
+        var statusLabel = atRiskTotal > 0 ? 'At Risk' : 'Healthy';
+        var statusCls   = atRiskTotal > 0 ? 'at-risk' : 'healthy';
+        var updated     = d.lastSyncedAt ? new Date(d.lastSyncedAt).toLocaleString() : 'Never';
+        fields = [
+          ['Repos',      d.totalRepos != null ? d.totalRepos : '—', ''],
+          ['Healthy',    d.healthy    != null ? d.healthy    : '—', 'healthy'],
+          ['At Risk',    atRiskTotal,                                atRiskTotal > 0 ? 'at-risk' : ''],
+          ['Avg Score',  d.avgScore   != null ? d.avgScore   : '—', ''],
+          ['Status',     statusLabel,                                statusCls],
+          ['Last Sync',  updated,                                   ''],
+        ];
+      } else {
+        // /summary field names (file-backed seed, unauthenticated fallback)
+        var lastUpdated = d.lastUpdated ? new Date(d.lastUpdated).toLocaleString() : 'Never';
+        var demoCls = d.systemStatus === 'At Risk' ? 'at-risk' : 'healthy';
+        fields = [
+          ['Repos',      d.totalProjects   != null ? d.totalProjects   : '—', ''],
+          ['Healthy',    d.healthyProjects  != null ? d.healthyProjects  : '—', 'healthy'],
+          ['At Risk',    d.atRiskProjects   != null ? d.atRiskProjects   : '—', d.atRiskProjects > 0 ? 'at-risk' : ''],
+          ['Risk Score', d.riskScore        != null ? d.riskScore        : '—', ''],
+          ['Status',     d.systemStatus     || '—',                            demoCls],
+          ['Updated',    lastUpdated,                                          ''],
+        ];
+      }
+      document.getElementById('summary-cards').innerHTML =
+        fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
+    }
+
     function loadSummary() {
-      fetch('/summary')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          var lastUpdated = d.lastUpdated ? new Date(d.lastUpdated).toLocaleString() : 'Never';
-          var statusCls = d.systemStatus === 'At Risk' ? 'at-risk' : 'healthy';
-          var fields = [
-            ['Repos',       d.totalProjects    != null ? d.totalProjects    : '—', ''],
-            ['Healthy',     d.healthyProjects   != null ? d.healthyProjects   : '—', 'healthy'],
-            ['At Risk',     d.atRiskProjects    != null ? d.atRiskProjects    : '—', d.atRiskProjects > 0 ? 'at-risk' : ''],
-            ['Risk Score',  d.riskScore         != null ? d.riskScore         : '—', ''],
-            ['Status',      d.systemStatus      || '—',                             statusCls],
-            ['Updated',     lastUpdated,                                            ''],
-          ];
-          document.getElementById('summary-cards').innerHTML =
-            fields.map(function(f) { return card(f[0], f[1], f[2]); }).join('');
+      // Prefer the authenticated DB-backed summary (/api/repos/summary).
+      // Falls back to the seed/demo summary (/summary) on 401/403 so
+      // unauthenticated visitors still see something meaningful.
+      fetch('/api/repos/summary', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return { _useFallback: true };
+          if (!r.ok) return { _useFallback: true };
+          return r.json().then(function(d) { return { _source: 'db', _data: d }; });
+        })
+        .then(function(result) {
+          if (result._useFallback) {
+            return fetch('/summary')
+              .then(function(r) { return r.json(); })
+              .then(function(d) { renderSummaryCards(d, 'demo'); });
+          }
+          renderSummaryCards(result._data, result._source);
         })
         .catch(function(e) { showError('summary-cards', e.message); });
     }
@@ -777,11 +839,9 @@
         });
       }
 
-      var cls     = labelClass(repo.label);
-      var factors = Array.isArray(repo.factors) && repo.factors.length
-        ? repo.factors.map(function(f) { return '<li>' + esc(f) + '</li>'; }).join('')
-        : '<li>No risk signals triggered</li>';
+      var cls      = labelClass(repo.label);
       var syncTime = repo.lastSyncedAt ? new Date(repo.lastSyncedAt).toLocaleString() : 'Not synced yet';
+      var exp      = repo.explanation || {};
 
       var detail = document.getElementById('repo-detail');
       detail.hidden = false;
@@ -795,8 +855,8 @@
         + card('Trend',      repo.trend  || '—',                    repo.trend === 'improving' ? 'healthy' : repo.trend === 'worsening' ? 'at-risk' : '')
         + card('Last Synced', syncTime, '')
         + '</div>'
-        + '<div class="repo-detail-label" style="margin-top:14px;">Risk Factors</div>'
-        + '<ul style="font-size:0.82rem;color:var(--text-secondary);padding-left:18px;line-height:1.8;">' + factors + '</ul>';
+        + '<div class="repo-detail-label" style="margin-top:14px;">Why this repo is risky</div>'
+        + buildExplanationHtml(exp);
     }
 
     function renderReposTable(filtered) {
@@ -931,11 +991,21 @@
           }
 
           var listEl = document.getElementById('history-list');
+
+          // When authenticated repos are present the chart above already shows
+          // DB-backed score history. Label this legacy log so it is not confused
+          // with the live repository data.
+          var sourceNote = _repos.length
+            ? '<p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;font-style:italic;">'
+              + '&#9432;&#xFE0E; Portfolio demo history (seed data) — not derived from your synced repositories.'
+              + '</p>'
+            : '';
+
           if (!entries.length) {
-            listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No snapshots yet.</p>';
+            listEl.innerHTML = sourceNote + '<p style="color:var(--text-muted);font-size:0.85rem;">No snapshots yet.</p>';
             return;
           }
-          listEl.innerHTML = entries.slice().reverse().slice(0, 20).map(function(e) {
+          listEl.innerHTML = sourceNote + entries.slice().reverse().slice(0, 20).map(function(e) {
             var cls = e.alertState === 'Critical' ? 'at-risk'
                     : e.alertState === 'Monitor'  ? 'monitor'
                     : 'healthy';
