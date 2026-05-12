@@ -633,6 +633,37 @@
     .assessment-card.severity-low      { border-left-color: var(--sev-low-border);      background: var(--sev-low-bg);      }
     .assessment-card.severity-healthy  { border-left-color: var(--sev-healthy-border);  background: var(--sev-healthy-bg);  }
     .assessment-card.severity-unknown  { border-left-color: var(--sev-unknown-border);  background: var(--sev-unknown-bg);  }
+
+    /* ── Recommended actions list ────────────────────────────────────────── */
+    .actions-list {
+      list-style: none;
+      margin: 8px 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .action-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-primary);
+      padding: 8px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+
+    .action-item::before {
+      content: '';
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid var(--border-focus);
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -1118,6 +1149,45 @@
       return '<div class="assessment-card severity-' + a.level + '">' + esc(a.text) + '</div>';
     }
 
+    // ── Recommended actions ──────────────────────────────────────────────────
+
+    function buildRecommendedActions(repo) {
+      var exp   = repo.explanation || {};
+      var ci    = repo.ciStatus          || 'unknown';
+      var rel   = repo.releaseStatus     || 'unknown';
+      var contr = repo.contributorStatus || 'unknown';
+
+      if (!exp.hasMetrics) {
+        return ['Run repository sync'];
+      }
+
+      var actions = [];
+      if (ci === 'failing')            actions.push('Investigate failing CI workflows');
+      if (contr === 'abandoned')       actions.push('Review repository ownership');
+      if (contr === 'bus_factor_risk') actions.push('Add additional maintainers');
+      if (rel === 'stale')             actions.push('Review release cadence');
+      if (rel === 'none')              actions.push('Create a tagged release');
+      if (ci === 'unknown')            actions.push('Configure GitHub Actions CI');
+      if (contr === 'low_activity')    actions.push('Encourage contributor activity');
+
+      return actions.slice(0, 4);
+    }
+
+    function buildActionsHtml(repo) {
+      var actions = buildRecommendedActions(repo);
+
+      if (!actions.length) {
+        return '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0 2px;">'
+          + '&#10003; No immediate operational actions recommended.</p>';
+      }
+
+      return '<ul class="actions-list">'
+        + actions.map(function(a) {
+            return '<li class="action-item">' + esc(a) + '</li>';
+          }).join('')
+        + '</ul>';
+    }
+
     function selectRepo(repo) {
       if (!repo) return;
       _selectedId = repo.id;
@@ -1193,7 +1263,9 @@
         + '<div class="repo-detail-label" style="margin-top:14px;">Why this repo is risky</div>'
         + buildExplanationHtml(exp)
         + '<div class="repo-detail-label" style="margin-top:14px;">Operational Assessment</div>'
-        + buildAssessmentHtml(repo);
+        + buildAssessmentHtml(repo)
+        + '<div class="repo-detail-label" style="margin-top:14px;">Recommended Actions</div>'
+        + buildActionsHtml(repo);
     }
 
     function renderReposTable(filtered) {
