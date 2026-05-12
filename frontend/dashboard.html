@@ -522,36 +522,16 @@
       padding: 8px 0;
     }
 
-    /* ── Attention queue ─────────────────────────────────────────────────── */
-    .aq-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .aq-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      padding: 12px 14px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border);
-      background: var(--surface-2);
-      cursor: pointer;
-      transition: background 0.1s ease, border-color 0.1s ease;
-    }
-
-    .aq-item:hover { background: var(--surface); border-color: var(--border-focus); }
-
+    /* ── Attention badge ─────────────────────────────────────────────────── */
     .aq-badge {
-      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
       font-size: 0.68rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
       padding: 2px 8px;
       border-radius: 99px;
-      margin-top: 1px;
     }
 
     .aq-badge.severity-critical { background: var(--sev-critical-bg); border: 1px solid var(--sev-critical-border); color: var(--sev-critical-text); }
@@ -561,13 +541,7 @@
     .aq-badge.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
     .aq-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
 
-    /* Attention queue row-level severity tinting */
-    .aq-item.severity-critical { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); border-left: 3px solid var(--sev-critical-border); }
-    .aq-item.severity-high     { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     border-left: 3px solid var(--sev-high-border);     }
-    .aq-item.severity-medium   {                                                                                 border-left: 2px solid var(--sev-medium-border);   }
-    .aq-item.severity-unknown  { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  border-left: 2px solid var(--sev-unknown-border);  }
-
-    /* ── Reusable severity state classes ─────────────────────────────────────── */
+    /* ── Reusable severity state classes ─────────────────────────────────── */
     .severity-critical { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); }
     .severity-high     { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     color: var(--sev-high-text);     }
     .severity-medium   { background: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   }
@@ -576,25 +550,89 @@
     .severity-unknown  { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
     .severity-neutral  { background: var(--sev-neutral-bg);  border-color: var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
 
-    .aq-name {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text-primary);
+    .aq-score {
+      font-weight: 400;
+      font-size: 0.88em;
+      opacity: 0.72;
+    }
+
+    /* ── Table cell helpers ──────────────────────────────────────────────── */
+    .tbl-repo-name {
+      display: block;
       font-family: var(--font-mono);
-      margin-bottom: 3px;
+      font-size: 0.8rem;
+      color: var(--text-primary);
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .aq-reasons {
-      font-size: 0.75rem;
+    .tbl-reasons {
+      display: block;
+      font-size: 0.78rem;
       color: var(--text-secondary);
-      line-height: 1.5;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .aq-empty {
+    /* ── Portfolio narrative banner ──────────────────────────────────────── */
+    .narrative-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
       font-size: 0.85rem;
-      color: var(--green);
-      padding: 12px 0 4px;
+      line-height: 1.5;
+      color: var(--text-primary);
     }
+
+    .narrative-banner.narrative-critical { border-left: 3px solid var(--sev-critical-border); background: var(--sev-critical-bg); }
+    .narrative-banner.narrative-high     { border-left: 3px solid var(--sev-high-border);     background: var(--sev-high-bg);     }
+    .narrative-banner.narrative-medium   { border-left: 3px solid var(--sev-medium-border);   background: var(--sev-medium-bg);   }
+    .narrative-banner.narrative-low      { border-left: 3px solid var(--sev-low-border);      background: var(--sev-low-bg);      }
+    .narrative-banner.narrative-healthy  { border-left: 3px solid var(--sev-healthy-border);  background: var(--sev-healthy-bg);  }
+
+    .narrative-badge {
+      font-size: 0.67rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 2px 9px;
+      border-radius: 99px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .narrative-text { flex: 1; }
+    .narrative-drivers { font-style: italic; }
+
+    /* ── Repo operational assessment card ────────────────────────────────── */
+    .assessment-card {
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      background: var(--surface-2);
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: var(--text-primary);
+      margin-top: 8px;
+    }
+
+    .assessment-card.severity-critical { border-left-color: var(--sev-critical-border); background: var(--sev-critical-bg); }
+    .assessment-card.severity-high     { border-left-color: var(--sev-high-border);     background: var(--sev-high-bg);     }
+    .assessment-card.severity-medium   { border-left-color: var(--sev-medium-border);   background: var(--sev-medium-bg);   }
+    .assessment-card.severity-low      { border-left-color: var(--sev-low-border);      background: var(--sev-low-bg);      }
+    .assessment-card.severity-healthy  { border-left-color: var(--sev-healthy-border);  background: var(--sev-healthy-bg);  }
+    .assessment-card.severity-unknown  { border-left-color: var(--sev-unknown-border);  background: var(--sev-unknown-bg);  }
   </style>
 </head>
 <body>
@@ -640,22 +678,8 @@
       </div>
     </div>
 
-    <!-- Attention queue -->
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Attention Queue</span>
-        <div class="section-divider"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Repos Needing Attention</h2>
-          <span id="aq-count" class="panel-count">—</span>
-        </div>
-        <div class="panel-body">
-          <div id="aq-container"><p class="error-msg">Loading…</p></div>
-        </div>
-      </div>
-    </div>
+    <!-- Portfolio narrative banner -->
+    <div id="portfolio-narrative" style="margin-bottom:24px;"></div>
 
     <!-- Projects table -->
     <div class="section">
@@ -981,6 +1005,118 @@
     var _repos = [];
     var _selectedId = null;
     var _activeFilter = 'All';
+    var _attentionMap = {};
+
+    // ── Operational assessment ───────────────────────────────────────────────
+
+    function capitalise(s) {
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    }
+
+    function buildRepoAssessment(repo) {
+      var aq    = _attentionMap[repo.id] || null;
+      var exp   = repo.explanation || {};
+      var ci    = repo.ciStatus          || 'unknown';
+      var rel   = repo.releaseStatus     || 'unknown';
+      var contr = repo.contributorStatus || 'unknown';
+
+      var fallbackLevel = repo.label === 'critical' ? 'critical'
+                        : repo.label === 'at-risk'  ? 'high'
+                        : repo.label === 'healthy'  ? 'healthy'
+                        : 'unknown';
+      var level = (aq && aq.attentionLevel) ? aq.attentionLevel : fallbackLevel;
+
+      if (!exp.hasMetrics) {
+        return {
+          text:  'This repository cannot be fully assessed because no metrics have been collected yet. Run a sync to gather data.',
+          level: 'unknown'
+        };
+      }
+
+      // Operational concerns — ordered by severity
+      var concerns = [];
+      if (ci === 'failing')            concerns.push('CI pipeline failures');
+      if (contr === 'abandoned')       concerns.push('the repository appears abandoned');
+      if (contr === 'bus_factor_risk') concerns.push('contributor concentration');
+      if (rel === 'stale')             concerns.push('stale release cadence');
+      if (rel === 'none')              concerns.push('no release history');
+      if (contr === 'low_activity')    concerns.push('low contributor activity');
+
+      // Missing telemetry
+      var gaps = [];
+      if (ci === 'unknown')    gaps.push('CI status');
+      if (rel === 'unknown')   gaps.push('release status');
+      if (contr === 'unknown') gaps.push('contributor status');
+
+      var top2 = concerns.slice(0, 2);
+      var text  = '';
+
+      if (level === 'healthy') {
+        if (!concerns.length && !gaps.length) {
+          var positives = [];
+          if (contr === 'healthy') positives.push('stable contributor activity');
+          if (ci === 'passing')    positives.push('passing CI');
+          if (rel === 'healthy')   positives.push('regular releases');
+          text = positives.length
+            ? 'This repository appears healthy with ' + positives.slice(0, 2).join(' and ') + ' — no major operational concerns.'
+            : 'Operational signals are healthy with no immediate maintenance concerns.';
+        } else if (!concerns.length) {
+          text = 'This repository is operationally healthy, though ' + gaps.join(' and ') + ' are not yet measured.';
+        } else {
+          text = 'This repository is generally stable. ' + capitalise(concerns[0]) + ' may warrant a closer look.';
+        }
+      } else if (level === 'low') {
+        if (top2.length) {
+          text = 'This repository is largely stable but ' + top2.join(' and ') + ' may warrant a closer look.';
+        } else if (gaps.length) {
+          text = 'This repository appears low-risk, though ' + gaps.slice(0, 2).join(' and ') + ' are not yet measured.';
+        } else {
+          text = 'This repository shows minor operational signals worth monitoring.';
+        }
+      } else if (level === 'medium') {
+        if (top2.length >= 2) {
+          text = capitalise(top2[0]) + ' and ' + top2[1] + ' increase operational risk for this repository.';
+        } else if (top2.length === 1) {
+          text = capitalise(top2[0]) + ' elevates operational risk for this repository.';
+        } else {
+          text = 'This repository has moderate operational risk due to incomplete status data.';
+        }
+        if (gaps.length && top2.length < 2) {
+          text += ' ' + capitalise(gaps.slice(0, 2).join(' and ')) + ' are not yet measured.';
+        }
+      } else if (level === 'high') {
+        if (top2.length >= 2) {
+          text = 'This repository has elevated operational risk due to ' + top2[0] + ' and ' + top2[1] + '.';
+        } else if (top2.length === 1) {
+          text = 'This repository has elevated operational risk due to ' + top2[0] + '.';
+        } else {
+          text = 'This repository has elevated operational risk.';
+        }
+        if (gaps.length) {
+          text += ' Visibility is limited as ' + gaps.slice(0, 2).join(' and ') + ' are not yet measured.';
+        }
+      } else if (level === 'critical') {
+        if (top2.length >= 2) {
+          text = capitalise(top2[0]) + ' and ' + top2[1] + ' represent critical operational risk — immediate attention recommended.';
+        } else if (top2.length === 1) {
+          text = capitalise(top2[0]) + ' represents critical operational risk — immediate attention recommended.';
+        } else {
+          text = 'This repository has critical operational risk and requires immediate attention.';
+        }
+        if (gaps.length) {
+          text += ' Some signals remain unmeasured: ' + gaps.slice(0, 2).join(', ') + '.';
+        }
+      } else {
+        text = 'Operational state is uncertain — insufficient status data to make an assessment.';
+      }
+
+      return { text: text, level: level };
+    }
+
+    function buildAssessmentHtml(repo) {
+      var a = buildRepoAssessment(repo);
+      return '<div class="assessment-card severity-' + a.level + '">' + esc(a.text) + '</div>';
+    }
 
     function selectRepo(repo) {
       if (!repo) return;
@@ -1055,7 +1191,9 @@
         + card('Last Synced',        syncTime,                              '')
         + '</div>'
         + '<div class="repo-detail-label" style="margin-top:14px;">Why this repo is risky</div>'
-        + buildExplanationHtml(exp);
+        + buildExplanationHtml(exp)
+        + '<div class="repo-detail-label" style="margin-top:14px;">Operational Assessment</div>'
+        + buildAssessmentHtml(repo);
     }
 
     function renderReposTable(filtered) {
@@ -1074,19 +1212,35 @@
       }
 
       var rows = filtered.map(function(r) {
-        var cls = labelClass(r.label);
+        var cls   = labelClass(r.label);
         var score = r.score != null ? r.score : '—';
+
+        var aq       = _attentionMap[r.id];
+        var aqLevel  = aq ? aq.attentionLevel  : 'healthy';
+        var aqScore  = aq ? aq.attentionScore  : 0;
+        var aqCls    = 'aq-badge severity-' + aqLevel;
+        var aqReasons = aq ? aq.reasons.slice(0, 2).join('; ') : '';
+        var aqHtml   = '<span class="' + aqCls + '">'
+          + esc(aqLevel.toUpperCase()) + ' &middot; ' + esc(String(aqScore))
+          + '</span>';
+
+        var lastSync = r.lastSyncedAt
+          ? new Date(r.lastSyncedAt).toLocaleDateString()
+          : '—';
+
         return '<tr data-id="' + esc(String(r.id)) + '">'
-          + '<td>' + esc(String(r.id)) + '</td>'
-          + '<td>' + esc(r.fullName) + '</td>'
+          + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
           + '<td><span class="status-pill ' + cls + '">' + esc(r.label || 'unknown') + '</span></td>'
           + '<td style="font-family:var(--font-mono);font-size:0.82rem;">' + esc(String(score)) + trendArrow(r.trend) + '</td>'
+          + '<td>' + aqHtml + '</td>'
+          + '<td><span class="tbl-reasons">' + esc(aqReasons || '—') + '</span></td>'
+          + '<td style="font-family:var(--font-mono);font-size:0.78rem;color:var(--text-muted);">' + esc(lastSync) + '</td>'
           + '</tr>';
       }).join('');
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>ID</th><th>Repository</th><th>Label</th><th>Score</th></tr></thead>'
+        + '<thead><tr><th>Repo</th><th>Label</th><th>Score</th><th>Attention</th><th>Reasons</th><th>Last Sync</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 
@@ -1117,6 +1271,91 @@
       renderReposTable(filtered);
     }
 
+    // ── Portfolio narrative banner ────────────────────────────────────────────
+
+    function buildPortfolioNarrative(repos, attentionMap) {
+      var total = repos.length;
+      if (!total) return null;
+
+      var items = Object.keys(attentionMap).map(function(k) { return attentionMap[k]; });
+      var levelOrder = ['critical', 'high', 'medium', 'low'];
+      var needAttention = items.filter(function(it) { return it.attentionLevel !== 'healthy'; });
+      var n = needAttention.length;
+
+      var portfolioLevel = 'healthy';
+      for (var i = 0; i < levelOrder.length; i++) {
+        var lvl = levelOrder[i];
+        if (items.some(function(it) { return it.attentionLevel === lvl; })) {
+          portfolioLevel = lvl;
+          break;
+        }
+      }
+
+      var REASON_LABELS = {
+        'CI pipeline is failing':        'CI failures',
+        'Repository appears abandoned':  'abandoned repos',
+        'High risk score':               'high risk score',
+        'Elevated risk score':           'elevated risk scores',
+        'High bus-factor risk':          'bus-factor risk',
+        'Stale release cadence':         'stale releases',
+        'Low contributor activity':      'low contributor activity',
+        'No releases found':             'no releases',
+        'CI status unknown':             'CI status unknown',
+        'Release status unknown':        'release status unknown',
+        'Contributor status unknown':    'contributor status unknown',
+        'No metrics available yet':      'missing metrics',
+      };
+
+      var reasonCounts = {};
+      needAttention.forEach(function(it) {
+        (it.reasons || []).forEach(function(r) {
+          var base  = r.replace(/\s*\([^)]*\)\s*$/, '').trim();
+          var label = REASON_LABELS[base] || base.toLowerCase();
+          reasonCounts[label] = (reasonCounts[label] || 0) + 1;
+        });
+      });
+
+      var topDrivers = Object.keys(reasonCounts)
+        .sort(function(a, b) { return reasonCounts[b] - reasonCounts[a]; })
+        .slice(0, 3);
+
+      var levelLabel = portfolioLevel === 'medium'
+        ? 'Moderate'
+        : portfolioLevel.charAt(0).toUpperCase() + portfolioLevel.slice(1);
+
+      return { level: portfolioLevel, levelLabel: levelLabel, n: n, total: total, topDrivers: topDrivers };
+    }
+
+    function renderPortfolioNarrative() {
+      var el = document.getElementById('portfolio-narrative');
+      if (!el) return;
+      if (!_repos.length) { el.innerHTML = ''; return; }
+
+      var data = buildPortfolioNarrative(_repos, _attentionMap);
+      if (!data) { el.innerHTML = ''; return; }
+
+      var sevCls    = 'severity-' + data.level;
+      var bannerCls = 'narrative-banner narrative-' + data.level;
+
+      var text;
+      if (data.level === 'healthy' || data.n === 0) {
+        text = 'All <strong>' + esc(String(data.total)) + '</strong> repositories appear operationally healthy.';
+      } else {
+        var driversHtml = data.topDrivers.length
+          ? ' Primary drivers: <span class="narrative-drivers">' + esc(data.topDrivers.join(', ')) + '.</span>'
+          : '';
+        var concern = data.level === 'critical' ? 'require immediate operational review'
+                    : data.level === 'high'     ? 'contain elevated operational risk'
+                    :                             'contain moderate operational concerns';
+        text = '<strong>' + esc(String(data.n)) + '</strong> repositories ' + concern + '.' + driversHtml;
+      }
+
+      el.innerHTML = '<div class="' + bannerCls + '">'
+        + '<span class="narrative-badge ' + sevCls + '">' + esc(data.levelLabel.toUpperCase()) + '</span>'
+        + '<span class="narrative-text">' + text + '</span>'
+        + '</div>';
+    }
+
     function loadRepos() {
       fetch('/api/repos', { credentials: 'include' })
         .then(function(r) { return r.json(); })
@@ -1136,9 +1375,11 @@
             document.getElementById('projects-container').innerHTML =
               '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories synced yet — click Sync Now.</p>';
             document.getElementById('repo-detail').hidden = true;
+            renderPortfolioNarrative();
             return;
           }
           applyFilter();
+          renderPortfolioNarrative();
 
           // Build chart points from risk scores (group by date, take avg)
           var byDate = {};
@@ -1171,20 +1412,6 @@
       if (!btn) return;
       _activeFilter = btn.dataset.filter;
       applyFilter();
-    });
-
-    // ── Attention queue click wiring ─────────────────────────────────────────
-
-    document.getElementById('aq-container').addEventListener('click', function(e) {
-      var item = e.target.closest('.aq-item');
-      if (!item) return;
-      var repoId = parseInt(item.dataset.repoId, 10);
-      var found = _repos.find(function(r) { return r.id === repoId; });
-      if (!found) {
-        console.warn('[AttentionQueue] Repo id', repoId, 'not found in _repos — repos may still be loading.');
-        return;
-      }
-      selectRepo(found);
     });
 
     // ── History ──────────────────────────────────────────────────────────────
@@ -1238,51 +1465,24 @@
         });
     }
 
-    // ── Attention queue ───────────────────────────────────────────────────────
-
-    function renderAttentionQueue(items) {
-      var countEl = document.getElementById('aq-count');
-      var container = document.getElementById('aq-container');
-
-      var nonHealthy = items.filter(function(it) { return it.attentionLevel !== 'healthy'; });
-      if (countEl) countEl.textContent = nonHealthy.length + ' repo' + (nonHealthy.length !== 1 ? 's' : '');
-
-      if (!nonHealthy.length) {
-        container.innerHTML = '<p class="aq-empty">&#10003; All repositories look healthy — no attention needed.</p>';
-        return;
-      }
-
-      container.innerHTML = '<div class="aq-list">'
-        + nonHealthy.slice(0, 5).map(function(it) {
-            var sevCls = 'severity-' + esc(it.attentionLevel);
-            return '<div class="aq-item ' + sevCls + '" data-repo-id="' + esc(String(it.repoId)) + '">'
-              + '<span class="aq-badge ' + sevCls + '">' + esc(it.attentionLevel) + '</span>'
-              + '<div>'
-              + '<div class="aq-name">' + esc(it.name) + '</div>'
-              + '<div class="aq-reasons">' + it.reasons.map(function(r) { return esc(r); }).join(' &middot; ') + '</div>'
-              + '</div>'
-              + '</div>';
-          }).join('')
-        + '</div>';
-    }
+    // ── Attention data (merged into repo table rows) ──────────────────────────
 
     function loadAttentionQueue() {
       fetch('/api/repos/attention', { credentials: 'include' })
         .then(function(r) {
-          if (r.status === 401 || r.status === 403) {
-            document.getElementById('aq-container').innerHTML =
-              '<p style="color:var(--text-muted);font-size:0.85rem;">'
-              + '<a href="/auth/github" style="color:var(--blue);">Login with GitHub</a>'
-              + ' to see the attention queue.</p>';
-            return null;
-          }
+          if (r.status === 401 || r.status === 403) return null;
           return r.json();
         })
         .then(function(d) {
           if (!d) return;
-          renderAttentionQueue(d.attention || []);
+          _attentionMap = {};
+          (d.attention || []).forEach(function(it) {
+            _attentionMap[it.repoId] = it;
+          });
+          if (_repos.length) applyFilter();
+          renderPortfolioNarrative();
         })
-        .catch(function(e) { showError('aq-container', e.message); });
+        .catch(function() {});
     }
 
     // ── Initial load + auto-refresh ──────────────────────────────────────────
