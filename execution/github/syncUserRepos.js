@@ -28,7 +28,21 @@ const MS_PER_DAY = 86_400_000;
  * @returns {Promise<{ synced: number, errors: Array<{ fullName, message }> }>}
  */
 async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
-  const repos = await fetchUserRepos({ accessToken, fetchFn });
+  const [githubRepos, registeredRepos] = await Promise.all([
+    fetchUserRepos({ accessToken, fetchFn }),
+    _fetchRegisteredRepos({ db, userId }),
+  ]);
+
+  // Merge GitHub-discovered and DB-registered repos, deduplicated by github_repo_id.
+  // GitHub entries take priority (they may carry extra fields like isPrivate/pushedAt).
+  const seen = new Set();
+  const repos = [];
+  for (const repo of [...githubRepos, ...registeredRepos]) {
+    if (!seen.has(repo.githubRepoId)) {
+      seen.add(repo.githubRepoId);
+      repos.push(repo);
+    }
+  }
 
   let synced = 0;
   const errors = [];
@@ -118,6 +132,16 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
   }
 
   return { synced, errors };
+}
+
+async function _fetchRegisteredRepos({ db, userId }) {
+  const result = await db.query(
+    `SELECT github_repo_id AS "githubRepoId", github_full_name AS "fullName"
+     FROM repositories
+     WHERE user_id = $1 AND is_active = true`,
+    [userId]
+  );
+  return result.rows;
 }
 
 async function _upsertRepository({ db, userId, repo, now }) {

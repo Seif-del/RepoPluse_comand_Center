@@ -57,10 +57,12 @@ const MOCK_SCORE = {
 
 const REPO_ROW = { id: 42 };
 
-function makeDb({ repoRow = REPO_ROW, prevScore = null } = {}) {
+function makeDb({ repoRow = REPO_ROW, prevScore = null, registeredRepos = [] } = {}) {
   return {
     query: jest.fn(async (sql) => {
-      if (sql.includes('INSERT INTO repositories')) return { rows: [repoRow] };
+      // Must be checked before 'INSERT INTO repositories' — both contain 'repositories'
+      if (sql.includes('SELECT github_repo_id'))     return { rows: registeredRepos };
+      if (sql.includes('INSERT INTO repositories'))  return { rows: [repoRow] };
       if (sql.includes('SELECT score FROM risk_scores')) {
         return prevScore !== null ? { rows: [{ score: prevScore }] } : { rows: [] };
       }
@@ -280,5 +282,137 @@ describe('syncUserRepos — error isolation', () => {
     const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
     expect(result.synced).toBe(0);
     expect(result.errors).toHaveLength(0);
+  });
+});
+
+// ── DB-registered repos (not in GitHub /user/repos) ───────────────────────────
+
+describe('syncUserRepos — DB-registered repos', () => {
+  it('processes a registered repo not returned by GitHub', async () => {
+    fetchUserRepos.mockResolvedValue([]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 777, fullName: 'owner/registered' }],
+    });
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(1);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('inserts repo_metrics for a registered repo not in the GitHub list', async () => {
+    fetchUserRepos.mockResolvedValue([]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 555, fullName: 'org/registered-only' }],
+    });
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
+    expect(metricsCall).toBeDefined();
+  });
+
+  it('inserts risk_scores for a registered repo not in the GitHub list', async () => {
+    fetchUserRepos.mockResolvedValue([]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 555, fullName: 'org/registered-only' }],
+    });
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO risk_scores'));
+    expect(riskCall).toBeDefined();
+  });
+
+  it('updates last_synced_at for a registered repo not in the GitHub list', async () => {
+    fetchUserRepos.mockResolvedValue([]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 555, fullName: 'org/registered-only' }],
+    });
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const updateCall = db.query.mock.calls.find(c => c[0].includes('UPDATE repositories'));
+    expect(updateCall).toBeDefined();
+  });
+
+  it('calls fetchRepoMetrics with the registered repo fullName', async () => {
+    fetchUserRepos.mockResolvedValue([]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 555, fullName: 'org/registered-only' }],
+    });
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(fetchRepoMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ fullName: 'org/registered-only' })
+    );
+  });
+});
+
+// ── Deduplication (GitHub + DB overlap) ──────────────────────────────────────
+
+describe('syncUserRepos — deduplication', () => {
+  it('processes a repo appearing in both GitHub and DB exactly once', async () => {
+    fetchUserRepos.mockResolvedValue([{ githubRepoId: 999, fullName: 'owner/repo' }]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 999, fullName: 'owner/repo' }],
+    });
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(1);
+    expect(fetchRepoMetrics).toHaveBeenCalledTimes(1);
+  });
+
+  it('synced count equals unique repos when GitHub and DB have overlapping entries', async () => {
+    fetchUserRepos.mockResolvedValue([
+      { githubRepoId: 1, fullName: 'o/a' },
+      { githubRepoId: 2, fullName: 'o/b' },
+    ]);
+    const db = makeDb({
+      registeredRepos: [
+        { githubRepoId: 2, fullName: 'o/b' }, // duplicate of GitHub entry
+        { githubRepoId: 3, fullName: 'o/c' }, // new registered-only repo
+      ],
+    });
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(3);
+    expect(fetchRepoMetrics).toHaveBeenCalledTimes(3);
+  });
+
+  it('GitHub entry wins on collision — its fullName is used for API calls', async () => {
+    // GitHub may return a different casing or renamed fullName for the same repo ID
+    fetchUserRepos.mockResolvedValue([{ githubRepoId: 42, fullName: 'Owner/Repo' }]);
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 42, fullName: 'owner/repo' }],
+    });
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(fetchRepoMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ fullName: 'Owner/Repo' })
+    );
+  });
+});
+
+// ── Error isolation for DB-registered repos ───────────────────────────────────
+
+describe('syncUserRepos — error isolation for registered repos', () => {
+  it('continues syncing remaining repos when one registered-only repo fails', async () => {
+    fetchUserRepos.mockResolvedValue([]);
+    fetchRepoMetrics
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce(MOCK_METRICS);
+    const db = makeDb({
+      registeredRepos: [
+        { githubRepoId: 1, fullName: 'org/failing-repo' },
+        { githubRepoId: 2, fullName: 'org/good-repo' },
+      ],
+    });
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].fullName).toBe('org/failing-repo');
+  });
+
+  it('records error for a failing registered repo without crashing the sync', async () => {
+    fetchUserRepos.mockResolvedValue([{ githubRepoId: 10, fullName: 'o/github-repo' }]);
+    fetchRepoMetrics
+      .mockResolvedValueOnce(MOCK_METRICS)        // github repo succeeds
+      .mockRejectedValueOnce(new Error('timeout')); // registered repo fails
+    const db = makeDb({
+      registeredRepos: [{ githubRepoId: 99, fullName: 'org/broken' }],
+    });
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].fullName).toBe('org/broken');
   });
 });
