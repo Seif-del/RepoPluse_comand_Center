@@ -425,7 +425,7 @@
       text-transform: uppercase;
       letter-spacing: 0.07em;
       color: var(--text-muted);
-      padding: 0 12px 10px;
+      padding: 0 10px 8px;
       border-bottom: 1px solid var(--border);
     }
 
@@ -442,7 +442,7 @@
     tbody tr.row-selected { background: rgba(59,130,246,.08); }
 
     tbody td {
-      padding: 11px 12px;
+      padding: 8px 10px;
       color: var(--text-primary);
       font-size: 0.85rem;
     }
@@ -463,6 +463,7 @@
       padding: 3px 10px;
       border-radius: 99px;
       border: 1px solid transparent;
+      line-height: 1;
     }
 
     .status-pill::before {
@@ -472,9 +473,6 @@
       border-radius: 50%;
       background: currentColor;
     }
-
-    .status-pill.healthy  { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text); }
-    .status-pill.at-risk  { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); }
 
     /* ── Filter bar ──────────────────────────────────────────────────────── */
     .filter-bar {
@@ -547,6 +545,7 @@
       letter-spacing: 0.06em;
       padding: 2px 8px;
       border-radius: 99px;
+      line-height: 1;
     }
 
     .aq-badge.severity-critical { background: var(--sev-critical-bg); border: 1px solid var(--sev-critical-border); color: var(--sev-critical-text); }
@@ -556,18 +555,7 @@
     .aq-badge.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
     .aq-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
 
-    /* ── Trend indicator tag ─────────────────────────────────────────────── */
-    .trend-tag {
-      font-size: 0.72rem;
-      font-weight: 600;
-      padding: 1px 5px;
-      border-radius: 4px;
-      margin-left: 4px;
-      vertical-align: middle;
-    }
-    .trend-tag.trend-worsening { background: var(--sev-high-bg);     color: var(--sev-high-text);     border: 1px solid var(--sev-high-border); }
-    .trend-tag.trend-improving { background: var(--sev-healthy-bg);  color: var(--sev-healthy-text);  border: 1px solid var(--sev-healthy-border); }
-    .trend-tag.trend-stable    { background: var(--sev-neutral-bg);  color: var(--sev-neutral-text);  border: 1px solid var(--sev-neutral-border); }
+
 
     /* ── Reusable severity state classes ─────────────────────────────────── */
     .severity-critical { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); }
@@ -590,20 +578,52 @@
       font-family: var(--font-mono);
       font-size: 0.8rem;
       color: var(--text-primary);
-      max-width: 220px;
+      max-width: 300px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .tbl-reasons {
-      display: block;
-      font-size: 0.78rem;
-      color: var(--text-secondary);
-      max-width: 200px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: nowrap;
       overflow: hidden;
-      text-overflow: ellipsis;
+      max-width: 320px;
+    }
+
+    .reason-tag {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.63rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      padding: 2px 5px;
+      border-radius: 3px;
+      line-height: 1;
       white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .reason-tag.severity-critical { background: var(--sev-critical-bg); border: 1px solid var(--sev-critical-border); color: var(--sev-critical-text); }
+    .reason-tag.severity-high     { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
+    .reason-tag.severity-medium   { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .reason-tag.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+
+    .reason-tag-more {
+      font-size: 0.63rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+      cursor: default;
+    }
+
+    .tbl-id {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
     }
 
     /* ── Portfolio narrative banner ──────────────────────────────────────── */
@@ -754,6 +774,61 @@
       border-radius: 3px;
       flex-shrink: 0;
     }
+
+    /* ── Operational Stability panel ─────────────────────────────────────── */
+    .stability-panel {
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      margin-top: 8px;
+    }
+
+    .stability-badges {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .stability-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.67rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 9px;
+      border-radius: 99px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .stability-signals {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .stability-signal {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      font-size: 0.79rem;
+      color: var(--text-secondary);
+      padding: 2px 0;
+    }
+
+    .stability-signal::before {
+      content: '—';
+      color: var(--text-muted);
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      line-height: 1.6;
+    }
   </style>
 </head>
 <body>
@@ -880,31 +955,74 @@
         .replace(/"/g, '&quot;');
     }
 
-    function labelClass(label) {
-      if (!label) return 'severity-unknown';
-      var v = label.toLowerCase();
-      if (v === 'critical') return 'severity-critical';
-      if (v === 'high')     return 'severity-high';
-      if (v === 'at-risk')  return 'severity-high';
-      if (v === 'medium')   return 'severity-medium';
-      if (v === 'low')      return 'severity-low';
-      if (v === 'healthy')  return 'severity-healthy';
-      if (v === 'unknown')  return 'severity-unknown';
-      return 'severity-neutral';
+    function operationalState(repo, aq) {
+      if (aq) {
+        var lvl = aq.attentionLevel;
+        if (lvl === 'critical') return { text: 'Critical', cls: 'severity-critical' };
+        if (lvl === 'high')     return { text: 'At Risk',  cls: 'severity-high'     };
+        if (lvl === 'medium')   return { text: 'Monitor',  cls: 'severity-medium'   };
+        if (lvl === 'low')      return { text: 'Healthy',  cls: 'severity-healthy'  };
+        if (lvl === 'healthy')  return { text: 'Healthy',  cls: 'severity-healthy'  };
+      }
+      var label = (repo.label || '').toLowerCase();
+      if (label === 'critical') return { text: 'Critical', cls: 'severity-critical' };
+      if (label === 'at-risk')  return { text: 'At Risk',  cls: 'severity-high'     };
+      if (label === 'healthy')  return { text: 'Healthy',  cls: 'severity-healthy'  };
+      return { text: 'Unknown', cls: 'severity-unknown' };
     }
 
-    function trendTag(ti) {
-      if (!ti || ti.direction === 'unknown') return '';
-      var arrow = ti.direction === 'worsening' ? '↑'
-                : ti.direction === 'improving' ? '↓'
-                : '→';
-      var cls   = ti.direction === 'worsening' ? 'trend-tag trend-worsening'
-                : ti.direction === 'improving' ? 'trend-tag trend-improving'
-                : 'trend-tag trend-stable';
-      var delta = ti.delta != null
-        ? (ti.delta > 0 ? ' +' : ' ') + String(ti.delta)
-        : '';
-      return ' <span class="' + cls + '">' + arrow + delta + '</span>';
+
+    // ── Reason tag mapping ────────────────────────────────────────────────────
+    // Each entry: [prose prefix to match, compact label, severity class].
+    // Prefix matching (startsWith) handles dynamic strings like
+    // "High risk score (72)" and "Elevated risk score (55)".
+
+    var REASON_TAGS = [
+      ['CI pipeline is failing',       'CI Failing',          'severity-critical'],
+      ['Repository appears abandoned', 'Abandoned',           'severity-critical'],
+      ['High risk score',              'High Risk',           'severity-critical'],
+      ['High bus-factor risk',         'Bus Factor',          'severity-high'],
+      ['Stale release cadence',        'Release Stale',       'severity-high'],
+      ['Low contributor activity',     'Low Activity',        'severity-medium'],
+      ['No releases found',            'No Releases',         'severity-medium'],
+      ['Elevated risk score',          'Elevated Risk',       'severity-medium'],
+      ['CI status unknown',            'CI Unknown',          'severity-unknown'],
+      ['Release status unknown',       'Release Unknown',     'severity-unknown'],
+      ['Contributor status unknown',   'Contributor Unknown', 'severity-unknown'],
+      ['No metrics available yet',     'No Metrics',          'severity-unknown'],
+    ];
+
+    function reasonTagsHtml(reasons) {
+      if (!reasons || !reasons.length) {
+        return '<div class="tbl-reasons"><span style="color:var(--text-muted);">—</span></div>';
+      }
+
+      var tags = reasons.map(function(reason) {
+        for (var i = 0; i < REASON_TAGS.length; i++) {
+          if (reason.indexOf(REASON_TAGS[i][0]) === 0) {
+            return { label: REASON_TAGS[i][1], cls: REASON_TAGS[i][2], full: reason };
+          }
+        }
+        var truncated = reason.length > 14 ? reason.slice(0, 12) + '…' : reason;
+        return { label: truncated, cls: 'severity-unknown', full: reason };
+      });
+
+      var visible  = tags.slice(0, 2);
+      var overflow = tags.length - 2;
+
+      var html = '<div class="tbl-reasons">'
+        + visible.map(function(t) {
+            return '<span class="reason-tag ' + t.cls + '" title="' + esc(t.full) + '">'
+              + esc(t.label) + '</span>';
+          }).join('')
+        + (overflow > 0
+            ? '<span class="reason-tag-more" title="'
+              + esc(tags.slice(2).map(function(t) { return t.full; }).join('; '))
+              + '">+' + overflow + '</span>'
+            : '')
+        + '</div>';
+
+      return html;
     }
 
     function card(label, value, cls) {
@@ -1309,6 +1427,85 @@
         + '</ul>';
     }
 
+    // ── Operational Stability panel ──────────────────────────────────────────
+
+    function buildStabilityHtml(data) {
+      if (!data) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+          + 'Unable to load stability data.</p>';
+      }
+
+      var hasIssues = data.escalationLevel !== 'none'
+        || data.volatilityLevel !== 'low'
+        || data.persistentRisk
+        || (data.signals && data.signals.length > 0);
+
+      if (!hasIssues) {
+        return '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0;">'
+          + '&#10003; No operational instability detected.</p>';
+      }
+
+      var html = '<div class="stability-panel">';
+
+      var hasBadges = data.volatilityLevel !== 'low'
+        || data.escalationLevel !== 'none'
+        || data.persistentRisk;
+
+      if (hasBadges) {
+        html += '<div class="stability-badges">';
+
+        if (data.volatilityLevel !== 'low') {
+          var volCls = data.volatilityLevel === 'high' ? 'severity-high' : 'severity-medium';
+          html += '<span class="stability-badge ' + volCls + '">'
+            + esc(data.volatilityLevel.toUpperCase() + ' VOLATILITY') + '</span>';
+        }
+
+        if (data.escalationLevel !== 'none') {
+          var escCls = data.escalationLevel === 'critical' ? 'severity-critical' : 'severity-high';
+          html += '<span class="stability-badge ' + escCls + '">'
+            + esc(data.escalationLevel.toUpperCase() + ' ESCALATION') + '</span>';
+        }
+
+        if (data.persistentRisk) {
+          html += '<span class="stability-badge severity-high">PERSISTENT RISK</span>';
+        }
+
+        html += '</div>';
+      }
+
+      if (data.signals && data.signals.length) {
+        html += '<ul class="stability-signals">'
+          + data.signals.map(function(s) {
+              return '<li class="stability-signal">' + esc(s) + '</li>';
+            }).join('')
+          + '</ul>';
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function loadRepoEscalation(repoId) {
+      var container = document.getElementById('repo-stability-content');
+      if (!container) return;
+      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/escalation', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          container.innerHTML = buildStabilityHtml(d);
+        })
+        .catch(function() {
+          if (container) {
+            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+              + 'No operational instability detected.</p>';
+          }
+        });
+    }
+
     // ── Operational timeline ──────────────────────────────────────────────────
 
     function buildTimelineHtml(events) {
@@ -1371,7 +1568,7 @@
         });
       }
 
-      var cls      = labelClass(repo.label);
+      var opState  = operationalState(repo, _attentionMap[repo.id]);
       var syncTime = repo.lastSyncedAt ? new Date(repo.lastSyncedAt).toLocaleString() : 'Not synced yet';
       var exp      = repo.explanation || {};
 
@@ -1424,7 +1621,7 @@
         + '<div class="card" style="grid-column:span 2"><div class="card-label">Name</div>'
         +   '<div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(repo.fullName) + '</div></div>'
         + card('Risk Score',         repo.score != null ? repo.score : '—', '')
-        + card('Label',              repo.label || '—',                     cls)
+        + card('Label',              opState.text,                          opState.cls)
         + (function() {
             var ti      = repo.trendIndicator || {};
             var tiDir   = ti.direction || 'unknown';
@@ -1452,9 +1649,12 @@
         + '<div class="repo-detail-label" style="margin-top:14px;">Recommended Actions</div>'
         + buildActionsHtml(repo)
         + '<div class="repo-detail-label" style="margin-top:14px;">Operational Timeline</div>'
-        + '<div id="repo-timeline-content"></div>';
+        + '<div id="repo-timeline-content"></div>'
+        + '<div class="repo-detail-label" style="margin-top:14px;">Operational Stability</div>'
+        + '<div id="repo-stability-content"></div>';
 
       loadRepoTimeline(repo.id);
+      loadRepoEscalation(repo.id);
     }
 
     function renderReposTable(filtered) {
@@ -1473,35 +1673,28 @@
       }
 
       var rows = filtered.map(function(r) {
-        var cls   = labelClass(r.label);
-        var score = r.score != null ? r.score : '—';
+        var aq      = _attentionMap[r.id];
+        var opState = operationalState(r, aq);
 
-        var aq       = _attentionMap[r.id];
-        var aqLevel  = aq ? aq.attentionLevel  : 'healthy';
-        var aqScore  = aq ? aq.attentionScore  : 0;
-        var aqCls    = 'aq-badge severity-' + aqLevel;
-        var aqReasons = aq ? aq.reasons.slice(0, 2).join('; ') : '';
-        var aqHtml   = '<span class="' + aqCls + '">'
+        var aqLevel = aq ? aq.attentionLevel : 'healthy';
+        var aqScore = aq ? aq.attentionScore : 0;
+        var aqCls   = 'aq-badge severity-' + aqLevel;
+        var aqHtml  = '<span class="' + aqCls + '">'
           + esc(aqLevel.toUpperCase()) + ' &middot; ' + esc(String(aqScore))
           + '</span>';
 
-        var lastSync = r.lastSyncedAt
-          ? new Date(r.lastSyncedAt).toLocaleDateString()
-          : '—';
-
         return '<tr data-id="' + esc(String(r.id)) + '">'
+          + '<td><span class="tbl-id">#' + esc(String(r.id)) + '</span></td>'
           + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
-          + '<td><span class="status-pill ' + cls + '">' + esc(r.label || 'unknown') + '</span></td>'
-          + '<td style="font-family:var(--font-mono);font-size:0.82rem;">' + esc(String(score)) + trendTag(r.trendIndicator) + '</td>'
+          + '<td><span class="status-pill ' + opState.cls + '">' + esc(opState.text) + '</span></td>'
           + '<td>' + aqHtml + '</td>'
-          + '<td><span class="tbl-reasons">' + esc(aqReasons || '—') + '</span></td>'
-          + '<td style="font-family:var(--font-mono);font-size:0.78rem;color:var(--text-muted);">' + esc(lastSync) + '</td>'
+          + '<td>' + reasonTagsHtml(aq ? aq.reasons : []) + '</td>'
           + '</tr>';
       }).join('');
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>Repo</th><th>Label</th><th>Score</th><th>Attention</th><th>Reasons</th><th>Last Sync</th></tr></thead>'
+        + '<thead><tr><th>ID</th><th>Repo</th><th>Label</th><th>Attention</th><th>Reasons</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 

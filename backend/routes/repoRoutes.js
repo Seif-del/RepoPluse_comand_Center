@@ -7,7 +7,11 @@ const { decrypt }          = require('../../execution/crypto/encryptToken');
 const { syncUserRepos }    = require('../../execution/github/syncUserRepos');
 const { parseGithubUrl }     = require('../../execution/github/parseGithubUrl');
 const { fetchRepo }          = require('../../execution/github/fetchRepo');
-const { getRepoRiskFactors } = require('../../execution/risk/getRepoRiskFactors');
+const { getRepoRiskFactors }      = require('../../execution/risk/getRepoRiskFactors');
+const { getAttentionQueue }        = require('../../execution/risk/getAttentionQueue');
+const { getTrendIndicator }        = require('../../execution/risk/getTrendIndicator');
+const { buildOperationalEvents }   = require('../../execution/risk/buildOperationalEvents');
+const { getEscalationSignals }     = require('../../execution/risk/getEscalationSignals');
 
 const router = express.Router();
 
@@ -30,6 +34,7 @@ router.get('/', async (req, res, next) => {
          rs.trend,
          rs.factors,
          rs.snapshot_at     AS "scoredAt",
+         rsp.prev_score     AS "prevScore",
          rm.ci_status                  AS "ciStatus",
          rm.latest_release_name        AS "latestReleaseName",
          rm.latest_release_published_at AS "latestReleasePublishedAt",
@@ -45,6 +50,13 @@ router.get('/', async (req, res, next) => {
          ORDER BY snapshot_at DESC
          LIMIT 1
        ) rs ON true
+       LEFT JOIN LATERAL (
+         SELECT score AS prev_score
+         FROM risk_scores
+         WHERE repo_id = r.id
+         ORDER BY snapshot_at DESC
+         LIMIT 1 OFFSET 1
+       ) rsp ON true
        LEFT JOIN LATERAL (
          SELECT ci_status, latest_release_name, latest_release_published_at, release_status,
                 active_contributor_count, top_contributor_percentage, contributor_status
@@ -67,6 +79,10 @@ router.get('/', async (req, res, next) => {
         ciStatus:          r.ciStatus,
         releaseStatus:     r.releaseStatus,
         contributorStatus: r.contributorStatus,
+      }),
+      trendIndicator: getTrendIndicator({
+        currentScore:  r.score,
+        previousScore: r.prevScore,
       }),
     }));
 
@@ -140,6 +156,160 @@ router.get('/:id/risk', async (req, res, next) => {
     }
 
     res.json({ current: result.rows[0], previous: result.rows[1] || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/events
+// Returns operational events derived from the two most recent metric and risk-score snapshots.
+router.get('/:id/events', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [riskResult, metricsResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT score, label, snapshot_at AS "snapshotAt"
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2
+         ORDER BY rs.snapshot_at DESC
+         LIMIT 2`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT ci_status          AS "ciStatus",
+                release_status     AS "releaseStatus",
+                contributor_status AS "contributorStatus",
+                snapshot_at        AS "snapshotAt"
+         FROM repo_metrics m
+         JOIN repositories r ON r.id = m.repo_id
+         WHERE m.repo_id = $1 AND r.user_id = $2
+         ORDER BY m.snapshot_at DESC
+         LIMIT 2`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    const currentRiskScore    = riskResult.rows[0]    || null;
+    const previousRiskScore   = riskResult.rows[1]    || null;
+    const currentMetrics      = metricsResult.rows[0] || null;
+    const previousMetrics     = metricsResult.rows[1] || null;
+
+    const trendIndicator = getTrendIndicator({
+      currentScore:  currentRiskScore  ? currentRiskScore.score  : null,
+      previousScore: previousRiskScore ? previousRiskScore.score : null,
+    });
+
+    const events = buildOperationalEvents({
+      currentMetrics,
+      previousMetrics,
+      currentRiskScore,
+      previousRiskScore,
+      trendIndicator,
+    });
+
+    res.json({ events });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/escalation
+// Returns operational volatility, escalation level, persistent risk, and
+// ordered signals derived from the recent risk and metrics history.
+router.get('/:id/escalation', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [riskResult, metricsResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT score, label, snapshot_at AS "snapshotAt"
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2
+         ORDER BY rs.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT ci_status          AS "ciStatus",
+                release_status     AS "releaseStatus",
+                contributor_status AS "contributorStatus",
+                snapshot_at        AS "snapshotAt"
+         FROM repo_metrics m
+         JOIN repositories r ON r.id = m.repo_id
+         WHERE m.repo_id = $1 AND r.user_id = $2
+         ORDER BY m.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    const riskHistory    = riskResult.rows;
+    const metricsHistory = metricsResult.rows;
+
+    // Build events from all consecutive snapshot pairs across the history window.
+    const events = [];
+    const maxIdx = Math.max(riskHistory.length, metricsHistory.length) - 1;
+    for (let i = 0; i < maxIdx; i++) {
+      const pairEvents = buildOperationalEvents({
+        currentRiskScore:  riskHistory[i]      || null,
+        previousRiskScore: riskHistory[i + 1]  || null,
+        currentMetrics:    metricsHistory[i]   || null,
+        previousMetrics:   metricsHistory[i + 1] || null,
+      });
+      pairEvents.forEach(e => events.push(e));
+    }
+
+    const escalation = getEscalationSignals({ riskHistory, metricsHistory, events });
+
+    res.json(escalation);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/attention
+// Returns a priority-sorted attention queue for the logged-in user's repos.
+router.get('/attention', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id,
+         r.github_full_name AS "fullName",
+         r.last_synced_at   AS "lastSyncedAt",
+         rs.score,
+         rm.ci_status          AS "ciStatus",
+         rm.release_status     AS "releaseStatus",
+         rm.contributor_status AS "contributorStatus"
+       FROM repositories r
+       LEFT JOIN LATERAL (
+         SELECT score
+         FROM risk_scores
+         WHERE repo_id = r.id
+         ORDER BY snapshot_at DESC
+         LIMIT 1
+       ) rs ON true
+       LEFT JOIN LATERAL (
+         SELECT ci_status, release_status, contributor_status
+         FROM repo_metrics
+         WHERE repo_id = r.id
+         ORDER BY snapshot_at DESC
+         LIMIT 1
+       ) rm ON true
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const attention = getAttentionQueue(result.rows);
+    res.json({ attention });
   } catch (err) {
     next(err);
   }
