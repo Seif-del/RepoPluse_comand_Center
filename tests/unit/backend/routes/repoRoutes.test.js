@@ -11,6 +11,7 @@ jest.mock('../../../../execution/risk/getAttentionQueue');
 jest.mock('../../../../execution/risk/getTrendIndicator');
 jest.mock('../../../../execution/risk/buildOperationalEvents');
 jest.mock('../../../../execution/risk/getEscalationSignals');
+jest.mock('../../../../execution/risk/getOperationalForecast');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -26,6 +27,7 @@ const { getAttentionQueue }      = require('../../../../execution/risk/getAttent
 const { getTrendIndicator }      = require('../../../../execution/risk/getTrendIndicator');
 const { buildOperationalEvents } = require('../../../../execution/risk/buildOperationalEvents');
 const { getEscalationSignals }   = require('../../../../execution/risk/getEscalationSignals');
+const { getOperationalForecast } = require('../../../../execution/risk/getOperationalForecast');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -50,6 +52,7 @@ const getMetricsHandler      = extractHandler(router, 'GET',  '/:id/metrics');
 const getRiskHandler         = extractHandler(router, 'GET',  '/:id/risk');
 const getEventsHandler       = extractHandler(router, 'GET',  '/:id/events');
 const getEscalationHandler   = extractHandler(router, 'GET',  '/:id/escalation');
+const getForecastHandler     = extractHandler(router, 'GET',  '/:id/forecast');
 const postRegisterHandler    = extractHandler(router, 'POST', '/register');
 const postSyncHandler        = extractHandler(router, 'POST', '/sync');
 
@@ -552,6 +555,119 @@ describe('repoRoutes GET /:id/escalation', () => {
     const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
     const res = makeRes();
     await getEscalationHandler(req, res, next);
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_metrics'));
+    expect(metricsCall[0]).toContain('LIMIT 10');
+  });
+});
+
+// ── GET /:id/forecast ────────────────────────────────────────────────────────
+
+describe('repoRoutes GET /:id/forecast', () => {
+  const MOCK_FORECAST = {
+    trajectory:    'deteriorating',
+    forecastLevel: 'high',
+    confidence:    'medium',
+    projectedRisk: 'Continued decline expected if unaddressed',
+    signals:       ['Repository at elevated risk for 3+ consecutive snapshots'],
+  };
+
+  const MOCK_ESCALATION = {
+    volatilityLevel: 'low',
+    escalationLevel: 'high',
+    persistentRisk:  true,
+    signals:         [],
+  };
+
+  beforeEach(() => {
+    getEscalationSignals.mockReturnValue(MOCK_ESCALATION);
+    getOperationalForecast.mockReturnValue(MOCK_FORECAST);
+    buildOperationalEvents.mockReturnValue([]);
+  });
+
+  function makeForecastDb({ riskRows = [], metricsRows = [] } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM risk_scores'))  return { rows: riskRows };
+        if (sql.includes('FROM repo_metrics')) return { rows: metricsRows };
+        return { rows: [] };
+      }),
+    };
+  }
+
+  it('returns forecast object from getOperationalForecast', async () => {
+    const db  = makeForecastDb({ riskRows: [{ score: 70, label: 'critical', snapshotAt: '2026-05-12T12:00:00Z' }] });
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_FORECAST);
+  });
+
+  it('returns 400 for non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'xyz' } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('calls getEscalationSignals with riskHistory and metricsHistory', async () => {
+    const riskRows    = [{ score: 80, label: 'critical', snapshotAt: '2026-05-12T12:00:00Z' }];
+    const metricsRows = [{ ciStatus: 'failing', releaseStatus: 'stale', contributorStatus: 'healthy', snapshotAt: '2026-05-12T12:00:00Z' }];
+    const db  = makeForecastDb({ riskRows, metricsRows });
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(getEscalationSignals).toHaveBeenCalledWith(expect.objectContaining({
+      riskHistory:    riskRows,
+      metricsHistory: metricsRows,
+    }));
+  });
+
+  it('calls getOperationalForecast with riskHistory, escalation, and events', async () => {
+    const riskRows = [{ score: 70, label: 'critical', snapshotAt: '2026-05-12T12:00:00Z' }];
+    const db  = makeForecastDb({ riskRows });
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(getOperationalForecast).toHaveBeenCalledWith(expect.objectContaining({
+      riskHistory: riskRows,
+      escalation:  MOCK_ESCALATION,
+      events:      expect.any(Array),
+    }));
+  });
+
+  it('returns unknown forecast when db returns empty history', async () => {
+    const UNKNOWN_FORECAST = { trajectory: 'unknown', forecastLevel: 'unknown', confidence: 'low', projectedRisk: 'Insufficient history to forecast trajectory', signals: [] };
+    getOperationalForecast.mockReturnValue(UNKNOWN_FORECAST);
+    const db  = makeForecastDb({ riskRows: [], metricsRows: [] });
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(UNKNOWN_FORECAST);
+  });
+
+  it('calls next on db error', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('queries risk_scores with LIMIT 10', async () => {
+    const db  = makeForecastDb();
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('FROM risk_scores'));
+    expect(riskCall[0]).toContain('LIMIT 10');
+  });
+
+  it('queries repo_metrics with LIMIT 10', async () => {
+    const db  = makeForecastDb();
+    const req = makeReq({ params: { id: '5' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
     const metricsCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_metrics'));
     expect(metricsCall[0]).toContain('LIMIT 10');
   });

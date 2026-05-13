@@ -12,6 +12,7 @@ const { getAttentionQueue }        = require('../../execution/risk/getAttentionQ
 const { getTrendIndicator }        = require('../../execution/risk/getTrendIndicator');
 const { buildOperationalEvents }   = require('../../execution/risk/buildOperationalEvents');
 const { getEscalationSignals }     = require('../../execution/risk/getEscalationSignals');
+const { getOperationalForecast }   = require('../../execution/risk/getOperationalForecast');
 
 const router = express.Router();
 
@@ -271,6 +272,64 @@ router.get('/:id/escalation', async (req, res, next) => {
     const escalation = getEscalationSignals({ riskHistory, metricsHistory, events });
 
     res.json(escalation);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/forecast
+// Returns a deterministic operational forecast derived from the recent risk and metrics history.
+router.get('/:id/forecast', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [riskResult, metricsResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT score, label, snapshot_at AS "snapshotAt"
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2
+         ORDER BY rs.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT ci_status          AS "ciStatus",
+                release_status     AS "releaseStatus",
+                contributor_status AS "contributorStatus",
+                snapshot_at        AS "snapshotAt"
+         FROM repo_metrics m
+         JOIN repositories r ON r.id = m.repo_id
+         WHERE m.repo_id = $1 AND r.user_id = $2
+         ORDER BY m.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    const riskHistory    = riskResult.rows;
+    const metricsHistory = metricsResult.rows;
+
+    // Build events from all consecutive snapshot pairs across the history window.
+    const events = [];
+    const maxIdx = Math.max(riskHistory.length, metricsHistory.length) - 1;
+    for (let i = 0; i < maxIdx; i++) {
+      const pairEvents = buildOperationalEvents({
+        currentRiskScore:  riskHistory[i]       || null,
+        previousRiskScore: riskHistory[i + 1]   || null,
+        currentMetrics:    metricsHistory[i]    || null,
+        previousMetrics:   metricsHistory[i + 1] || null,
+      });
+      pairEvents.forEach(e => events.push(e));
+    }
+
+    const escalation = getEscalationSignals({ riskHistory, metricsHistory, events });
+    const forecast   = getOperationalForecast({ riskHistory, escalation, events });
+
+    res.json(forecast);
   } catch (err) {
     next(err);
   }
