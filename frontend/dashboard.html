@@ -830,6 +830,98 @@
       line-height: 1.6;
     }
 
+    /* ── Portfolio Forecast panel ──────────────────────────────────────── */
+    .pf-panel {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .pf-badges {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .pf-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.67rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 9px;
+      border-radius: 99px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .pf-summary {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+      line-height: 1.45;
+    }
+
+    .pf-counts {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .pf-count-item {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1px;
+    }
+
+    .pf-count-value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .pf-count-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .pf-signals {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+    }
+
+    .pf-signal {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      font-size: 0.79rem;
+      color: var(--text-secondary);
+      padding: 2px 0;
+    }
+
+    .pf-signal::before {
+      content: '—';
+      color: var(--text-muted);
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      line-height: 1.6;
+    }
+
     /* ── Operational Forecast panel ────────────────────────────────────── */
     .forecast-panel {
       padding: 10px 14px;
@@ -942,7 +1034,10 @@
     </div>
 
     <!-- Portfolio narrative banner -->
-    <div id="portfolio-narrative" style="margin-bottom:24px;"></div>
+    <div id="portfolio-narrative" style="margin-bottom:16px;"></div>
+
+    <!-- Portfolio forecast panel -->
+    <div id="portfolio-forecast" style="margin-bottom:24px;"></div>
 
     <!-- Projects table -->
     <div class="section">
@@ -1573,6 +1668,90 @@
         });
     }
 
+    // ── Portfolio Forecast ────────────────────────────────────────────────────
+
+    var PF_TRAJECTORY_SEV = {
+      escalating:    'critical',
+      deteriorating: 'high',
+      volatile:      'medium',
+      improving:     'healthy',
+      stable:        'neutral',
+      unknown:       'unknown',
+    };
+
+    function buildPortfolioForecastHtml(data) {
+      if (!data || data.portfolioTrajectory === 'unknown') {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+          + 'Insufficient portfolio forecasting data.</p>';
+      }
+
+      var trajSev   = PF_TRAJECTORY_SEV[data.portfolioTrajectory] || 'unknown';
+      var riskSev   = data.portfolioRiskLevel || 'unknown';
+      var html = '<div class="pf-panel">';
+
+      html += '<div class="pf-badges">';
+      html += '<span class="pf-badge severity-' + esc(trajSev) + '">'
+        + esc((data.portfolioTrajectory || 'UNKNOWN').toUpperCase() + ' PORTFOLIO') + '</span>';
+      if (riskSev && riskSev !== 'unknown') {
+        html += '<span class="pf-badge severity-' + esc(riskSev) + '">'
+          + esc(riskSev.toUpperCase() + ' RISK') + '</span>';
+      }
+      html += '</div>';
+
+      if (data.summary) {
+        html += '<div class="pf-summary">' + esc(data.summary) + '</div>';
+      }
+
+      if (data.counts) {
+        var countEntries = [
+          { key: 'escalating',    label: 'Escalating'    },
+          { key: 'deteriorating', label: 'Deteriorating' },
+          { key: 'volatile',      label: 'Volatile'      },
+          { key: 'recovering',    label: 'Recovering'    },
+          { key: 'stable',        label: 'Stable'        },
+        ].filter(function(e) { return data.counts[e.key] > 0; });
+
+        if (countEntries.length) {
+          html += '<div class="pf-counts">'
+            + countEntries.map(function(e) {
+                return '<div class="pf-count-item">'
+                  + '<span class="pf-count-value">' + esc(String(data.counts[e.key])) + '</span>'
+                  + '<span class="pf-count-label">' + esc(e.label) + '</span>'
+                  + '</div>';
+              }).join('')
+            + '</div>';
+        }
+      }
+
+      if (data.signals && data.signals.length) {
+        html += '<ul class="pf-signals">'
+          + data.signals.map(function(s) {
+              return '<li class="pf-signal">' + esc(s) + '</li>';
+            }).join('')
+          + '</ul>';
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function loadPortfolioForecast() {
+      var container = document.getElementById('portfolio-forecast');
+      if (!container) return;
+      fetch('/api/portfolio/forecast', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          container.innerHTML = buildPortfolioForecastHtml(d);
+        })
+        .catch(function() {
+          if (container) container.innerHTML = '';
+        });
+    }
+
     // ── Operational Forecast ──────────────────────────────────────────────────
 
     var FORECAST_TRAJECTORY_SEV = {
@@ -2090,6 +2269,7 @@
       loadRepos();
       loadAttentionQueue();
       loadHistory();
+      loadPortfolioForecast();
     }
 
     refresh();

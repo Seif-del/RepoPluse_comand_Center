@@ -7,7 +7,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "dev": "node backend/server.js",
+    "dev": "node --env-file=.env backend/server.js",
     "test": "jest --coverage",
     "test:integration": "cross-env TEST_INTEGRATION=true node --env-file=.env node_modules/jest/bin/jest.js --testPathPattern=tests/integration",
     "db:migrate": "node-pg-migrate -m migrations up",
