@@ -5,6 +5,7 @@
 jest.mock('../../../../execution/risk/getPortfolioForecast');
 jest.mock('../../../../execution/risk/getAttentionQueue');
 jest.mock('../../../../execution/risk/buildExecutiveSummary');
+jest.mock('../../../../execution/risk/getPortfolioHistory');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 
 // ── Imports ───────────────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ const router                    = require('../../../../backend/routes/portfolioR
 const { getPortfolioForecast }  = require('../../../../execution/risk/getPortfolioForecast');
 const { getAttentionQueue }     = require('../../../../execution/risk/getAttentionQueue');
 const { buildExecutiveSummary } = require('../../../../execution/risk/buildExecutiveSummary');
+const { buildPortfolioHistory } = require('../../../../execution/risk/getPortfolioHistory');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -32,6 +34,7 @@ function extractHandler(r, method, path) {
 
 const getForecastHandler       = extractHandler(router, 'GET', '/forecast');
 const getExecSummaryHandler    = extractHandler(router, 'GET', '/executive-summary');
+const getHistoryHandler        = extractHandler(router, 'GET', '/history');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -353,6 +356,16 @@ describe('portfolioRoutes GET /executive-summary', () => {
     expect(sql).toContain('contributor_status');
   });
 
+  it('SQL query selects github_full_name (not full_name) aliased as fullName', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getExecSummaryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('github_full_name');
+    expect(sql).not.toContain('r.full_name');
+  });
+
   it('attentionMap passed to buildExecutiveSummary is keyed by repoId', async () => {
     getAttentionQueue.mockReturnValue([
       { repoId: 7, attentionLevel: 'critical', attentionScore: 80, reasons: [] },
@@ -384,5 +397,118 @@ describe('portfolioRoutes GET /executive-summary', () => {
     const callArg = getPortfolioForecast.mock.calls[0][0];
     expect(callArg[0].ciStatus).toBe('unknown');
     expect(callArg[0].trajectory).toBe('unknown');
+  });
+});
+
+// ── GET /history ──────────────────────────────────────────────────────────────
+
+const MOCK_HISTORY = [
+  { snapshotAt: '2025-06-15T10:00:00.000Z', portfolioScore: 45, portfolioLevel: 'at-risk',  repoCount: 4 },
+  { snapshotAt: '2025-06-15T09:00:00.000Z', portfolioScore: 20, portfolioLevel: 'monitor',   repoCount: 3 },
+  { snapshotAt: '2025-06-15T08:00:00.000Z', portfolioScore: 5,  portfolioLevel: 'healthy',   repoCount: 3 },
+];
+
+describe('portfolioRoutes GET /history', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    buildPortfolioHistory.mockReturnValue(MOCK_HISTORY);
+  });
+
+  it('returns the array produced by buildPortfolioHistory', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_HISTORY);
+  });
+
+  it('passes DB rows to buildPortfolioHistory', async () => {
+    const dbRows = [
+      { snapshotAt: '2025-06-15T10:00:00.000Z', portfolioScore: 45, repoCount: 4 },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(dbRows) } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    expect(buildPortfolioHistory).toHaveBeenCalledWith(dbRows);
+  });
+
+  it('returns [] when buildPortfolioHistory returns empty array', async () => {
+    buildPortfolioHistory.mockReturnValue([]);
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith([]);
+  });
+
+  it('calls next on db error', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('SQL query targets the authenticated user', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL query filters to active repos only', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL query groups by hour using DATE_TRUNC', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/DATE_TRUNC\s*\(\s*'hour'/i);
+  });
+
+  it('SQL query orders results newest-first (DESC)', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/ORDER\s+BY.+DESC/is);
+  });
+
+  it('SQL query applies LIMIT 30', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('LIMIT 30');
+  });
+
+  it('SQL query aggregates score with AVG across repos', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/AVG\s*\(/i);
+  });
+
+  it('SQL query counts distinct repos per snapshot window', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/COUNT\s*\(\s*DISTINCT/i);
   });
 });
