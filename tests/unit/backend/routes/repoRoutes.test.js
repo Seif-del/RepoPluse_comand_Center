@@ -172,13 +172,128 @@ describe('repoRoutes GET /attention', () => {
     expect(res.json).toHaveBeenCalledWith({ attention: MOCK_QUEUE });
   });
 
-  it('passes db rows to getAttentionQueue', async () => {
-    const rows = [{ id: 2, fullName: 'o/b', score: null, ciStatus: 'unknown', releaseStatus: 'unknown', contributorStatus: 'unknown', lastSyncedAt: null }];
+  it('passes enriched repos (with derived trajectory) to getAttentionQueue', async () => {
+    const rows = [{ id: 2, fullName: 'o/b', score: null, ciStatus: 'unknown', releaseStatus: 'unknown', contributorStatus: 'unknown', lastSyncedAt: null, label: null, trend: null, recentLabels: [] }];
     const db = makeDb({ rows });
     const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
     const res = makeRes();
     await getAttentionHandler(req, res, next);
-    expect(getAttentionQueue).toHaveBeenCalledWith(rows);
+    expect(getAttentionQueue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 2, trajectory: 'unknown' }),
+      ])
+    );
+  });
+
+  it('derives trajectory=escalating from critical+worsening label/trend', async () => {
+    const rows = [{ id: 3, fullName: 'o/c', score: 80, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy', lastSyncedAt: null, label: 'critical', trend: 'worsening', recentLabels: [] }];
+    const db = makeDb({ rows });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    expect(getAttentionQueue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 3, trajectory: 'escalating', escalationLevel: 'critical' }),
+      ])
+    );
+  });
+
+  it('derives persistentRisk=true when 3 recent labels are all at-risk/critical', async () => {
+    const rows = [{ id: 4, fullName: 'o/d', score: 50, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy', lastSyncedAt: null, label: 'at-risk', trend: 'stable', recentLabels: ['at-risk', 'critical', 'at-risk'] }];
+    const db = makeDb({ rows });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    expect(getAttentionQueue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 4, persistentRisk: true }),
+      ])
+    );
+  });
+
+  it('SQL query selects label and trend for trajectory derivation', async () => {
+    const db = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('label');
+    expect(sql).toContain('trend');
+  });
+
+  it('SQL query includes recentLabels array subquery', async () => {
+    const db = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('recentLabels');
+    expect(sql).toContain('LIMIT  3');
+  });
+
+  it('SQL query projects rs.factors in the outer SELECT for noRecentCommits derivation', async () => {
+    const db = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    // rs.factors must appear in the outer SELECT projection — not only inside the
+    // LATERAL subquery — so that r.factors is defined when the route maps noRecentCommits.
+    expect(sql).toMatch(/rs\.factors/);
+  });
+
+  it('derives noRecentCommits=true when factors contain the no-commits string', async () => {
+    const rows = [{
+      id: 5, fullName: 'o/e', score: 8, label: 'healthy', trend: 'stable',
+      ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'bus_factor_risk',
+      lastSyncedAt: null, recentLabels: [],
+      factors: ['No commits in the last 7 days'],
+    }];
+    const db = makeDb({ rows });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    expect(getAttentionQueue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 5, noRecentCommits: true }),
+      ])
+    );
+  });
+
+  it('derives noRecentCommits=false when factors do not contain the no-commits string', async () => {
+    const rows = [{
+      id: 6, fullName: 'o/f', score: 10, label: 'healthy', trend: 'stable',
+      ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'bus_factor_risk',
+      lastSyncedAt: null, recentLabels: [],
+      factors: ['High bus-factor risk: one contributor dominates'],
+    }];
+    const db = makeDb({ rows });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    expect(getAttentionQueue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 6, noRecentCommits: false }),
+      ])
+    );
+  });
+
+  it('derives noRecentCommits=false when factors is null/missing', async () => {
+    const rows = [{
+      id: 7, fullName: 'o/g', score: null, label: null, trend: null,
+      ciStatus: 'unknown', releaseStatus: 'unknown', contributorStatus: 'unknown',
+      lastSyncedAt: null, recentLabels: [],
+      factors: null,
+    }];
+    const db = makeDb({ rows });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getAttentionHandler(req, res, next);
+    expect(getAttentionQueue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 7, noRecentCommits: false }),
+      ])
+    );
   });
 
   it('returns empty attention array when no repos', async () => {

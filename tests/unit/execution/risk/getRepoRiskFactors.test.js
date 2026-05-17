@@ -5,9 +5,9 @@ const { getRepoRiskFactors, NOT_MEASURED } = require('../../../../execution/risk
 // ── Return shape ──────────────────────────────────────────────────────────────
 
 describe('getRepoRiskFactors — return shape', () => {
-  it('always returns hasMetrics, triggered, notMeasured, allClear', () => {
+  it('always returns hasMetrics, triggered, structuralFactors, operationalFactors, notMeasured, allClear', () => {
     const keys = Object.keys(getRepoRiskFactors({ score: null, label: null, factors: null })).sort();
-    expect(keys).toEqual(['allClear', 'hasMetrics', 'notMeasured', 'triggered']);
+    expect(keys).toEqual(['allClear', 'hasMetrics', 'notMeasured', 'operationalFactors', 'structuralFactors', 'triggered']);
   });
 
   it('triggered is always an array', () => {
@@ -16,6 +16,16 @@ describe('getRepoRiskFactors — return shape', () => {
 
   it('notMeasured is always an array', () => {
     expect(Array.isArray(getRepoRiskFactors({ score: 0, factors: [] }).notMeasured)).toBe(true);
+  });
+
+  it('structuralFactors is always an array', () => {
+    expect(Array.isArray(getRepoRiskFactors({ score: null }).structuralFactors)).toBe(true);
+    expect(Array.isArray(getRepoRiskFactors({ score: 0, factors: [] }).structuralFactors)).toBe(true);
+  });
+
+  it('operationalFactors is always an array', () => {
+    expect(Array.isArray(getRepoRiskFactors({ score: null }).operationalFactors)).toBe(true);
+    expect(Array.isArray(getRepoRiskFactors({ score: 0, factors: [] }).operationalFactors)).toBe(true);
   });
 });
 
@@ -515,6 +525,108 @@ describe('getRepoRiskFactors — all intelligence signals combined', () => {
       ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
     });
     expect(notMeasured).toEqual(['Dependency vulnerabilities']);
+  });
+});
+
+// ── Factor categorization ────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — factor categorization', () => {
+  it('CI failing → operationalFactors', () => {
+    const { operationalFactors, structuralFactors } = getRepoRiskFactors({
+      score: 0, factors: [], ciStatus: 'failing',
+    });
+    expect(operationalFactors.some(f => f.toLowerCase().includes('ci'))).toBe(true);
+    expect(structuralFactors.some(f => f.toLowerCase().includes('ci'))).toBe(false);
+  });
+
+  it('contributor abandoned → operationalFactors', () => {
+    const { operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned',
+    });
+    expect(operationalFactors.some(f => f.toLowerCase().includes('abandoned'))).toBe(true);
+  });
+
+  it('stale release → structuralFactors (not operational)', () => {
+    const { structuralFactors, operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], releaseStatus: 'stale',
+    });
+    expect(structuralFactors.some(f => f.toLowerCase().includes('90 days'))).toBe(true);
+    expect(operationalFactors.some(f => f.toLowerCase().includes('90 days'))).toBe(false);
+  });
+
+  it('bus-factor risk → structuralFactors', () => {
+    const { structuralFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'bus_factor_risk',
+    });
+    expect(structuralFactors.some(f => f.toLowerCase().includes('bus-factor'))).toBe(true);
+  });
+
+  it('no commits factor from scoreRepo → structuralFactors', () => {
+    const { structuralFactors, operationalFactors } = getRepoRiskFactors({
+      score: 8, factors: ['No commits in the last 7 days'],
+    });
+    expect(structuralFactors).toContain('No commits in the last 7 days');
+    expect(operationalFactors).not.toContain('No commits in the last 7 days');
+  });
+
+  it('structural and operational factors partitioned correctly in mixed scenario', () => {
+    const { structuralFactors, operationalFactors, triggered } = getRepoRiskFactors({
+      score: 60,
+      factors: ['No commits in the last 7 days', 'CI/CD pipeline has recent failing runs'],
+      ciStatus: 'failing', releaseStatus: 'stale',
+    });
+    expect(operationalFactors).toContain('CI/CD pipeline has recent failing runs');
+    expect(structuralFactors).toContain('No commits in the last 7 days');
+    expect(structuralFactors.some(f => f.includes('90 days'))).toBe(true);
+    expect(structuralFactors.length + operationalFactors.length).toBe(triggered.length);
+  });
+
+  it('healthy repo has empty structuralFactors and operationalFactors', () => {
+    const { structuralFactors, operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    });
+    expect(structuralFactors).toHaveLength(0);
+    expect(operationalFactors).toHaveLength(0);
+  });
+
+  it('no-metrics repo has empty structuralFactors and operationalFactors', () => {
+    const { structuralFactors, operationalFactors } = getRepoRiskFactors({ score: null });
+    expect(structuralFactors).toHaveLength(0);
+    expect(operationalFactors).toHaveLength(0);
+  });
+});
+
+// ── Deduplication ─────────────────────────────────────────────────────────────
+
+describe('getRepoRiskFactors — deduplication of triggered factors', () => {
+  it('CI failing factor is not duplicated when already in scoreRepo factors', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 50,
+      factors: ['CI/CD pipeline has recent failing runs'],
+      ciStatus: 'failing',
+    });
+    const ciCount = triggered.filter(f => f === 'CI/CD pipeline has recent failing runs').length;
+    expect(ciCount).toBe(1);
+  });
+
+  it('stale release factor is not duplicated', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 50,
+      factors: ['No releases in the last 90 days'],
+      releaseStatus: 'stale',
+    });
+    const count = triggered.filter(f => f === 'No releases in the last 90 days').length;
+    expect(count).toBe(1);
+  });
+
+  it('contributor abandoned factor is not duplicated', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 35,
+      factors: ['Repository appears abandoned (no contributors)'],
+      contributorStatus: 'abandoned',
+    });
+    const count = triggered.filter(f => f === 'Repository appears abandoned (no contributors)').length;
+    expect(count).toBe(1);
   });
 });
 

@@ -2,47 +2,62 @@
 
 // Points awarded per matched signal. Values are additive; total is capped at 100.
 //
-// Calibration principle: active operational instability dominates structural
-// maturity concerns. One active signal alone → 'high'. Two → 'critical'.
-// Structural concerns (bus-factor, stale releases) can influence 'medium' but
-// cannot reach 'high' on their own, preventing false At Risk classifications.
-// Data-gap signals are negligible — absent telemetry is not an operational alert.
+// Unified Operational Risk Model alignment:
+//
+// PRIMARY driver: unified risk score bands (from scoreRepo).
+// Thresholds mirror scoreRepo's LABEL_THRESHOLDS exactly.
+//   RISK_SCORE_CRITICAL (≥75) → 65 pts → attention lands in critical region (≥60)
+//   RISK_SCORE_AT_RISK  (≥50) → 45 pts → attention lands in high region (≥40)
+//   RISK_SCORE_MONITOR  (≥30) → 20 pts → attention lands in medium region (≥20)
+//
+// FRESHNESS signals: CI/contributor may have degraded since the last sync.
+//   Reduced from their former primary-driver weights; unified score reflects them
+//   after the next sync. They provide a bounded freshness window.
+//
+// STRUCTURAL signals: very low weight — now captured in the unified score.
+//   Structural-only concern cannot alone push attention to high (≥40).
+//
+// FORECAST / TRAJECTORY modifiers: prioritization boosts within or across bands.
+//   Primary severity comes from the risk score; these promote repos within a tier
+//   and can cross a band boundary when paired with a base score signal.
 const WEIGHTS = {
-  // ── Active instability signals ──────────────────────────────────────────────
-  // One alone → 'high'. Two together → 'critical'.
-  CI_FAILING:            50,   // was 40 — primary active signal
-  CONTRIBUTOR_ABANDONED: 40,
-  RISK_SCORE_HIGH:       40,   // composite risk score >= 70
+  // ── Risk score band alignment (unified model — primary severity driver) ───────
+  RISK_SCORE_CRITICAL: 65,  // score >= 75 → starts attention in critical region
+  RISK_SCORE_AT_RISK:  45,  // score >= 50 → starts attention in high region
+  RISK_SCORE_MONITOR:  20,  // score >= 30 → starts attention in medium region (mirrors scoreRepo monitor threshold)
 
-  // ── Structural concern signals ──────────────────────────────────────────────
-  // Reduced so structural signals alone cannot reach 'high' (≥40).
-  // Realistic max structural-only combo: ~30 → 'medium' (Monitor).
-  CONTRIBUTOR_BUS_FACTOR:  8,   // was 20
-  RELEASE_STALE:           8,   // was 20
+  // ── Freshness signals (may have changed since last sync) ─────────────────────
+  CI_FAILING:            25,  // freshness — CI may have degraded since last sync
+  CONTRIBUTOR_ABANDONED: 30,  // freshness — team may have gone dark
 
-  // ── Maturity / low-signal structural indicators ────────────────────────────
-  RISK_SCORE_MID:         10,   // composite risk score >= 40 and < 70
-  RELEASE_NONE:            6,   // was 10
-  CONTRIBUTOR_LOW:         4,   // was 10
+  // ── Activity freshness (ordering signal — commits absence is actionable) ─────
+  NO_RECENT_COMMITS:       1,
 
-  // ── Data-gap signals — absence of telemetry is low signal ─────────────────
-  // Individually sub-threshold for 'low'; require multiple to surface.
-  CI_UNKNOWN:              2,   // was 5
-  RELEASE_UNKNOWN:         2,   // was 5
-  CONTRIBUTOR_UNKNOWN:     2,   // was 5
-  NO_METRICS:              4,   // was 5
+  // ── Structural freshness signals (very reduced — now in unified score) ────────
+  CONTRIBUTOR_BUS_FACTOR:  3,
+  RELEASE_STALE:           3,
+  CONTRIBUTOR_LOW:         2,
+  RELEASE_NONE:            2,
 
-  // ── Forecast-awareness signals ─────────────────────────────────────────────
-  TRAJ_ESCALATING:    30,   // was 25 — trajectory === 'escalating'
-  TRAJ_DETERIORATING: 15,   //          trajectory === 'deteriorating'
-  TRAJ_VOLATILE:      10,   //          trajectory === 'volatile'
-  FORECAST_CRITICAL:  25,   // was 20 — forecastLevel === 'critical'
-  FORECAST_HIGH:      10,   //          forecastLevel === 'high'
-  PERSISTENT_RISK:    20,   // was 15 — persistentRisk === true
-  ESC_HIGH:           15,   //          escalationLevel === 'high'
-  ESC_CRITICAL:       30,   // was 25 — escalationLevel === 'critical'
-  VOLATILITY_HIGH:    10,   //          volatilityLevel === 'high'
-  CI_UNRESOLVED:      15,   // was 10 — unresolvedCiRun === true
+  // ── Data-gap signals (near-zero — telemetry absence is not an alert) ─────────
+  CI_UNKNOWN:              1,
+  RELEASE_UNKNOWN:         1,
+  CONTRIBUTOR_UNKNOWN:     1,
+  NO_METRICS:              4,
+
+  // ── Forecast / trajectory prioritization modifiers ───────────────────────────
+  // Boost within or across attention bands. Paired with a base score signal,
+  // these can cross a band boundary (e.g. at-risk + escalating → critical).
+  TRAJ_ESCALATING:    15,
+  TRAJ_DETERIORATING: 10,
+  TRAJ_VOLATILE:       5,
+  FORECAST_CRITICAL:  12,
+  FORECAST_HIGH:       6,
+  PERSISTENT_RISK:    15,
+  ESC_HIGH:            5,
+  ESC_CRITICAL:       15,
+  VOLATILITY_HIGH:     5,
+  CI_UNRESOLVED:       8,
 };
 
 // Thresholds evaluated in descending order of severity.
@@ -72,13 +87,26 @@ function _scoreRepo(repo) {
   var forecastLevel   = repo.forecastLevel   || null;
   var escalationLevel = repo.escalationLevel || null;
   var volatilityLevel = repo.volatilityLevel || null;
-  var persistentRisk  = repo.persistentRisk  === true;
-  var unresolvedCiRun = repo.unresolvedCiRun === true;
+  var persistentRisk   = repo.persistentRisk   === true;
+  var unresolvedCiRun  = repo.unresolvedCiRun  === true;
+  var noRecentCommits  = repo.noRecentCommits  === true;
 
   var total   = 0;
   var reasons = [];
 
-  // ── Blocking signals ───────────────────────────────────────────────────────
+  // ── Risk score band alignment (exclusive tiers, highest matching fires) ───────
+  if (riskScore !== null && riskScore >= 75) {
+    total += WEIGHTS.RISK_SCORE_CRITICAL;
+    reasons.push('Critical risk score (' + riskScore + ')');
+  } else if (riskScore !== null && riskScore >= 50) {
+    total += WEIGHTS.RISK_SCORE_AT_RISK;
+    reasons.push('Elevated risk score (' + riskScore + ')');
+  } else if (riskScore !== null && riskScore >= 30) {
+    total += WEIGHTS.RISK_SCORE_MONITOR;
+    reasons.push('Monitored risk score (' + riskScore + ')');
+  }
+
+  // ── Freshness signals ─────────────────────────────────────────────────────────
   if (ci === 'failing') {
     total += WEIGHTS.CI_FAILING;
     reasons.push('CI pipeline is failing');
@@ -87,12 +115,14 @@ function _scoreRepo(repo) {
     total += WEIGHTS.CONTRIBUTOR_ABANDONED;
     reasons.push('Repository appears abandoned');
   }
-  if (riskScore !== null && riskScore >= 70) {
-    total += WEIGHTS.RISK_SCORE_HIGH;
-    reasons.push('High risk score (' + riskScore + ')');
+
+  // ── Activity freshness — no recent commits (precedes structural signals) ──────
+  if (noRecentCommits) {
+    total += WEIGHTS.NO_RECENT_COMMITS;
+    reasons.push('No recent commits');
   }
 
-  // ── High-concern signals ───────────────────────────────────────────────────
+  // ── Structural freshness signals ──────────────────────────────────────────────
   if (con === 'bus_factor_risk') {
     total += WEIGHTS.CONTRIBUTOR_BUS_FACTOR;
     reasons.push('High bus-factor risk');
@@ -101,8 +131,6 @@ function _scoreRepo(repo) {
     total += WEIGHTS.RELEASE_STALE;
     reasons.push('Stale release cadence');
   }
-
-  // ── Medium-concern signals ─────────────────────────────────────────────────
   if (con === 'low_activity') {
     total += WEIGHTS.CONTRIBUTOR_LOW;
     reasons.push('Low contributor activity');
@@ -111,12 +139,8 @@ function _scoreRepo(repo) {
     total += WEIGHTS.RELEASE_NONE;
     reasons.push('No releases found');
   }
-  if (riskScore !== null && riskScore >= 40 && riskScore < 70) {
-    total += WEIGHTS.RISK_SCORE_MID;
-    reasons.push('Elevated risk score (' + riskScore + ')');
-  }
 
-  // ── Data-gap / low signals ─────────────────────────────────────────────────
+  // ── Data-gap / low signals ────────────────────────────────────────────────────
   if (ci === 'unknown') {
     total += WEIGHTS.CI_UNKNOWN;
     reasons.push('CI status unknown');
@@ -134,7 +158,7 @@ function _scoreRepo(repo) {
     reasons.push('No metrics available yet');
   }
 
-  // ── Forecast-awareness signals ─────────────────────────────────────────────
+  // ── Forecast-awareness prioritization modifiers ───────────────────────────────
   if (trajectory === 'escalating') {
     total += WEIGHTS.TRAJ_ESCALATING;
     reasons.push('Escalating operational trajectory');
@@ -185,7 +209,10 @@ function _scoreRepo(repo) {
  * Derives a priority-sorted attention queue from an array of repo objects.
  * Pure function — no I/O.
  *
- * Scoring: points are awarded per matched signal and summed (max 100).
+ * The attention score derives primarily from the unified risk score bands
+ * (RISK_SCORE_CRITICAL/AT_RISK/MONITOR), ensuring attention mirrors severity.
+ * Forecast/trajectory modifiers boost priority within or across bands.
+ *
  * Sort: attentionScore DESC → lastSyncedAt DESC → fullName ASC.
  *
  * @param {Array} repos  Array of repo rows as returned by the DB query.
@@ -195,6 +222,7 @@ function _scoreRepo(repo) {
  *   attentionLevel: 'critical'|'high'|'medium'|'low'|'healthy',
  *   attentionScore: number,
  *   reasons:        string[],
+ *   trajectory:     string|null,
  * }>}
  */
 function getAttentionQueue(repos) {

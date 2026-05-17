@@ -555,6 +555,9 @@
     .aq-badge.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
     .aq-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
 
+    /* ── Inline trajectory marker (appended inside .aq-badge) ───────────── */
+    .aq-traj { margin-left: 2px; opacity: 0.8; font-weight: 400; }
+
 
 
     /* ── Reusable severity state classes ─────────────────────────────────── */
@@ -1270,17 +1273,21 @@
     }
 
     function operationalState(repo, aq) {
+      // No score means never synced — operational state is genuinely unknown.
+      if (repo.score == null) return { text: 'Unknown', cls: 'severity-unknown' };
       if (aq) {
         var lvl = aq.attentionLevel;
         if (lvl === 'critical') return { text: 'Critical', cls: 'severity-critical' };
         if (lvl === 'high')     return { text: 'At Risk',  cls: 'severity-high'     };
         if (lvl === 'medium')   return { text: 'Monitor',  cls: 'severity-medium'   };
-        if (lvl === 'low')      return { text: 'Healthy',  cls: 'severity-healthy'  };
+        if (lvl === 'low')      return { text: 'Low',      cls: 'severity-low'      };
         if (lvl === 'healthy')  return { text: 'Healthy',  cls: 'severity-healthy'  };
       }
+      // Fallback to stored label when attention queue is unavailable.
       var label = (repo.label || '').toLowerCase();
       if (label === 'critical') return { text: 'Critical', cls: 'severity-critical' };
       if (label === 'at-risk')  return { text: 'At Risk',  cls: 'severity-high'     };
+      if (label === 'monitor')  return { text: 'Monitor',  cls: 'severity-medium'   };
       if (label === 'healthy')  return { text: 'Healthy',  cls: 'severity-healthy'  };
       return { text: 'Unknown', cls: 'severity-unknown' };
     }
@@ -1294,12 +1301,14 @@
     var REASON_TAGS = [
       ['CI pipeline is failing',       'CI Failing',          'severity-critical'],
       ['Repository appears abandoned', 'Abandoned',           'severity-critical'],
-      ['High risk score',              'High Risk',           'severity-critical'],
+      ['Critical risk score',          'Critical Risk',       'severity-critical'],
+      ['No recent commits',             'No Commits',          'severity-medium'],
       ['High bus-factor risk',         'Bus Factor',          'severity-high'],
       ['Stale release cadence',        'Release Stale',       'severity-high'],
       ['Low contributor activity',     'Low Activity',        'severity-medium'],
       ['No releases found',            'No Releases',         'severity-medium'],
       ['Elevated risk score',          'Elevated Risk',       'severity-medium'],
+      ['Monitored risk score',         'Monitor Risk',        'severity-low'],
       ['CI status unknown',            'CI Unknown',          'severity-unknown'],
       ['Release status unknown',       'Release Unknown',     'severity-unknown'],
       ['Contributor status unknown',   'Contributor Unknown', 'severity-unknown'],
@@ -1337,6 +1346,85 @@
         + '</div>';
 
       return html;
+    }
+
+    // ── Table-specific reason filtering & display priority ───────────────────────
+    // Structural maturity tags suppressed from the table for LOW / HEALTHY repos.
+    // They remain fully visible in detail panels, assessments, and recommendations.
+    var TABLE_SUPPRESS_LOW = new Set([
+      'High bus-factor risk',
+      'Stale release cadence',
+      'No releases found',
+    ]);
+
+    // Numeric display priority (lower = surfaces first in visible tag slots).
+    // Applied at ALL attention levels so operational signals always appear before
+    // telemetry placeholders regardless of the order reasons arrive from the backend.
+    //
+    // Tier 0 — operational instability  (CI Failing, Abandoned, Escalating, …, No Commits)
+    // Tier 1 — trajectory / forecast modifiers
+    // Tier 2 — structural maturity      (suppressed for LOW / HEALTHY; low priority otherwise)
+    // Tier 3 — telemetry placeholders   (CI Unknown, Release Unknown — yield to everything above)
+    var REASON_PRIORITY_MAP = [
+      // Tier 0 — operational instability
+      ['CI pipeline is failing',            0],
+      ['Repository appears abandoned',      1],
+      ['Escalating operational trajectory', 2],
+      ['Persistent operational risk',       3],
+      ['Critical risk score',               4],
+      ['Elevated risk score',               5],
+      ['No recent commits',                 6],
+      // Tier 1 — trajectory / forecast
+      ['Deteriorating operational trajectory', 10],
+      ['Volatile operational trajectory',      11],
+      ['Critical forecast level',              12],
+      ['High forecast level',                  13],
+      ['Escalation level is critical',         14],
+      ['Escalation level is high',             15],
+      ['Operational volatility elevated',      16],
+      ['Repeated unresolved CI instability',   17],
+      ['Monitored risk score',                 18],
+      ['Low contributor activity',             19],
+      // Tier 2 — structural maturity
+      ['High bus-factor risk',              30],
+      ['Stale release cadence',             31],
+      ['No releases found',                 32],
+      // Tier 3 — telemetry placeholders (lowest)
+      ['CI status unknown',                 40],
+      ['Release status unknown',            41],
+      ['Contributor status unknown',        42],
+      ['No metrics available yet',          43],
+    ];
+
+    function _reasonPriority(reason) {
+      for (var i = 0; i < REASON_PRIORITY_MAP.length; i++) {
+        if (reason.indexOf(REASON_PRIORITY_MAP[i][0]) === 0) return REASON_PRIORITY_MAP[i][1];
+      }
+      return 20; // unmapped reasons land in mid-priority tier
+    }
+
+    // Builds table-only reason tag HTML with attention-level-aware filtering and sorting.
+    //   ALL levels    → reasons sorted by REASON_PRIORITY_MAP (operational first, placeholders last)
+    //   LOW / HEALTHY → structural maturity tags also filtered out first;
+    //                   renders "No active issues" if nothing operational remains
+    function buildTableReasonTags(aq) {
+      var reasons = (aq && aq.reasons) ? aq.reasons : [];
+      var level   = (aq && aq.attentionLevel) ? aq.attentionLevel : 'unknown';
+
+      var working = reasons;
+
+      if (level === 'low' || level === 'healthy') {
+        working = reasons.filter(function(r) { return !TABLE_SUPPRESS_LOW.has(r); });
+        if (!working.length) {
+          return '<div class="tbl-reasons"><span style="color:var(--text-muted);font-size:0.72rem;">No active issues</span></div>';
+        }
+      }
+
+      var sorted = working.slice().sort(function(a, b) {
+        return _reasonPriority(a) - _reasonPriority(b);
+      });
+
+      return reasonTagsHtml(sorted);
     }
 
     function card(label, value, cls) {
@@ -1606,6 +1694,7 @@
 
       var fallbackLevel = repo.label === 'critical' ? 'critical'
                         : repo.label === 'at-risk'  ? 'high'
+                        : repo.label === 'monitor'  ? 'medium'
                         : repo.label === 'healthy'  ? 'healthy'
                         : 'unknown';
       var level = (aq && aq.attentionLevel) ? aq.attentionLevel : fallbackLevel;
@@ -1621,6 +1710,8 @@
       var concerns = [];
       if (ci === 'failing')            concerns.push('CI pipeline failures');
       if (contr === 'abandoned')       concerns.push('the repository appears abandoned');
+      if (exp.structuralFactors && exp.structuralFactors.some(function(f) { return f.indexOf('No commits in the last 7 days') === 0; }))
+                                       concerns.push('no recent commits');
       if (contr === 'bus_factor_risk') concerns.push('contributor concentration');
       if (rel === 'stale')             concerns.push('stale release cadence');
       if (rel === 'none')              concerns.push('no release history');
@@ -2265,15 +2356,28 @@
         return;
       }
 
+      // Compact predictive markers — only for actionable non-stable trajectories.
+      var TRAJ_MARKER = {
+        escalating:    '&#x2191;',   // ↑
+        deteriorating: '&#x2197;',   // ↗
+        volatile:      '~',
+        recovering:    '&#x2193;',   // ↓
+      };
+
       var rows = filtered.map(function(r) {
         var aq      = _attentionMap[r.id];
         var opState = operationalState(r, aq);
 
-        var aqLevel = aq ? aq.attentionLevel : 'healthy';
-        var aqScore = aq ? aq.attentionScore : 0;
-        var aqCls   = 'aq-badge severity-' + aqLevel;
-        var aqHtml  = '<span class="' + aqCls + '">'
+        var aqLevel  = aq ? aq.attentionLevel : 'unknown';
+        var aqScore  = aq ? aq.attentionScore : 0;
+        var aqTraj   = aq ? (aq.trajectory || null) : null;
+        var marker   = (aqTraj && TRAJ_MARKER[aqTraj])
+          ? ' <span class="aq-traj">' + TRAJ_MARKER[aqTraj] + '</span>'
+          : '';
+        var aqCls    = 'aq-badge severity-' + aqLevel;
+        var aqHtml   = '<span class="' + aqCls + '">'
           + esc(aqLevel.toUpperCase()) + ' &middot; ' + esc(String(aqScore))
+          + marker
           + '</span>';
 
         return '<tr data-id="' + esc(String(r.id)) + '">'
@@ -2281,7 +2385,7 @@
           + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
           + '<td><span class="status-pill ' + opState.cls + '">' + esc(opState.text) + '</span></td>'
           + '<td>' + aqHtml + '</td>'
-          + '<td>' + reasonTagsHtml(aq ? aq.reasons : []) + '</td>'
+          + '<td>' + buildTableReasonTags(aq) + '</td>'
           + '</tr>';
       }).join('');
 
@@ -2468,53 +2572,71 @@
     });
 
     // ── History ──────────────────────────────────────────────────────────────
+    // Derived from persisted risk_score snapshots — no demo or seed data.
 
     function loadHistory() {
-      fetch('/history')
-        .then(function(r) { return r.json(); })
+      fetch('/api/portfolio/history', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) return null;
+          return r.json();
+        })
         .then(function(data) {
-          var entries = Array.isArray(data) ? data : [];
-          var points = entries
-            .filter(function(e) { return e.riskScore != null && e.lastUpdated; })
-            .map(function(e) { return { score: e.riskScore, at: e.lastUpdated }; });
-
-          if (!_repos.length) {
-            renderChart(points);
-            renderSparkline(points.slice(-10));
-          }
-
-          var listEl = document.getElementById('history-list');
-
-          // When authenticated repos are present the chart above already shows
-          // DB-backed score history. Label this legacy log so it is not confused
-          // with the live repository data.
-          var sourceNote = _repos.length
-            ? '<p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;font-style:italic;">'
-              + '&#9432;&#xFE0E; Portfolio demo history (seed data) — not derived from your synced repositories.'
-              + '</p>'
-            : '';
-
-          if (!entries.length) {
-            listEl.innerHTML = sourceNote + '<p style="color:var(--text-muted);font-size:0.85rem;">No snapshots yet.</p>';
+          if (!data) {
+            renderChart([]);
+            renderSparkline([]);
             return;
           }
-          listEl.innerHTML = sourceNote + entries.slice().reverse().slice(0, 20).map(function(e) {
-            var cls = e.alertState === 'Critical' ? 'severity-critical'
-                    : e.alertState === 'Monitor'  ? 'severity-medium'
-                    : 'severity-healthy';
+
+          var rows = Array.isArray(data) ? data : [];
+
+          // Chart: oldest-first (left → right). API returns newest-first, so reverse.
+          var chartPoints = rows.slice().reverse().map(function(row) {
+            return { score: row.portfolioScore, at: row.snapshotAt };
+          });
+          renderChart(chartPoints);
+          renderSparkline(chartPoints.slice(-10));
+
+          var listEl = document.getElementById('history-list');
+          if (!rows.length) {
+            listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">Not enough synced operational history yet.</p>';
+            return;
+          }
+
+          var LEVEL_CLS = {
+            critical: 'severity-critical',
+            'at-risk': 'severity-high',
+            monitor:   'severity-medium',
+            healthy:   'severity-healthy',
+          };
+          var LEVEL_LABEL = {
+            critical: 'Critical',
+            'at-risk': 'At Risk',
+            monitor:   'Monitor',
+            healthy:   'Healthy',
+          };
+
+          listEl.innerHTML = rows.slice(0, 20).map(function(row) {
+            var lvl   = row.portfolioLevel || 'healthy';
+            var cls   = LEVEL_CLS[lvl]   || 'severity-healthy';
+            var label = LEVEL_LABEL[lvl]  || 'Healthy';
+            var dt    = row.snapshotAt ? new Date(row.snapshotAt).toLocaleString() : '—';
+            var nRepos = row.repoCount != null ? row.repoCount : '—';
             return '<div style="display:flex;justify-content:space-between;align-items:center;'
               + 'padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">'
-              + '<span style="color:var(--text-secondary);">'
-              +   esc(new Date(e.lastUpdated).toLocaleString()) + '</span>'
-              + '<span class="card-badge ' + cls + '">' + esc(e.alertState || 'Normal') + '</span>'
+              + '<span style="color:var(--text-secondary);">' + esc(dt) + '</span>'
+              + '<span class="card-badge ' + cls + '">' + esc(label) + '</span>'
               + '<span style="font-family:var(--font-mono);color:var(--text-primary);">'
-              +   'Score: ' + esc(String(e.riskScore)) + '</span>'
+              +   'Avg: ' + esc(String(row.portfolioScore)) + ' &middot; ' + esc(String(nRepos)) + ' repos'
+              + '</span>'
               + '</div>';
           }).join('');
         })
-        .catch(function(e) {
-          showError('history-list', e.message);
-          if (!_repos.length) renderChart([]);
+        .catch(function(err) {
+          console.warn('[PortfolioHistory] failed to load:', err);
+          renderChart([]);
+          var listEl = document.getElementById('history-list');
+          if (listEl) listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">Not enough synced operational history yet.</p>';
         });
     }
 

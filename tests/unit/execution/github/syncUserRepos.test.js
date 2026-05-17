@@ -162,6 +162,84 @@ describe('syncUserRepos — happy path', () => {
   });
 });
 
+// ── scoreRepo — unified operational signal passthrough ────────────────────────
+
+describe('syncUserRepos — scoreRepo receives operational signals (unified model)', () => {
+  it('passes ciStatus from fetchCiStatus to scoreRepo', async () => {
+    fetchCiStatus.mockResolvedValue('failing');
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ ciStatus: 'failing' })
+    );
+  });
+
+  it('passes ciStatus: "passing" when fetchCiStatus returns passing', async () => {
+    fetchCiStatus.mockResolvedValue('passing');
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ ciStatus: 'passing' })
+    );
+  });
+
+  it('passes ciStatus: "unknown" to scoreRepo when fetchCiStatus throws', async () => {
+    fetchCiStatus.mockRejectedValue(new Error('network'));
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ ciStatus: 'unknown' })
+    );
+  });
+
+  it('passes releaseStatus from fetchReleaseInfo to scoreRepo', async () => {
+    fetchReleaseInfo.mockResolvedValue({ latestReleaseName: null, latestReleasePublishedAt: null, releaseStatus: 'stale' });
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ releaseStatus: 'stale' })
+    );
+  });
+
+  it('passes releaseStatus: "unknown" to scoreRepo when fetchReleaseInfo throws', async () => {
+    fetchReleaseInfo.mockRejectedValue(new Error('API down'));
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ releaseStatus: 'unknown' })
+    );
+  });
+
+  it('passes contributorStatus from fetchContributorInfo to scoreRepo', async () => {
+    fetchContributorInfo.mockResolvedValue({ activeContributorCount: 0, topContributorPercentage: 0, contributorStatus: 'abandoned' });
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ contributorStatus: 'abandoned' })
+    );
+  });
+
+  it('passes contributorStatus: "unknown" to scoreRepo when fetchContributorInfo throws', async () => {
+    fetchContributorInfo.mockRejectedValue(new Error('API down'));
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ contributorStatus: 'unknown' })
+    );
+  });
+
+  it('passes all three operational signals together in a single scoreRepo call', async () => {
+    fetchCiStatus.mockResolvedValue('failing');
+    fetchReleaseInfo.mockResolvedValue({ latestReleaseName: null, latestReleasePublishedAt: null, releaseStatus: 'none' });
+    fetchContributorInfo.mockResolvedValue({ activeContributorCount: 0, topContributorPercentage: 0, contributorStatus: 'abandoned' });
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(scoreRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ ciStatus: 'failing', releaseStatus: 'none', contributorStatus: 'abandoned' })
+    );
+  });
+});
+
 // ── CI status fallback ─────────────────────────────────────────────────────────
 
 describe('syncUserRepos — CI status fallback', () => {

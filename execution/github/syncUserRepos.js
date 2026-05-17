@@ -103,12 +103,15 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
         : null;
 
       const { score, label, trend, factors } = scoreRepo({
-        commits7d:     metrics.commits7d,
-        openPrs:       metrics.openPrs,
-        stalePrs:      metrics.stalePrs,
-        openIssues:    metrics.openIssues,
+        commits7d:         metrics.commits7d,
+        openPrs:           metrics.openPrs,
+        stalePrs:          metrics.stalePrs,
+        openIssues:        metrics.openIssues,
         daysSincePush,
         previousScore,
+        ciStatus:          typeof ciStatus === 'string' ? ciStatus : 'unknown',
+        releaseStatus:     releaseInfo.releaseStatus    || 'unknown',
+        contributorStatus: contributorInfo.contributorStatus || 'unknown',
       });
 
       // Insert risk score snapshot

@@ -337,6 +337,9 @@ router.get('/:id/forecast', async (req, res, next) => {
 
 // GET /api/repos/attention
 // Returns a priority-sorted attention queue for the logged-in user's repos.
+// Forecast fields (trajectory, forecastLevel, escalationLevel, persistentRisk) are
+// derived from the latest risk_score label/trend and fed into getAttentionQueue
+// so that forecast-aware weights can amplify repos with worsening trajectories.
 router.get('/attention', async (req, res, next) => {
   try {
     const result = await req.app.locals.db.query(
@@ -345,12 +348,22 @@ router.get('/attention', async (req, res, next) => {
          r.github_full_name AS "fullName",
          r.last_synced_at   AS "lastSyncedAt",
          rs.score,
+         rs.label,
+         rs.trend,
+         rs.factors,
          rm.ci_status          AS "ciStatus",
          rm.release_status     AS "releaseStatus",
-         rm.contributor_status AS "contributorStatus"
+         rm.contributor_status AS "contributorStatus",
+         ARRAY(
+           SELECT label
+           FROM   risk_scores rsi
+           WHERE  rsi.repo_id = r.id
+           ORDER  BY rsi.snapshot_at DESC
+           LIMIT  3
+         ) AS "recentLabels"
        FROM repositories r
        LEFT JOIN LATERAL (
-         SELECT score
+         SELECT score, label, trend, factors
          FROM risk_scores
          WHERE repo_id = r.id
          ORDER BY snapshot_at DESC
@@ -367,7 +380,56 @@ router.get('/attention', async (req, res, next) => {
       [req.user.userId]
     );
 
-    const attention = getAttentionQueue(result.rows);
+    const FORECAST_MAP = {
+      escalating: 'critical', deteriorating: 'high',
+      recovering: 'medium',   stable: 'low', unknown: 'unknown',
+    };
+
+    const repos = result.rows.map(function(r) {
+      var label        = r.label || '';
+      var trend        = r.trend || '';
+      var recentLabels = Array.isArray(r.recentLabels) ? r.recentLabels : [];
+
+      var trajectory;
+      if (!r.label || !r.trend) {
+        trajectory = 'unknown';
+      } else if (label === 'critical' && trend === 'worsening') {
+        trajectory = 'escalating';
+      } else if (label === 'at-risk' && trend === 'worsening') {
+        trajectory = 'deteriorating';
+      } else if (trend === 'improving') {
+        trajectory = 'recovering';
+      } else {
+        trajectory = 'stable';
+      }
+
+      var escalationLevel = (label === 'critical' && trend === 'worsening') ? 'critical'
+                          : trend === 'worsening'                           ? 'high'
+                          : 'none';
+
+      var persistentRisk = recentLabels.length >= 3 &&
+        recentLabels.slice(0, 3).every(function(l) {
+          return l === 'at-risk' || l === 'critical';
+        });
+
+      return {
+        id:               r.id,
+        fullName:         r.fullName,
+        lastSyncedAt:     r.lastSyncedAt,
+        score:            r.score,
+        ciStatus:         r.ciStatus,
+        releaseStatus:    r.releaseStatus,
+        contributorStatus:r.contributorStatus,
+        trajectory:       trajectory,
+        forecastLevel:    FORECAST_MAP[trajectory] || 'unknown',
+        escalationLevel:  escalationLevel,
+        volatilityLevel:  'low',
+        persistentRisk:   persistentRisk,
+        noRecentCommits:  Array.isArray(r.factors) && r.factors.includes('No commits in the last 7 days'),
+      };
+    });
+
+    const attention = getAttentionQueue(repos);
     res.json({ attention });
   } catch (err) {
     next(err);
