@@ -511,4 +511,16 @@ describe('portfolioRoutes GET /history', () => {
     const sql = db.query.mock.calls[0][0];
     expect(sql).toMatch(/COUNT\s*\(\s*DISTINCT/i);
   });
+
+  it('SQL reads from risk_scores and repositories — no seed/demo data source', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getHistoryHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    // Confirms the route aggregates persisted risk_score rows from the real DB,
+    // not from static JSON files or the legacy /history seed endpoint.
+    expect(sql).toContain('risk_scores');
+    expect(sql).toContain('repositories');
+  });
 });
