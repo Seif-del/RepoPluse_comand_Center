@@ -615,7 +615,10 @@
     .reason-tag.severity-critical { background: var(--sev-critical-bg); border: 1px solid var(--sev-critical-border); color: var(--sev-critical-text); }
     .reason-tag.severity-high     { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
     .reason-tag.severity-medium   { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .reason-tag.severity-low      { background: var(--sev-low-bg);      border: 1px solid var(--sev-low-border);      color: var(--sev-low-text);      }
+    .reason-tag.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
     .reason-tag.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+    .reason-tag.severity-neutral  { background: var(--sev-neutral-bg);  border: 1px solid var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
 
     .reason-tag-more {
       font-size: 0.63rem;
@@ -1348,6 +1351,7 @@
     <div class="section">
       <div class="section-header">
         <span class="section-title">Executive Summary</span>
+        <span id="exec-summary-conf" style="margin-left:8px;"></span>
         <div class="section-divider"></div>
       </div>
       <div id="executive-summary" style="margin-bottom:8px;"></div>
@@ -1474,10 +1478,10 @@
       ['No releases found',            'No Releases',         'severity-medium'],
       ['Elevated risk score',          'Elevated Risk',       'severity-medium'],
       ['Monitored risk score',         'Monitor Risk',        'severity-low'],
-      ['CI status unknown',            'CI Unknown',          'severity-unknown'],
-      ['Release status unknown',       'Release Unknown',     'severity-unknown'],
-      ['Contributor status unknown',   'Contributor Unknown', 'severity-unknown'],
-      ['No metrics available yet',     'No Metrics',          'severity-unknown'],
+      ['CI status unknown',            'CI Unknown',          'severity-neutral'],
+      ['Release status unknown',       'Release Unknown',     'severity-neutral'],
+      ['Contributor status unknown',   'Contributor Unknown', 'severity-neutral'],
+      ['No metrics available yet',     'No Metrics',          'severity-neutral'],
     ];
 
     function reasonTagsHtml(reasons) {
@@ -1492,7 +1496,7 @@
           }
         }
         var truncated = reason.length > 14 ? reason.slice(0, 12) + '…' : reason;
-        return { label: truncated, cls: 'severity-unknown', full: reason };
+        return { label: truncated, cls: 'severity-neutral', full: reason };
       });
 
       var visible  = tags.slice(0, 2);
@@ -2186,7 +2190,6 @@
     function buildExecutiveSummaryHtml(data) {
       if (!data || data.severity === 'unknown') {
         return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + '<span class="confidence-badge conf-low" style="margin-right:8px;">LOW CONFIDENCE</span>'
           + esc(data && data.summary ? data.summary : 'Insufficient operational history.')
           + '</p>';
       }
@@ -2241,14 +2244,6 @@
         html += '</div>';
       }
 
-      // Confidence note at the footer of the briefing
-      var execConfLvl  = data.confidence || 'low';
-      var execConfTxt  = execConfLvl === 'high'   ? 'High-confidence portfolio assessment'
-                       : execConfLvl === 'medium' ? 'Medium-confidence portfolio assessment'
-                       : 'Low-confidence portfolio assessment';
-      html += '<div style="margin-top:10px;font-size:0.74rem;color:var(--text-muted);">'
-        + '<span class="confidence-badge conf-' + esc(execConfLvl) + '" style="margin-right:6px;">'
-        + esc(execConfLvl.toUpperCase()) + '</span>' + esc(execConfTxt) + '</div>';
 
       html += '</div>';
       return html;
@@ -2269,6 +2264,12 @@
         .then(function(d) {
           if (!d) return;
           container.innerHTML = buildExecutiveSummaryHtml(d);
+          var confEl = document.getElementById('exec-summary-conf');
+          if (confEl) {
+            var lvl = d.confidence || 'low';
+            confEl.innerHTML = '<span class="confidence-badge conf-' + esc(lvl) + '">'
+              + esc(lvl.toUpperCase()) + '</span>';
+          }
         })
         .catch(function(err) {
           console.warn('[ExecutiveSummary] failed to load or render:', err);
