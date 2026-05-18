@@ -722,6 +722,54 @@
     .timeline-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
     .timeline-badge.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
 
+    /* ── Operational changes feed ──────────────────────────────────────── */
+    .changes-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 0;
+    }
+
+    .change-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+    }
+
+    .change-badge {
+      flex-shrink: 0;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 4px;
+      margin-top: 1px;
+    }
+
+    .change-badge.severity-critical { background: var(--sev-critical-bg); border: 1px solid var(--sev-critical-border); color: var(--sev-critical-text); }
+    .change-badge.severity-high     { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
+    .change-badge.severity-medium   { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .change-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+
+    .change-summary {
+      flex: 1;
+      font-size: 0.80rem;
+      color: var(--text-primary);
+      line-height: 1.45;
+    }
+
+    .change-meta {
+      font-size: 0.70rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      margin-top: 1px;
+    }
+
     .timeline-content {
       flex: 1;
       min-width: 0;
@@ -1187,6 +1235,16 @@
 
     <!-- Portfolio forecast panel -->
     <div id="portfolio-forecast" style="margin-bottom:24px;"></div>
+
+    <!-- Operational changes panel -->
+    <div class="section" style="margin-bottom:24px;">
+      <div class="section-header">
+        <span class="section-title">Operational Changes</span>
+        <span id="changes-count" style="margin-left:8px;font-size:0.78rem;color:var(--text-muted);"></span>
+        <div class="section-divider"></div>
+      </div>
+      <div id="operational-changes"></div>
+    </div>
 
     <!-- Projects table -->
     <div class="section">
@@ -2098,6 +2156,63 @@
         });
     }
 
+    function _fmtDetectedAt(iso) {
+      if (!iso) return '';
+      try {
+        var d = new Date(iso);
+        return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      } catch (e) { return ''; }
+    }
+
+    var SEV_LABEL = { critical: 'CRITICAL', high: 'HIGH', medium: 'MEDIUM', healthy: 'RECOVERED' };
+
+    function buildOperationalChangesHtml(changes) {
+      if (!Array.isArray(changes) || !changes.length) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:8px 0;">'
+          + 'No significant operational changes detected.</p>';
+      }
+      var html = '<div class="changes-feed">';
+      for (var i = 0; i < changes.length; i++) {
+        var c   = changes[i];
+        var sev = c.severity || 'unknown';
+        var lbl = SEV_LABEL[sev] || sev.toUpperCase();
+        html += '<div class="change-item">';
+        html += '<span class="change-badge severity-' + esc(sev) + '">' + esc(lbl) + '</span>';
+        html += '<span class="change-summary">' + esc(c.summary || '') + '</span>';
+        if (c.detectedAt) {
+          html += '<span class="change-meta">' + esc(_fmtDetectedAt(c.detectedAt)) + '</span>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function loadOperationalChanges() {
+      var container = document.getElementById('operational-changes');
+      var countEl   = document.getElementById('changes-count');
+      if (!container) return;
+      fetch('/api/portfolio/changes', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) {
+            console.warn('[OperationalChanges] unexpected HTTP status:', r.status);
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          container.innerHTML = buildOperationalChangesHtml(d);
+          if (countEl) {
+            countEl.textContent = d.length ? '(' + d.length + ')' : '';
+          }
+        })
+        .catch(function(err) {
+          console.warn('[OperationalChanges] failed to load:', err);
+        });
+    }
+
     function loadPortfolioForecast() {
       var container = document.getElementById('portfolio-forecast');
       if (!container) return;
@@ -2669,6 +2784,7 @@
       loadHistory();
       loadExecutiveSummary();
       loadPortfolioForecast();
+      loadOperationalChanges();
     }
 
     refresh();

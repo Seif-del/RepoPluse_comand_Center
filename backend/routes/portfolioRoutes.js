@@ -5,7 +5,8 @@ const authenticate               = require('../middleware/authenticate');
 const { getPortfolioForecast }   = require('../../execution/risk/getPortfolioForecast');
 const { getAttentionQueue }      = require('../../execution/risk/getAttentionQueue');
 const { buildExecutiveSummary }  = require('../../execution/risk/buildExecutiveSummary');
-const { buildPortfolioHistory }  = require('../../execution/risk/getPortfolioHistory');
+const { buildPortfolioHistory }    = require('../../execution/risk/getPortfolioHistory');
+const { getOperationalChanges }    = require('../../execution/risk/getOperationalChanges');
 
 const router = express.Router();
 
@@ -221,6 +222,85 @@ router.get('/history', async (req, res, next) => {
     );
 
     res.json(buildPortfolioHistory(result.rows));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/changes
+// Detects meaningful operational changes by comparing each repo's current
+// snapshot against its most-recent prior snapshot. Returns a severity-sorted
+// feed of up to 50 change events, newest-first. Pure deterministic output —
+// all intelligence lives in getOperationalChanges, not in this handler.
+router.get('/changes', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id                            AS "repoId",
+         r.github_full_name              AS "repoName",
+         rs_cur.score                    AS "currentScore",
+         rs_cur.label                    AS "currentLabel",
+         rs_cur.trend                    AS "currentTrend",
+         rs_cur.snapshot_at              AS "snapshotAt",
+         rs_prev.score                   AS "previousScore",
+         rs_prev.label                   AS "previousLabel",
+         rs_prev.trend                   AS "previousTrend",
+         rm_cur.ci_status                AS "currentCiStatus",
+         rm_cur.contributor_status       AS "currentContributorStatus",
+         rm_prev.ci_status               AS "previousCiStatus",
+         rm_prev.contributor_status      AS "previousContributorStatus"
+       FROM repositories r
+       LEFT JOIN LATERAL (
+         SELECT score, label, trend, snapshot_at
+         FROM   risk_scores
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rs_cur ON true
+       LEFT JOIN LATERAL (
+         SELECT score, label, trend
+         FROM   risk_scores
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1 OFFSET 1
+       ) rs_prev ON true
+       LEFT JOIN LATERAL (
+         SELECT ci_status, contributor_status
+         FROM   repo_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rm_cur ON true
+       LEFT JOIN LATERAL (
+         SELECT ci_status, contributor_status
+         FROM   repo_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1 OFFSET 1
+       ) rm_prev ON true
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const repoPairs = result.rows.map(function(r) {
+      return {
+        repoId:                    r.repoId,
+        repoName:                  r.repoName || String(r.repoId),
+        currentScore:              r.currentScore  != null ? Number(r.currentScore)  : null,
+        previousScore:             r.previousScore != null ? Number(r.previousScore) : null,
+        currentLabel:              r.currentLabel              || null,
+        previousLabel:             r.previousLabel             || null,
+        currentTrend:              r.currentTrend              || null,
+        previousTrend:             r.previousTrend             || null,
+        currentCiStatus:           r.currentCiStatus           || null,
+        previousCiStatus:          r.previousCiStatus          || null,
+        currentContributorStatus:  r.currentContributorStatus  || null,
+        previousContributorStatus: r.previousContributorStatus || null,
+        snapshotAt:                r.snapshotAt || null,
+      };
+    });
+
+    res.json(getOperationalChanges(repoPairs));
   } catch (err) {
     next(err);
   }

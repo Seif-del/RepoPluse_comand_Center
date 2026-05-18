@@ -6,15 +6,17 @@ jest.mock('../../../../execution/risk/getPortfolioForecast');
 jest.mock('../../../../execution/risk/getAttentionQueue');
 jest.mock('../../../../execution/risk/buildExecutiveSummary');
 jest.mock('../../../../execution/risk/getPortfolioHistory');
+jest.mock('../../../../execution/risk/getOperationalChanges');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
-const router                    = require('../../../../backend/routes/portfolioRoutes');
-const { getPortfolioForecast }  = require('../../../../execution/risk/getPortfolioForecast');
-const { getAttentionQueue }     = require('../../../../execution/risk/getAttentionQueue');
-const { buildExecutiveSummary } = require('../../../../execution/risk/buildExecutiveSummary');
-const { buildPortfolioHistory } = require('../../../../execution/risk/getPortfolioHistory');
+const router                      = require('../../../../backend/routes/portfolioRoutes');
+const { getPortfolioForecast }    = require('../../../../execution/risk/getPortfolioForecast');
+const { getAttentionQueue }       = require('../../../../execution/risk/getAttentionQueue');
+const { buildExecutiveSummary }   = require('../../../../execution/risk/buildExecutiveSummary');
+const { buildPortfolioHistory }   = require('../../../../execution/risk/getPortfolioHistory');
+const { getOperationalChanges }   = require('../../../../execution/risk/getOperationalChanges');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -35,6 +37,7 @@ function extractHandler(r, method, path) {
 const getForecastHandler       = extractHandler(router, 'GET', '/forecast');
 const getExecSummaryHandler    = extractHandler(router, 'GET', '/executive-summary');
 const getHistoryHandler        = extractHandler(router, 'GET', '/history');
+const getChangesHandler        = extractHandler(router, 'GET', '/changes');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -522,5 +525,168 @@ describe('portfolioRoutes GET /history', () => {
     // not from static JSON files or the legacy /history seed endpoint.
     expect(sql).toContain('risk_scores');
     expect(sql).toContain('repositories');
+  });
+});
+
+// ── GET /changes ──────────────────────────────────────────────────────────────
+
+const MOCK_CHANGES = [
+  {
+    type: 'label_degraded', severity: 'critical',
+    repoId: 1, repoName: 'org/api',
+    summary: 'org/api degraded from Healthy to Critical',
+    previousState: 'healthy', currentState: 'critical',
+    detectedAt: '2025-06-01T12:00:00.000Z',
+  },
+];
+
+describe('portfolioRoutes GET /changes', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    getOperationalChanges.mockReturnValue(MOCK_CHANGES);
+  });
+
+  it('returns the array produced by getOperationalChanges', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_CHANGES);
+  });
+
+  it('returns [] when getOperationalChanges returns empty array', async () => {
+    getOperationalChanges.mockReturnValue([]);
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith([]);
+  });
+
+  it('calls getOperationalChanges with a repoPairs array', async () => {
+    const rows = [
+      {
+        repoId: 1, repoName: 'org/api',
+        currentScore: 80,   previousScore: 30,
+        currentLabel: 'critical', previousLabel: 'healthy',
+        currentTrend: 'worsening', previousTrend: 'stable',
+        currentCiStatus: 'failing', previousCiStatus: 'passing',
+        currentContributorStatus: 'healthy', previousContributorStatus: 'healthy',
+        snapshotAt: '2025-06-01T12:00:00.000Z',
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    expect(getOperationalChanges).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          repoId:        1,
+          repoName:      'org/api',
+          currentLabel:  'critical',
+          previousLabel: 'healthy',
+        }),
+      ])
+    );
+  });
+
+  it('calls next on db error', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('SQL targets the authenticated user', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL filters to active repos only', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL projects current and previous risk_score columns', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('rs_cur');
+    expect(sql).toContain('rs_prev');
+    expect(sql).toContain('risk_scores');
+  });
+
+  it('SQL projects current and previous repo_metric columns', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('rm_cur');
+    expect(sql).toContain('rm_prev');
+    expect(sql).toContain('repo_metrics');
+  });
+
+  it('SQL uses OFFSET 1 to select the previous snapshot', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/OFFSET\s+1/i);
+  });
+
+  it('maps DB row nulls to null in repoPairs (not strings)', async () => {
+    const rows = [
+      {
+        repoId: 5, repoName: 'org/svc',
+        currentScore: null, previousScore: null,
+        currentLabel: null, previousLabel: null,
+        currentTrend: null, previousTrend: null,
+        currentCiStatus: null, previousCiStatus: null,
+        currentContributorStatus: null, previousContributorStatus: null,
+        snapshotAt: null,
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const pair = getOperationalChanges.mock.calls[0][0][0];
+    expect(pair.currentScore).toBeNull();
+    expect(pair.currentLabel).toBeNull();
+    expect(pair.currentCiStatus).toBeNull();
+  });
+
+  it('coerces numeric score strings to numbers in repoPairs', async () => {
+    const rows = [
+      {
+        repoId: 3, repoName: 'org/db',
+        currentScore: '75', previousScore: '40',
+        currentLabel: 'critical', previousLabel: 'at-risk',
+        currentTrend: 'worsening', previousTrend: 'stable',
+        currentCiStatus: 'passing', previousCiStatus: 'passing',
+        currentContributorStatus: 'healthy', previousContributorStatus: 'healthy',
+        snapshotAt: '2025-06-01T12:00:00.000Z',
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getChangesHandler(req, res, next);
+    const pair = getOperationalChanges.mock.calls[0][0][0];
+    expect(typeof pair.currentScore).toBe('number');
+    expect(pair.currentScore).toBe(75);
+    expect(typeof pair.previousScore).toBe('number');
+    expect(pair.previousScore).toBe(40);
   });
 });
