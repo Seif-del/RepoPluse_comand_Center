@@ -442,6 +442,22 @@
     tbody tr:hover { background: var(--surface-2); }
     tbody tr.row-selected { background: rgba(59,130,246,.08); }
 
+    /* ── Row heat indicators (inset left strip, no layout change) ─────────── */
+    tbody tr.row-heat-critical { box-shadow: inset 3px 0 0 rgba(220,38,38,.72); }
+    tbody tr.row-heat-high     { box-shadow: inset 3px 0 0 rgba(234,88,12,.62); }
+    tbody tr.row-heat-medium   { box-shadow: inset 3px 0 0 rgba(217,119,6,.52); }
+    tbody tr.row-heat-low      { box-shadow: inset 3px 0 0 rgba(59,130,246,.28); }
+    tbody tr.row-heat-healthy  { box-shadow: inset 3px 0 0 rgba(22,163,74,.28); }
+    tbody tr.row-heat-unknown  { box-shadow: inset 3px 0 0 rgba(160,160,160,.25); }
+
+    /* Selected row — keep strip visible over blue wash */
+    tbody tr.row-selected.row-heat-critical { box-shadow: inset 3px 0 0 rgba(220,38,38,.88); }
+    tbody tr.row-selected.row-heat-high     { box-shadow: inset 3px 0 0 rgba(234,88,12,.78); }
+    tbody tr.row-selected.row-heat-medium   { box-shadow: inset 3px 0 0 rgba(217,119,6,.68); }
+    tbody tr.row-selected.row-heat-low      { box-shadow: inset 3px 0 0 rgba(59,130,246,.50); }
+    tbody tr.row-selected.row-heat-healthy  { box-shadow: inset 3px 0 0 rgba(22,163,74,.50); }
+    tbody tr.row-selected.row-heat-unknown  { box-shadow: inset 3px 0 0 rgba(160,160,160,.40); }
+
     tbody td {
       padding: 5px 8px;
       color: var(--text-primary);
@@ -2732,6 +2748,23 @@
         recovering:    '&#x2193;',   // ↓
       };
 
+      var HEAT_CLS = {
+        critical: 'row-heat-critical',
+        high:     'row-heat-high',
+        medium:   'row-heat-medium',
+        low:      'row-heat-low',
+        healthy:  'row-heat-healthy',
+        unknown:  'row-heat-unknown',
+      };
+
+      var OP_HEAT_CLS = {
+        'severity-critical': 'row-heat-critical',
+        'severity-high':     'row-heat-high',
+        'severity-medium':   'row-heat-medium',
+        'severity-low':      'row-heat-low',
+        'severity-healthy':  'row-heat-healthy',
+      };
+
       var rows = filtered.map(function(r) {
         var aq      = _attentionMap[r.id];
         var opState = operationalState(r, aq);
@@ -2748,7 +2781,9 @@
           + marker
           + '</span>';
 
-        return '<tr data-id="' + esc(String(r.id)) + '">'
+        var heatCls = HEAT_CLS[aqLevel] || OP_HEAT_CLS[opState.cls] || 'row-heat-unknown';
+
+        return '<tr data-id="' + esc(String(r.id)) + '" class="' + heatCls + '">'
           + '<td><span class="tbl-id">#' + esc(String(r.id)) + '</span></td>'
           + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
           + '<td><span class="status-pill ' + opState.cls + '">' + esc(opState.text) + '</span></td>'
