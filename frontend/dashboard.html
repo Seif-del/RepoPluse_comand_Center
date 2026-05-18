@@ -1292,21 +1292,6 @@
       </div>
     </div>
 
-    <!-- Executive Summary briefing -->
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Executive Summary</span>
-        <div class="section-divider"></div>
-      </div>
-      <div id="executive-summary" style="margin-bottom:8px;"></div>
-    </div>
-
-    <!-- Portfolio narrative banner -->
-    <div id="portfolio-narrative" style="margin-bottom:16px;"></div>
-
-    <!-- Portfolio forecast panel -->
-    <div id="portfolio-forecast" style="margin-bottom:24px;"></div>
-
     <!-- Operational changes panel -->
     <div class="section" style="margin-bottom:24px;">
       <div class="section-header">
@@ -1315,6 +1300,15 @@
         <div class="section-divider"></div>
       </div>
       <div id="operational-changes"></div>
+    </div>
+
+    <!-- Executive Summary briefing -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Executive Summary</span>
+        <div class="section-divider"></div>
+      </div>
+      <div id="executive-summary" style="margin-bottom:8px;"></div>
     </div>
 
     <!-- Projects table -->
@@ -2821,12 +2815,10 @@
             document.getElementById('projects-container').innerHTML =
               '<p style="color:var(--text-muted);font-size:0.85rem;">No repositories synced yet — click Sync Now.</p>';
             document.getElementById('repo-detail').hidden = true;
-            renderPortfolioNarrative();
             renderPortfolioTrend();
             return;
           }
           applyFilter();
-          renderPortfolioNarrative();
           renderPortfolioTrend();
 
           // Build chart points from risk scores (group by date, take avg)
@@ -2946,7 +2938,6 @@
             _attentionMap[it.repoId] = it;
           });
           if (_repos.length) applyFilter();
-          renderPortfolioNarrative();
         })
         .catch(function() {});
     }
@@ -2959,7 +2950,6 @@
       loadAttentionQueue();
       loadHistory();
       loadExecutiveSummary();
-      loadPortfolioForecast();
       loadOperationalChanges();
     }
 
