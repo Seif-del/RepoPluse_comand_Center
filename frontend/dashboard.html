@@ -1250,6 +1250,45 @@
       font-size: 0.65rem;
       opacity: 0.78;
     }
+
+    /* ── Repo detail tabs ────────────────────────────────────────────────── */
+    .repo-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+
+    .repo-tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 6px 14px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      cursor: pointer;
+      margin-bottom: -1px;
+      transition: color 0.12s, border-color 0.12s;
+      outline: none;
+    }
+
+    .repo-tab-btn:hover { color: var(--text-secondary); }
+
+    .repo-tab-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .repo-tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .repo-tab-panel { display: none; }
+    .repo-tab-panel.active { display: block; }
   </style>
 </head>
 <body>
@@ -1804,6 +1843,7 @@
     var _selectedId = null;
     var _activeFilter = 'All';
     var _attentionMap = {};
+    var _activeRepoTab = 'overview';
 
     // ── Operational assessment ───────────────────────────────────────────────
 
@@ -2523,9 +2563,22 @@
         });
     }
 
+    function _switchRepoTab(tab) {
+      _activeRepoTab = tab;
+      var detail = document.getElementById('repo-detail');
+      if (!detail) return;
+      Array.prototype.forEach.call(detail.querySelectorAll('.repo-tab-btn'), function(btn) {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+      });
+      Array.prototype.forEach.call(detail.querySelectorAll('.repo-tab-panel'), function(panel) {
+        panel.classList.toggle('active', panel.dataset.panel === tab);
+      });
+    }
+
     function selectRepo(repo) {
       if (!repo) return;
       _selectedId = repo.id;
+      _activeRepoTab = 'overview';
 
       var tbody = document.querySelector('#projects-container tbody');
       if (tbody) {
@@ -2579,49 +2632,75 @@
                       : contrStatus === 'abandoned'       ? 'severity-critical'
                       : 'severity-unknown';
 
-      var detail = document.getElementById('repo-detail');
-      detail.hidden = false;
-      detail.innerHTML =
-        '<div class="repo-detail-label">Selected Repository</div>'
-        + '<div class="card-grid">'
+      var trendCardHtml = (function() {
+        var ti      = repo.trendIndicator || {};
+        var tiDir   = ti.direction || 'unknown';
+        var tiDelta = ti.delta != null ? (ti.delta > 0 ? '+' + ti.delta : String(ti.delta)) : '';
+        var tiArrow = tiDir === 'worsening' ? '↑' : tiDir === 'improving' ? '↓' : tiDir === 'stable' ? '→' : '?';
+        var tiVal   = tiDir === 'unknown'
+                    ? 'Insufficient history'
+                    : tiArrow + (tiDelta ? ' ' + tiDelta : '') + ' · ' + (ti.label || '—');
+        var tiCls   = tiDir === 'worsening' ? 'severity-high'
+                    : tiDir === 'improving' ? 'severity-healthy'
+                    : tiDir === 'stable'    ? 'severity-neutral'
+                    : 'severity-unknown';
+        return card('Trend', tiVal, tiCls);
+      })();
+
+      var overviewCards =
+        '<div class="card-grid">'
         + '<div class="card" style="grid-column:span 2"><div class="card-label">Name</div>'
         +   '<div class="card-value" style="font-size:0.9rem;word-break:break-all;">' + esc(repo.fullName) + '</div></div>'
         + card('Risk Score',         repo.score != null ? repo.score : '—', '')
         + card('Label',              opState.text,                          opState.cls)
-        + (function() {
-            var ti      = repo.trendIndicator || {};
-            var tiDir   = ti.direction || 'unknown';
-            var tiDelta = ti.delta != null ? (ti.delta > 0 ? '+' + ti.delta : String(ti.delta)) : '';
-            var tiArrow = tiDir === 'worsening' ? '↑' : tiDir === 'improving' ? '↓' : tiDir === 'stable' ? '→' : '?';
-            var tiVal   = tiDir === 'unknown'
-                        ? 'Insufficient history'
-                        : tiArrow + (tiDelta ? ' ' + tiDelta : '') + ' · ' + (ti.label || '—');
-            var tiCls   = tiDir === 'worsening' ? 'severity-high'
-                        : tiDir === 'improving' ? 'severity-healthy'
-                        : tiDir === 'stable'    ? 'severity-neutral'
-                        : 'severity-unknown';
-            return card('Trend', tiVal, tiCls);
-          })()
+        + trendCardHtml
         + card('CI Status',          ciLabel,                               ciCls)
         + card('Release Status',     relLabel,                              relCls)
         + card('Latest Release',     repo.latestReleaseName || '—',         '')
         + card('Contributor Health', contrLabel,                            contrCls)
         + card('Last Synced',        syncTime,                              '')
+        + '</div>';
+
+      var detail = document.getElementById('repo-detail');
+      detail.hidden = false;
+      detail.innerHTML =
+        '<div class="repo-detail-label">Selected Repository</div>'
+        + '<div class="repo-tabs" role="tablist">'
+        +   '<button class="repo-tab-btn active" data-tab="overview" role="tab">Overview</button>'
+        +   '<button class="repo-tab-btn" data-tab="risk" role="tab">Risk</button>'
+        +   '<button class="repo-tab-btn" data-tab="forecast" role="tab">Forecast</button>'
+        +   '<button class="repo-tab-btn" data-tab="timeline" role="tab">Timeline</button>'
         + '</div>'
-        + '<div class="repo-detail-label section-secondary" style="margin-top:12px;">Why this repo is risky</div>'
-        + buildExplanationHtml(exp)
-        + '<div class="repo-detail-label section-primary" style="margin-top:26px;">Operational Assessment</div>'
-        + buildAssessmentHtml(repo)
-        + '<div class="repo-detail-label section-primary" style="margin-top:22px;">Recommended Actions</div>'
-        + buildActionsHtml(repo)
-        + '<div class="repo-detail-label section-secondary" style="margin-top:20px;">Operational Timeline</div>'
-        + '<div id="repo-timeline-content"></div>'
-        + '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Stability</div>'
-        + '<div id="repo-stability-content"></div>'
-        + '<div class="repo-detail-label section-primary" style="margin-top:26px;">Operational Forecast</div>'
-        + '<div id="repo-forecast-content"></div>'
-        + '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Confidence</div>'
-        + '<div id="repo-confidence-content"></div>';
+        + '<div class="repo-tab-panel active" data-panel="overview">'
+        +   overviewCards
+        +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Operational Assessment</div>'
+        +   buildAssessmentHtml(repo)
+        +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Recommended Actions</div>'
+        +   buildActionsHtml(repo)
+        + '</div>'
+        + '<div class="repo-tab-panel" data-panel="risk">'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Why this repo is risky</div>'
+        +   buildExplanationHtml(exp)
+        + '</div>'
+        + '<div class="repo-tab-panel" data-panel="forecast">'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Operational Forecast</div>'
+        +   '<div id="repo-forecast-content"></div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Stability</div>'
+        +   '<div id="repo-stability-content"></div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Confidence</div>'
+        +   '<div id="repo-confidence-content"></div>'
+        + '</div>'
+        + '<div class="repo-tab-panel" data-panel="timeline">'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Operational Timeline</div>'
+        +   '<div id="repo-timeline-content"></div>'
+        + '</div>';
+
+      Array.prototype.forEach.call(detail.querySelectorAll('.repo-tab-btn'), function(btn) {
+        btn.addEventListener('click', function() { _switchRepoTab(btn.dataset.tab); });
+        btn.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _switchRepoTab(btn.dataset.tab); }
+        });
+      });
 
       loadRepoTimeline(repo.id);
       loadRepoEscalation(repo.id);
