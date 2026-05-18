@@ -1044,6 +1044,77 @@
       line-height: 1.6;
     }
 
+    /* ── Operational Confidence panel ───────────────────────────────────── */
+    .confidence-panel {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+      margin-top: 8px;
+    }
+
+    .confidence-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.67rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 9px;
+      border-radius: 99px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .confidence-badge.conf-high   { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .confidence-badge.conf-medium { background: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .confidence-badge.conf-low    { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+
+    .confidence-score {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
+    .confidence-summary {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .confidence-factors {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .confidence-factor {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      font-size: 0.79rem;
+      color: var(--text-secondary);
+      padding: 2px 0;
+    }
+
+    .confidence-factor::before {
+      content: '—';
+      color: var(--text-muted);
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      line-height: 1.6;
+    }
+
     /* ── Executive Summary briefing card ─────────────────────────────────── */
     .exec-brief {
       padding: 16px 20px;
@@ -2078,7 +2149,9 @@
     function buildExecutiveSummaryHtml(data) {
       if (!data || data.severity === 'unknown') {
         return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + esc(data && data.summary ? data.summary : 'Insufficient operational history.') + '</p>';
+          + '<span class="confidence-badge conf-low" style="margin-right:8px;">LOW CONFIDENCE</span>'
+          + esc(data && data.summary ? data.summary : 'Insufficient operational history.')
+          + '</p>';
       }
 
       var sev      = data.severity   || 'unknown';
@@ -2131,6 +2204,15 @@
         html += '</div>';
       }
 
+      // Confidence note at the footer of the briefing
+      var execConfLvl  = data.confidence || 'low';
+      var execConfTxt  = execConfLvl === 'high'   ? 'High-confidence portfolio assessment'
+                       : execConfLvl === 'medium' ? 'Medium-confidence portfolio assessment'
+                       : 'Low-confidence portfolio assessment';
+      html += '<div style="margin-top:10px;font-size:0.74rem;color:var(--text-muted);">'
+        + '<span class="confidence-badge conf-' + esc(execConfLvl) + '" style="margin-right:6px;">'
+        + esc(execConfLvl.toUpperCase()) + '</span>' + esc(execConfTxt) + '</div>';
+
       html += '</div>';
       return html;
     }
@@ -2166,6 +2248,32 @@
 
     var SEV_LABEL = { critical: 'CRITICAL', high: 'HIGH', medium: 'MEDIUM', healthy: 'RECOVERED' };
 
+    // Map change type to confidence level of the underlying evidence.
+    // Hard-state changes (CI, contributor) are high-confidence; score-derived
+    // and trajectory changes are medium-confidence; volatility is low-confidence.
+    var CHANGE_TYPE_CONFIDENCE = {
+      ci_failure_detected:     'high',
+      ci_recovered:            'high',
+      contributor_abandoned:   'high',
+      contributor_recovered:   'high',
+      bus_factor_detected:     'high',
+      label_degraded:          'medium',
+      label_recovered:         'medium',
+      score_spike:             'medium',
+      score_recovery:          'medium',
+      trajectory_escalating:   'medium',
+      trajectory_deteriorating:'medium',
+      trajectory_recovering:   'medium',
+      volatile_emerged:        'low',
+    };
+
+    function _changeConfidenceLabel(type, level) {
+      var prefix = level === 'high'   ? 'High-confidence'
+                 : level === 'medium' ? 'Medium-confidence'
+                 : 'Low-confidence';
+      return prefix;
+    }
+
     function buildOperationalChangesHtml(changes) {
       if (!Array.isArray(changes) || !changes.length) {
         return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:8px 0;">'
@@ -2173,12 +2281,17 @@
       }
       var html = '<div class="changes-feed">';
       for (var i = 0; i < changes.length; i++) {
-        var c   = changes[i];
-        var sev = c.severity || 'unknown';
-        var lbl = SEV_LABEL[sev] || sev.toUpperCase();
+        var c      = changes[i];
+        var sev    = c.severity || 'unknown';
+        var lbl    = SEV_LABEL[sev] || sev.toUpperCase();
+        var confLvl = CHANGE_TYPE_CONFIDENCE[c.type] || 'medium';
+        var confPfx = _changeConfidenceLabel(c.type, confLvl);
         html += '<div class="change-item">';
         html += '<span class="change-badge severity-' + esc(sev) + '">' + esc(lbl) + '</span>';
-        html += '<span class="change-summary">' + esc(c.summary || '') + '</span>';
+        html += '<span class="change-summary">'
+          + '<span class="confidence-badge conf-' + esc(confLvl) + '" style="margin-right:6px;font-size:0.62rem;">'
+          + esc(confPfx) + '</span>'
+          + esc(c.summary || '') + '</span>';
         if (c.detectedAt) {
           html += '<span class="change-meta">' + esc(_fmtDetectedAt(c.detectedAt)) + '</span>';
         }
@@ -2265,8 +2378,10 @@
       }
 
       if (data.confidence) {
-        html += '<div class="forecast-confidence">Confidence: '
-          + esc(data.confidence.charAt(0).toUpperCase() + data.confidence.slice(1)) + '</div>';
+        var fcBadgeCls = 'confidence-badge conf-' + esc(data.confidence);
+        var fcLabel    = 'Forecast confidence: ' + esc(data.confidence.charAt(0).toUpperCase() + data.confidence.slice(1));
+        html += '<div class="forecast-confidence"><span class="' + fcBadgeCls + '" style="margin-right:6px;">'
+          + esc(data.confidence.toUpperCase()) + '</span>' + fcLabel + '</div>';
       }
 
       if (data.signals && data.signals.length) {
@@ -2279,6 +2394,64 @@
 
       html += '</div>';
       return html;
+    }
+
+    // ── Operational Confidence panel ─────────────────────────────────────────
+
+    function buildConfidenceHtml(data) {
+      if (!data) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+          + 'Unable to load confidence data.</p>';
+      }
+
+      var lvl    = data.confidenceLevel  || 'low';
+      var score  = data.confidenceScore  != null ? data.confidenceScore  : 0;
+      var badgeTxt = lvl === 'high' ? 'HIGH CONFIDENCE'
+                   : lvl === 'medium' ? 'MEDIUM CONFIDENCE'
+                   : 'LOW CONFIDENCE';
+      var badgeCls = 'confidence-badge conf-' + esc(lvl);
+
+      var html = '<div class="confidence-panel">';
+      html += '<div class="confidence-header">';
+      html += '<span class="' + badgeCls + '">' + esc(badgeTxt) + '</span>';
+      html += '<span class="confidence-score">Score: ' + esc(String(score)) + ' / 100</span>';
+      html += '</div>';
+
+      if (data.summary) {
+        html += '<div class="confidence-summary">' + esc(data.summary) + '</div>';
+      }
+
+      if (data.factors && data.factors.length) {
+        html += '<ul class="confidence-factors">'
+          + data.factors.map(function(f) {
+              return '<li class="confidence-factor">' + esc(f) + '</li>';
+            }).join('')
+          + '</ul>';
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function loadRepoConfidence(repoId) {
+      var container = document.getElementById('repo-confidence-content');
+      if (!container) return;
+      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/confidence', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          container.innerHTML = buildConfidenceHtml(d);
+        })
+        .catch(function() {
+          if (container) {
+            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+              + 'Confidence data unavailable.</p>';
+          }
+        });
     }
 
     function loadRepoForecast(repoId) {
@@ -2449,11 +2622,14 @@
         + '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Stability</div>'
         + '<div id="repo-stability-content"></div>'
         + '<div class="repo-detail-label section-primary" style="margin-top:26px;">Operational Forecast</div>'
-        + '<div id="repo-forecast-content"></div>';
+        + '<div id="repo-forecast-content"></div>'
+        + '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Confidence</div>'
+        + '<div id="repo-confidence-content"></div>';
 
       loadRepoTimeline(repo.id);
       loadRepoEscalation(repo.id);
       loadRepoForecast(repo.id);
+      loadRepoConfidence(repo.id);
     }
 
     function renderReposTable(filtered) {
