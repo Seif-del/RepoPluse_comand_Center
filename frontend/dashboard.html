@@ -580,8 +580,48 @@
     .sparkline-svg {
       display: block;
       width: 100%;
-      height: 48px;
-      margin-bottom: 16px;
+      height: 56px;
+      margin-bottom: 10px;
+    }
+
+    /* ── Snapshot Log — operational history feed ─────────────────────────── */
+    .history-feed {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-entry {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+      line-height: 1.2;
+    }
+
+    .history-entry:last-child {
+      border-bottom: none;
+    }
+
+    .history-entry.is-repeat {
+      opacity: 0.40;
+    }
+
+    .history-ts {
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      font-size: 0.71rem;
+      min-width: 88px;
+      flex-shrink: 0;
+    }
+
+    .history-meta {
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      font-size: 0.71rem;
+      margin-left: auto;
+      padding-left: 8px;
     }
 
     /* ── Error ────────────────────────────────────────────────────────────── */
@@ -1470,7 +1510,11 @@
       </div>
       <div class="panel">
         <div class="panel-head">
-          <h2>Snapshot History</h2>
+          <h2>Operational History</h2>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+            <span id="history-context" style="font-size:0.70rem;color:var(--text-muted);"></span>
+            <span id="history-count" class="panel-count">— entries</span>
+          </div>
         </div>
         <div class="panel-body">
           <svg id="history-sparkline" class="sparkline-svg" aria-label="Risk score sparkline — last 10 snapshots"></svg>
@@ -1816,17 +1860,43 @@
       if (!svg) return;
       if (!data.length) { svg.innerHTML = ''; return; }
       var W = svg.clientWidth || 600;
-      var H = 48, PAD = 4;
-      var innerW = W - PAD * 2, innerH = H - PAD * 2;
-      function xPos(i) { return PAD + (data.length === 1 ? innerW / 2 : i * (innerW / (data.length - 1))); }
-      function yPos(v) { return PAD + innerH - (v / 100) * innerH; }
-      var pts = data.map(function(pt, i) { return xPos(i) + ',' + yPos(pt.score); }).join(' ');
+      var H = 56;
+      var PAD = { top: 3, right: 4, bottom: 3, left: 4 };
+      var innerW = W - PAD.left - PAD.right;
+      var innerH = H - PAD.top  - PAD.bottom;
+      function xPos(i) { return PAD.left + (data.length === 1 ? innerW / 2 : i * (innerW / (data.length - 1))); }
+      function yPos(v) { return PAD.top + innerH - (v / 100) * innerH; }
+      var p = [];
+      p.push('<defs>'
+        + '<linearGradient id="spkGrad" x1="0" y1="0" x2="0" y2="1">'
+        + '<stop offset="0%"   stop-color="#3b82f6" stop-opacity="0.18"/>'
+        + '<stop offset="100%" stop-color="#3b82f6" stop-opacity="0.01"/>'
+        + '</linearGradient></defs>');
+      // Subtle threshold bands matching the main chart
+      [
+        { from: 75, to: 100, fill: 'rgba(239,68,68,0.07)'  },
+        { from: 50, to: 75,  fill: 'rgba(249,115,22,0.06)' },
+        { from: 30, to: 50,  fill: 'rgba(245,158,11,0.04)' },
+        { from:  0, to: 30,  fill: 'rgba(34,197,94,0.04)'  },
+      ].forEach(function(b) {
+        var y1 = yPos(b.to), y2 = yPos(b.from);
+        p.push('<rect x="' + PAD.left + '" y="' + y1 + '" width="' + innerW + '" height="' + (y2 - y1) + '" fill="' + b.fill + '" stroke="none"/>');
+      });
+      // Area fill
+      var aD = 'M ' + xPos(0) + ' ' + yPos(data[0].score);
+      data.forEach(function(pt, i) { if (i > 0) aD += ' L ' + xPos(i) + ' ' + yPos(pt.score); });
+      aD += ' L ' + xPos(data.length - 1) + ' ' + (PAD.top + innerH) + ' L ' + xPos(0) + ' ' + (PAD.top + innerH) + ' Z';
+      p.push('<path fill="url(#spkGrad)" stroke="none" d="' + aD + '"/>');
+      // Line
+      var lD = 'M ' + xPos(0) + ' ' + yPos(data[0].score);
+      data.forEach(function(pt, i) { if (i > 0) lD += ' L ' + xPos(i) + ' ' + yPos(pt.score); });
+      p.push('<path fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="' + lD + '"/>');
+      // Terminal dot — color matches risk level
       var last = data[data.length - 1];
-      svg.innerHTML =
-        '<polyline points="' + pts + '" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
-        + '<circle cx="' + xPos(data.length - 1) + '" cy="' + yPos(last.score) + '" r="3.5"'
+      p.push('<circle cx="' + xPos(data.length - 1) + '" cy="' + yPos(last.score) + '" r="3"'
         + ' fill="' + (last.score >= 60 ? 'var(--red)' : 'var(--blue)') + '" stroke="var(--surface)" stroke-width="1.5">'
-        + '<title>Latest avg score: ' + last.score + '</title></circle>';
+        + '<title>Latest avg score: ' + last.score + '</title></circle>');
+      svg.innerHTML = p.join('');
     }
 
     // ── Sync ─────────────────────────────────────────────────────────────────
@@ -3084,10 +3154,23 @@
           renderChart(chartPoints);
           renderSparkline(chartPoints.slice(-10));
 
-          var listEl = document.getElementById('history-list');
+          var countEl = document.getElementById('history-count');
+          var ctxEl   = document.getElementById('history-context');
+          var listEl  = document.getElementById('history-list');
+
           if (!rows.length) {
-            listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">Not enough synced operational history yet.</p>';
+            if (countEl) countEl.textContent = '0 entries';
+            if (ctxEl)   ctxEl.textContent   = '';
+            listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.82rem;font-style:italic;padding:4px 0;">No operational history yet — run a sync to start recording.</p>';
             return;
+          }
+
+          if (countEl) countEl.textContent = Math.min(rows.length, 20) + (rows.length > 20 ? ' of ' + rows.length : '') + ' entr' + (rows.length !== 1 ? 'ies' : 'y');
+          if (ctxEl && rows.length >= 2) {
+            var scoreLatest = rows[0].portfolioScore;
+            var scoreOldest = rows[rows.length - 1].portfolioScore;
+            var scoreDelta  = scoreLatest - scoreOldest;
+            ctxEl.textContent = scoreDelta === 0 ? 'stable' : (scoreDelta > 0 ? '+' + scoreDelta : String(scoreDelta)) + ' vs oldest';
           }
 
           var LEVEL_CLS = {
@@ -3103,27 +3186,38 @@
             healthy:   'Healthy',
           };
 
-          listEl.innerHTML = rows.slice(0, 20).map(function(row) {
-            var lvl   = row.portfolioLevel || 'healthy';
-            var cls   = LEVEL_CLS[lvl]   || 'severity-healthy';
-            var label = LEVEL_LABEL[lvl]  || 'Healthy';
-            var dt    = row.snapshotAt ? new Date(row.snapshotAt).toLocaleString() : '—';
-            var nRepos = row.repoCount != null ? row.repoCount : '—';
-            return '<div style="display:flex;justify-content:space-between;align-items:center;'
-              + 'padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">'
-              + '<span style="color:var(--text-secondary);">' + esc(dt) + '</span>'
-              + '<span class="card-badge ' + cls + '">' + esc(label) + '</span>'
-              + '<span style="font-family:var(--font-mono);color:var(--text-primary);">'
-              +   'Avg: ' + esc(String(row.portfolioScore)) + ' &middot; ' + esc(String(nRepos)) + ' repos'
-              + '</span>'
-              + '</div>';
-          }).join('');
+          function fmtSnapshotTs(iso) {
+            if (!iso) return '—';
+            var d = new Date(iso);
+            return (d.getMonth() + 1) + '/' + d.getDate()
+              + ' ' + String(d.getHours()).padStart(2, '0')
+              + ':' + String(d.getMinutes()).padStart(2, '0');
+          }
+
+          var slice = rows.slice(0, 20);
+          listEl.innerHTML = '<div class="history-feed">'
+            + slice.map(function(row, i) {
+              var lvl    = row.portfolioLevel || 'healthy';
+              var cls    = LEVEL_CLS[lvl]    || 'severity-healthy';
+              var label  = LEVEL_LABEL[lvl]  || 'Healthy';
+              var dt     = fmtSnapshotTs(row.snapshotAt);
+              var nRepos = row.repoCount   != null ? row.repoCount        : '—';
+              var score  = row.portfolioScore != null ? row.portfolioScore : '—';
+              var prevLvl   = i > 0 ? (slice[i - 1].portfolioLevel || 'healthy') : null;
+              var isRepeat  = prevLvl !== null && lvl === prevLvl;
+              return '<div class="history-entry' + (isRepeat ? ' is-repeat' : '') + '">'
+                + '<span class="history-ts">' + esc(dt) + '</span>'
+                + '<span class="card-badge ' + cls + '" style="flex-shrink:0;">' + esc(label) + '</span>'
+                + '<span class="history-meta">' + esc(String(score)) + ' avg &middot; ' + esc(String(nRepos)) + ' repos</span>'
+                + '</div>';
+            }).join('')
+            + '</div>';
         })
         .catch(function(err) {
           console.warn('[PortfolioHistory] failed to load:', err);
           renderChart([]);
           var listEl = document.getElementById('history-list');
-          if (listEl) listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">Not enough synced operational history yet.</p>';
+          if (listEl) listEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.82rem;font-style:italic;padding:4px 0;">No operational history yet — run a sync to start recording.</p>';
         });
     }
 
