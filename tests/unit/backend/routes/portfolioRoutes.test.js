@@ -10,6 +10,7 @@ jest.mock('../../../../execution/risk/getOperationalChanges');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../execution/risk/detectOperationalAnomalies');
 jest.mock('../../../../execution/risk/clusterOperationalAnomalies');
+jest.mock('../../../../execution/risk/buildTelemetryCoverageSummary');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -20,7 +21,8 @@ const { buildExecutiveSummary }   = require('../../../../execution/risk/buildExe
 const { buildPortfolioHistory }   = require('../../../../execution/risk/getPortfolioHistory');
 const { getOperationalChanges }      = require('../../../../execution/risk/getOperationalChanges');
 const { detectOperationalAnomalies }  = require('../../../../execution/risk/detectOperationalAnomalies');
-const { clusterOperationalAnomalies } = require('../../../../execution/risk/clusterOperationalAnomalies');
+const { clusterOperationalAnomalies }        = require('../../../../execution/risk/clusterOperationalAnomalies');
+const { buildTelemetryCoverageSummary }      = require('../../../../execution/risk/buildTelemetryCoverageSummary');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -43,7 +45,8 @@ const getExecSummaryHandler    = extractHandler(router, 'GET', '/executive-summa
 const getHistoryHandler        = extractHandler(router, 'GET', '/history');
 const getChangesHandler           = extractHandler(router, 'GET', '/changes');
 const getAnomaliesHandler         = extractHandler(router, 'GET', '/anomalies');
-const getAnomalyClustersHandler   = extractHandler(router, 'GET', '/anomaly-clusters');
+const getAnomalyClustersHandler      = extractHandler(router, 'GET', '/anomaly-clusters');
+const getTelemetryCoverageHandler    = extractHandler(router, 'GET', '/telemetry-coverage');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -950,5 +953,161 @@ describe('portfolioRoutes GET /anomaly-clusters', () => {
     expect(sql).toContain('metricsHistory');
     expect(sql).toContain('risk_scores');
     expect(sql).toContain('repo_metrics');
+  });
+});
+
+// ── GET /telemetry-coverage ───────────────────────────────────────────────────
+
+const MOCK_COVERAGE = {
+  repoCount:             2,
+  ciCoverage:            { percentage: 100, level: 'high'   },
+  releaseCoverage:       { percentage: 100, level: 'high'   },
+  contributorCoverage:   { percentage: 100, level: 'high'   },
+  telemetryCompleteness: { percentage: 100, level: 'high'   },
+  historicalDepth:       { averageSnapshots: 5, level: 'medium' },
+  syncFreshness:         { staleCount: 0, stalePercentage: 0, level: 'high' },
+  overallMaturity:       'high',
+};
+
+describe('portfolioRoutes GET /telemetry-coverage', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    buildTelemetryCoverageSummary.mockReturnValue(MOCK_COVERAGE);
+  });
+
+  it('returns the coverage object from buildTelemetryCoverageSummary', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_COVERAGE);
+  });
+
+  it('calls buildTelemetryCoverageSummary with a mapped repo array', async () => {
+    const rows = [
+      {
+        repoId: 1, ciStatus: 'passing', releaseStatus: 'healthy',
+        contributorStatus: 'healthy', lastSyncedAt: '2026-05-19T10:00:00.000Z',
+        snapshotCount: 7,
+      },
+      {
+        repoId: 2, ciStatus: 'failing', releaseStatus: 'stale',
+        contributorStatus: 'bus_factor_risk', lastSyncedAt: '2026-05-18T08:00:00.000Z',
+        snapshotCount: 3,
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    expect(buildTelemetryCoverageSummary).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ ciStatus: 'passing', snapshotCount: 7 }),
+        expect.objectContaining({ ciStatus: 'failing', snapshotCount: 3 }),
+      ])
+    );
+  });
+
+  it('passes empty array when no active repos exist', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    expect(buildTelemetryCoverageSummary).toHaveBeenCalledWith([]);
+  });
+
+  it('SQL targets the authenticated user (r.user_id = $1)', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL filters to active repos only (r.is_active = true)', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL joins repo_metrics for CI, release, and contributor status', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('ci_status');
+    expect(sql).toContain('release_status');
+    expect(sql).toContain('contributor_status');
+    expect(sql).toContain('repo_metrics');
+  });
+
+  it('SQL derives snapshotCount from risk_scores for historical depth', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('snapshotCount');
+    expect(sql).toContain('risk_scores');
+  });
+
+  it('maps snapshotCount to a number and passes it to the helper', async () => {
+    const rows = [
+      {
+        repoId: 1, ciStatus: 'passing', releaseStatus: 'healthy',
+        contributorStatus: 'healthy', lastSyncedAt: '2026-05-19T10:00:00.000Z',
+        snapshotCount: '12', // DB may return as string
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const arg = buildTelemetryCoverageSummary.mock.calls[0][0];
+    expect(typeof arg[0].snapshotCount).toBe('number');
+    expect(arg[0].snapshotCount).toBe(12);
+  });
+
+  it('maps null telemetry fields to "unknown"', async () => {
+    const rows = [
+      {
+        repoId: 1, ciStatus: null, releaseStatus: null,
+        contributorStatus: null, lastSyncedAt: null, snapshotCount: 0,
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const arg = buildTelemetryCoverageSummary.mock.calls[0][0];
+    expect(arg[0].ciStatus).toBe('unknown');
+    expect(arg[0].releaseStatus).toBe('unknown');
+    expect(arg[0].contributorStatus).toBe('unknown');
+    expect(arg[0].lastSyncedAt).toBeNull();
+  });
+
+  it('maps null snapshotCount to 0', async () => {
+    const rows = [
+      {
+        repoId: 1, ciStatus: 'passing', releaseStatus: 'healthy',
+        contributorStatus: 'healthy', lastSyncedAt: '2026-05-19T10:00:00.000Z',
+        snapshotCount: null,
+      },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    const arg = buildTelemetryCoverageSummary.mock.calls[0][0];
+    expect(arg[0].snapshotCount).toBe(0);
+  });
+
+  it('forwards DB errors to next', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getTelemetryCoverageHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
   });
 });

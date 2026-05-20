@@ -8,7 +8,8 @@ const { buildExecutiveSummary }  = require('../../execution/risk/buildExecutiveS
 const { buildPortfolioHistory }    = require('../../execution/risk/getPortfolioHistory');
 const { getOperationalChanges }      = require('../../execution/risk/getOperationalChanges');
 const { detectOperationalAnomalies }  = require('../../execution/risk/detectOperationalAnomalies');
-const { clusterOperationalAnomalies } = require('../../execution/risk/clusterOperationalAnomalies');
+const { clusterOperationalAnomalies }        = require('../../execution/risk/clusterOperationalAnomalies');
+const { buildTelemetryCoverageSummary }      = require('../../execution/risk/buildTelemetryCoverageSummary');
 
 const router = express.Router();
 
@@ -494,6 +495,54 @@ router.get('/anomaly-clusters', async (req, res, next) => {
     const clusters  = clusterOperationalAnomalies(anomalies);
 
     res.json({ clusters: clusters.slice(0, 20) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/telemetry-coverage
+// Computes portfolio-level telemetry maturity: what fraction of active repos
+// have known CI / release / contributor telemetry, how deep the snapshot history
+// is, and how fresh the last sync is. Pure deterministic output — all intelligence
+// lives in buildTelemetryCoverageSummary, not in this handler.
+router.get('/telemetry-coverage', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id                              AS "repoId",
+         rm.ci_status                      AS "ciStatus",
+         rm.release_status                 AS "releaseStatus",
+         rm.contributor_status             AS "contributorStatus",
+         rm.snapshot_at                    AS "lastSyncedAt",
+         COALESCE(rs_cnt.count, 0)         AS "snapshotCount"
+       FROM repositories r
+       LEFT JOIN LATERAL (
+         SELECT ci_status, release_status, contributor_status, snapshot_at
+         FROM   repo_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rm ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS count
+         FROM   risk_scores
+         WHERE  repo_id = r.id
+       ) rs_cnt ON true
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const repos = result.rows.map(function(r) {
+      return {
+        ciStatus:          r.ciStatus          || 'unknown',
+        releaseStatus:     r.releaseStatus      || 'unknown',
+        contributorStatus: r.contributorStatus  || 'unknown',
+        lastSyncedAt:      r.lastSyncedAt       || null,
+        snapshotCount:     r.snapshotCount != null ? Number(r.snapshotCount) : 0,
+      };
+    });
+
+    res.json(buildTelemetryCoverageSummary(repos));
   } catch (err) {
     next(err);
   }
