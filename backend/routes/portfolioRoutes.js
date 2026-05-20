@@ -6,7 +6,9 @@ const { getPortfolioForecast }   = require('../../execution/risk/getPortfolioFor
 const { getAttentionQueue }      = require('../../execution/risk/getAttentionQueue');
 const { buildExecutiveSummary }  = require('../../execution/risk/buildExecutiveSummary');
 const { buildPortfolioHistory }    = require('../../execution/risk/getPortfolioHistory');
-const { getOperationalChanges }    = require('../../execution/risk/getOperationalChanges');
+const { getOperationalChanges }      = require('../../execution/risk/getOperationalChanges');
+const { detectOperationalAnomalies }  = require('../../execution/risk/detectOperationalAnomalies');
+const { clusterOperationalAnomalies } = require('../../execution/risk/clusterOperationalAnomalies');
 
 const router = express.Router();
 
@@ -142,6 +144,7 @@ function _mapRepoRow(r) {
     escalationLevel:  escalationLevel,
     volatilityLevel:  'low',
     persistentRisk:   persistentRisk,
+    noRecentCommits:  Array.isArray(r.factors) && r.factors.includes('No commits in the last 7 days'),
   };
 }
 
@@ -160,6 +163,7 @@ router.get('/executive-summary', async (req, res, next) => {
          rs.score,
          rs.label,
          rs.trend,
+         rs.factors,
          ARRAY(
            SELECT label
            FROM   risk_scores rsi
@@ -176,7 +180,7 @@ router.get('/executive-summary', async (req, res, next) => {
          LIMIT  1
        ) rm ON true
        LEFT JOIN LATERAL (
-         SELECT score, label, trend
+         SELECT score, label, trend, factors
          FROM   risk_scores
          WHERE  repo_id = r.id
          ORDER  BY snapshot_at DESC
@@ -301,6 +305,195 @@ router.get('/changes', async (req, res, next) => {
     });
 
     res.json(getOperationalChanges(repoPairs));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/anomalies
+// Runs deterministic anomaly detection across all active repos using their persisted
+// risk/metrics history. Returns up to 50 anomalies, severity-sorted.
+// No interpolation — only persisted synced data is used.
+router.get('/anomalies', async (req, res, next) => {
+  try {
+    const repoResult = await req.app.locals.db.query(
+      `SELECT
+         r.id               AS "repoId",
+         r.github_full_name AS "repoName",
+         (
+           SELECT COALESCE(
+             JSON_AGG(
+               JSON_BUILD_OBJECT(
+                 'score',      rs2.score,
+                 'label',      rs2.label,
+                 'trend',      rs2.trend,
+                 'snapshotAt', rs2.snapshot_at
+               ) ORDER BY rs2.snapshot_at DESC
+             ),
+             '[]'::json
+           )
+           FROM (
+             SELECT score, label, trend, snapshot_at
+             FROM   risk_scores
+             WHERE  repo_id = r.id
+             ORDER  BY snapshot_at DESC
+             LIMIT  10
+           ) rs2
+         ) AS "riskHistory",
+         (
+           SELECT COALESCE(
+             JSON_AGG(
+               JSON_BUILD_OBJECT(
+                 'ciStatus',          rm2.ci_status,
+                 'releaseStatus',     rm2.release_status,
+                 'contributorStatus', rm2.contributor_status,
+                 'snapshotAt',        rm2.snapshot_at
+               ) ORDER BY rm2.snapshot_at DESC
+             ),
+             '[]'::json
+           )
+           FROM (
+             SELECT ci_status, release_status, contributor_status, snapshot_at
+             FROM   repo_metrics
+             WHERE  repo_id = r.id
+             ORDER  BY snapshot_at DESC
+             LIMIT  10
+           ) rm2
+         ) AS "metricsHistory"
+       FROM repositories r
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const histResult = await req.app.locals.db.query(
+      `SELECT
+         DATE_TRUNC('hour', rs.snapshot_at) AS "snapshotAt",
+         ROUND(AVG(rs.score))::int          AS "portfolioScore",
+         COUNT(DISTINCT rs.repo_id)::int    AS "repoCount"
+       FROM risk_scores rs
+       JOIN repositories r ON r.id = rs.repo_id
+       WHERE r.user_id = $1 AND r.is_active = true
+       GROUP BY DATE_TRUNC('hour', rs.snapshot_at)
+       ORDER BY "snapshotAt" DESC
+       LIMIT 30`,
+      [req.user.userId]
+    );
+
+    const repos = repoResult.rows.map(function(r) {
+      return {
+        repoId:         r.repoId,
+        repoName:       r.repoName || String(r.repoId),
+        riskHistory:    Array.isArray(r.riskHistory)    ? r.riskHistory    : [],
+        metricsHistory: Array.isArray(r.metricsHistory) ? r.metricsHistory : [],
+      };
+    });
+
+    const portfolioHistory = histResult.rows.map(function(h) {
+      return {
+        snapshotAt:     h.snapshotAt     || null,
+        portfolioScore: h.portfolioScore != null ? Number(h.portfolioScore) : null,
+        repoCount:      h.repoCount      != null ? Number(h.repoCount)      : 0,
+      };
+    });
+
+    const anomalies = detectOperationalAnomalies({ repos, portfolioHistory });
+
+    res.json({ anomalies: anomalies.slice(0, 50) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/anomaly-clusters
+// Clusters detected anomalies into correlated operational groups using union-find.
+// Returns up to 20 clusters, severity-sorted. Feeds detectOperationalAnomalies
+// output directly into clusterOperationalAnomalies — no additional transformation.
+router.get('/anomaly-clusters', async (req, res, next) => {
+  try {
+    const repoResult = await req.app.locals.db.query(
+      `SELECT
+         r.id               AS "repoId",
+         r.github_full_name AS "repoName",
+         (
+           SELECT COALESCE(
+             JSON_AGG(
+               JSON_BUILD_OBJECT(
+                 'score',      rs2.score,
+                 'label',      rs2.label,
+                 'trend',      rs2.trend,
+                 'snapshotAt', rs2.snapshot_at
+               ) ORDER BY rs2.snapshot_at DESC
+             ),
+             '[]'::json
+           )
+           FROM (
+             SELECT score, label, trend, snapshot_at
+             FROM   risk_scores
+             WHERE  repo_id = r.id
+             ORDER  BY snapshot_at DESC
+             LIMIT  10
+           ) rs2
+         ) AS "riskHistory",
+         (
+           SELECT COALESCE(
+             JSON_AGG(
+               JSON_BUILD_OBJECT(
+                 'ciStatus',          rm2.ci_status,
+                 'releaseStatus',     rm2.release_status,
+                 'contributorStatus', rm2.contributor_status,
+                 'snapshotAt',        rm2.snapshot_at
+               ) ORDER BY rm2.snapshot_at DESC
+             ),
+             '[]'::json
+           )
+           FROM (
+             SELECT ci_status, release_status, contributor_status, snapshot_at
+             FROM   repo_metrics
+             WHERE  repo_id = r.id
+             ORDER  BY snapshot_at DESC
+             LIMIT  10
+           ) rm2
+         ) AS "metricsHistory"
+       FROM repositories r
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const histResult = await req.app.locals.db.query(
+      `SELECT
+         DATE_TRUNC('hour', rs.snapshot_at) AS "snapshotAt",
+         ROUND(AVG(rs.score))::int          AS "portfolioScore",
+         COUNT(DISTINCT rs.repo_id)::int    AS "repoCount"
+       FROM risk_scores rs
+       JOIN repositories r ON r.id = rs.repo_id
+       WHERE r.user_id = $1 AND r.is_active = true
+       GROUP BY DATE_TRUNC('hour', rs.snapshot_at)
+       ORDER BY "snapshotAt" DESC
+       LIMIT 30`,
+      [req.user.userId]
+    );
+
+    const repos = repoResult.rows.map(function(r) {
+      return {
+        repoId:         r.repoId,
+        repoName:       r.repoName || String(r.repoId),
+        riskHistory:    Array.isArray(r.riskHistory)    ? r.riskHistory    : [],
+        metricsHistory: Array.isArray(r.metricsHistory) ? r.metricsHistory : [],
+      };
+    });
+
+    const portfolioHistory = histResult.rows.map(function(h) {
+      return {
+        snapshotAt:     h.snapshotAt     || null,
+        portfolioScore: h.portfolioScore != null ? Number(h.portfolioScore) : null,
+        repoCount:      h.repoCount      != null ? Number(h.repoCount)      : 0,
+      };
+    });
+
+    const anomalies = detectOperationalAnomalies({ repos, portfolioHistory });
+    const clusters  = clusterOperationalAnomalies(anomalies);
+
+    res.json({ clusters: clusters.slice(0, 20) });
   } catch (err) {
     next(err);
   }

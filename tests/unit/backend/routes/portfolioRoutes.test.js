@@ -8,6 +8,8 @@ jest.mock('../../../../execution/risk/buildExecutiveSummary');
 jest.mock('../../../../execution/risk/getPortfolioHistory');
 jest.mock('../../../../execution/risk/getOperationalChanges');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
+jest.mock('../../../../execution/risk/detectOperationalAnomalies');
+jest.mock('../../../../execution/risk/clusterOperationalAnomalies');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -16,7 +18,9 @@ const { getPortfolioForecast }    = require('../../../../execution/risk/getPortf
 const { getAttentionQueue }       = require('../../../../execution/risk/getAttentionQueue');
 const { buildExecutiveSummary }   = require('../../../../execution/risk/buildExecutiveSummary');
 const { buildPortfolioHistory }   = require('../../../../execution/risk/getPortfolioHistory');
-const { getOperationalChanges }   = require('../../../../execution/risk/getOperationalChanges');
+const { getOperationalChanges }      = require('../../../../execution/risk/getOperationalChanges');
+const { detectOperationalAnomalies }  = require('../../../../execution/risk/detectOperationalAnomalies');
+const { clusterOperationalAnomalies } = require('../../../../execution/risk/clusterOperationalAnomalies');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -37,7 +41,9 @@ function extractHandler(r, method, path) {
 const getForecastHandler       = extractHandler(router, 'GET', '/forecast');
 const getExecSummaryHandler    = extractHandler(router, 'GET', '/executive-summary');
 const getHistoryHandler        = extractHandler(router, 'GET', '/history');
-const getChangesHandler        = extractHandler(router, 'GET', '/changes');
+const getChangesHandler           = extractHandler(router, 'GET', '/changes');
+const getAnomaliesHandler         = extractHandler(router, 'GET', '/anomalies');
+const getAnomalyClustersHandler   = extractHandler(router, 'GET', '/anomaly-clusters');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -688,5 +694,261 @@ describe('portfolioRoutes GET /changes', () => {
     expect(pair.currentScore).toBe(75);
     expect(typeof pair.previousScore).toBe('number');
     expect(pair.previousScore).toBe(40);
+  });
+});
+
+// ── GET /anomalies ────────────────────────────────────────────────────────────
+
+const MOCK_ANOMALY = {
+  type:              'score_spike',
+  severity:          'high',
+  title:             'Operational risk spike detected',
+  summary:           'Risk score rose from a rolling average of 30 to 70 (delta +40).',
+  affectedRepos:     ['org/api'],
+  detectedAt:        '2026-05-19T12:00:00.000Z',
+  confidence:        { level: 'high', score: 75, rationale: '5 historical snapshots, 67% telemetry coverage, 1 confirming signal' },
+  supportingMetrics: { currentScore: 70, rollingAverage: 30, delta: 40, historyDepth: 5 },
+};
+
+describe('portfolioRoutes GET /anomalies', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    detectOperationalAnomalies.mockReturnValue([MOCK_ANOMALY]);
+  });
+
+  it('returns anomaly array wrapped in { anomalies }', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith({ anomalies: [MOCK_ANOMALY] });
+  });
+
+  it('returns { anomalies: [] } when detectOperationalAnomalies returns empty array', async () => {
+    detectOperationalAnomalies.mockReturnValue([]);
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith({ anomalies: [] });
+  });
+
+  it('slices anomaly list to a maximum of 50', async () => {
+    const many = Array.from({ length: 55 }, function(_, i) {
+      return Object.assign({}, MOCK_ANOMALY, { title: 'anomaly ' + i });
+    });
+    detectOperationalAnomalies.mockReturnValue(many);
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    expect(res.json.mock.calls[0][0].anomalies).toHaveLength(50);
+  });
+
+  it('calls detectOperationalAnomalies with repos and portfolioHistory derived from DB rows', async () => {
+    const repoRows = [
+      { repoId: 1, repoName: 'org/api', riskHistory: [{ score: 80, label: 'critical' }], metricsHistory: [{ ciStatus: 'failing' }] },
+    ];
+    const histRows = [
+      { snapshotAt: '2026-05-19T10:00:00.000Z', portfolioScore: 50, repoCount: 1 },
+    ];
+    const db = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: repoRows })
+        .mockResolvedValueOnce({ rows: histRows }),
+    };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    expect(detectOperationalAnomalies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repos: expect.arrayContaining([
+          expect.objectContaining({ repoId: 1, riskHistory: [{ score: 80, label: 'critical' }] }),
+        ]),
+        portfolioHistory: expect.arrayContaining([
+          expect.objectContaining({ portfolioScore: 50, repoCount: 1 }),
+        ]),
+      })
+    );
+  });
+
+  it('calls next on db error', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('repo SQL targets the authenticated user', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('repo SQL filters to active repos only', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('repo SQL fetches riskHistory from risk_scores (up to 10 snapshots per repo)', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('risk_scores');
+    expect(sql).toContain('riskHistory');
+    expect(sql).toContain('LIMIT  10');
+  });
+
+  it('repo SQL fetches metricsHistory from repo_metrics (up to 10 snapshots per repo)', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('repo_metrics');
+    expect(sql).toContain('metricsHistory');
+  });
+
+  it('portfolio history SQL uses DATE_TRUNC grouping and LIMIT 30', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const sql = db.query.mock.calls[1][0];
+    expect(sql).toMatch(/DATE_TRUNC\s*\(\s*'hour'/i);
+    expect(sql).toContain('LIMIT 30');
+  });
+
+  it('portfolio history SQL targets the authenticated user', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const sql = db.query.mock.calls[1][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[1][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('maps metricsHistory null/missing arrays to []', async () => {
+    const repoRows = [
+      { repoId: 2, repoName: 'org/svc', riskHistory: null, metricsHistory: null },
+    ];
+    const db = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: repoRows })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomaliesHandler(req, res, next);
+    const callArg = detectOperationalAnomalies.mock.calls[0][0];
+    expect(callArg.repos[0].riskHistory).toEqual([]);
+    expect(callArg.repos[0].metricsHistory).toEqual([]);
+  });
+});
+
+// ── GET /anomaly-clusters ─────────────────────────────────────────────────────
+
+const MOCK_CLUSTER = {
+  clusterId:    'cluster_abc12345',
+  clusterType:  'risk_acceleration_cluster',
+  severity:     'high',
+  title:        'Risk acceleration',
+  summary:      'Operational risk accelerated: 1 anomaly across 1 repo.',
+  anomalyCount: 1,
+  affectedRepos: ['org/api'],
+  timeWindow:   { start: '2026-05-19T12:00:00.000Z', end: '2026-05-19T12:00:00.000Z', durationMs: 0 },
+  confidence:   { level: 'high', score: 75, rationale: 'Aggregated from 1 anomaly: 1 high, 0 medium, 0 low confidence' },
+  anomalies:    [MOCK_ANOMALY],
+};
+
+describe('portfolioRoutes GET /anomaly-clusters', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    detectOperationalAnomalies.mockReturnValue([MOCK_ANOMALY]);
+    clusterOperationalAnomalies.mockReturnValue([MOCK_CLUSTER]);
+  });
+
+  it('returns cluster array wrapped in { clusters }', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith({ clusters: [MOCK_CLUSTER] });
+  });
+
+  it('returns { clusters: [] } when no anomalies are detected', async () => {
+    detectOperationalAnomalies.mockReturnValue([]);
+    clusterOperationalAnomalies.mockReturnValue([]);
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith({ clusters: [] });
+  });
+
+  it('slices cluster list to a maximum of 20', async () => {
+    const many = Array.from({ length: 25 }, function(_, i) {
+      return Object.assign({}, MOCK_CLUSTER, { clusterId: 'cluster_' + i });
+    });
+    clusterOperationalAnomalies.mockReturnValue(many);
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    expect(res.json.mock.calls[0][0].clusters).toHaveLength(20);
+  });
+
+  it('passes detectOperationalAnomalies output directly to clusterOperationalAnomalies', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    expect(clusterOperationalAnomalies).toHaveBeenCalledWith([MOCK_ANOMALY]);
+  });
+
+  it('calls next on db error', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('SQL targets the authenticated user', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL filters to active repos only', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL fetches riskHistory and metricsHistory per repo', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getAnomalyClustersHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('riskHistory');
+    expect(sql).toContain('metricsHistory');
+    expect(sql).toContain('risk_scores');
+    expect(sql).toContain('repo_metrics');
   });
 });
