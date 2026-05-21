@@ -13,6 +13,7 @@ jest.mock('../../../../execution/risk/buildOperationalEvents');
 jest.mock('../../../../execution/risk/getEscalationSignals');
 jest.mock('../../../../execution/risk/getOperationalForecast');
 jest.mock('../../../../execution/risk/scorePullRequestHealth');
+jest.mock('../../../../execution/risk/detectEngineeringVolatility');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -29,7 +30,8 @@ const { getTrendIndicator }      = require('../../../../execution/risk/getTrendI
 const { buildOperationalEvents } = require('../../../../execution/risk/buildOperationalEvents');
 const { getEscalationSignals }    = require('../../../../execution/risk/getEscalationSignals');
 const { getOperationalForecast }  = require('../../../../execution/risk/getOperationalForecast');
-const { scorePullRequestHealth }  = require('../../../../execution/risk/scorePullRequestHealth');
+const { scorePullRequestHealth }        = require('../../../../execution/risk/scorePullRequestHealth');
+const { detectEngineeringVolatility }   = require('../../../../execution/risk/detectEngineeringVolatility');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -55,9 +57,10 @@ const getRiskHandler         = extractHandler(router, 'GET',  '/:id/risk');
 const getEventsHandler       = extractHandler(router, 'GET',  '/:id/events');
 const getEscalationHandler   = extractHandler(router, 'GET',  '/:id/escalation');
 const getForecastHandler     = extractHandler(router, 'GET',  '/:id/forecast');
-const getPrHealthHandler     = extractHandler(router, 'GET',  '/:id/pr-health');
-const postRegisterHandler    = extractHandler(router, 'POST', '/register');
-const postSyncHandler        = extractHandler(router, 'POST', '/sync');
+const getPrHealthHandler                = extractHandler(router, 'GET',  '/:id/pr-health');
+const getEngineeringVolatilityHandler   = extractHandler(router, 'GET',  '/:id/engineering-volatility');
+const postRegisterHandler               = extractHandler(router, 'POST', '/register');
+const postSyncHandler                   = extractHandler(router, 'POST', '/sync');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -1030,5 +1033,250 @@ describe('repoRoutes POST /sync', () => {
       globalThis.fetch = origFetch;
     }
     expect(res.status).toHaveBeenCalledWith(503);
+  });
+});
+
+// ── GET /:id/engineering-volatility ──────────────────────────────────────────
+
+describe('repoRoutes GET /:id/engineering-volatility', () => {
+  const MOCK_VOLATILITY_RESULT = {
+    volatilityLevel:  'medium',
+    volatilityScore:  25,
+    signals:          ['anomaly_recurrence'],
+    reasons:          ["'score_spike' recurred 2 times"],
+    confidenceLevel:  'medium',
+  };
+
+  const MOCK_PR_HEALTH_SCORE = {
+    score:           0,
+    label:           'none',
+    reasons:         [],
+    signals:         [],
+    confidenceLevel: 'high',
+  };
+
+  const MOCK_PR_ROW_EV = {
+    openPrCount:          0,
+    mergedPrCount30d:     0,
+    stalePrCount:         0,
+    avgMergeLatencyHours: null,
+    failedCheckPrCount:   0,
+    avgPrSize:            null,
+    throughput30d:        null,
+    abandonedPrCount:     0,
+    oldestOpenPrAgeDays:  null,
+    prTelemetryStatus:    'none',
+  };
+
+  beforeEach(() => {
+    detectEngineeringVolatility.mockReset();
+    detectEngineeringVolatility.mockReturnValue(MOCK_VOLATILITY_RESULT);
+    scorePullRequestHealth.mockReset();
+    scorePullRequestHealth.mockReturnValue(MOCK_PR_HEALTH_SCORE);
+  });
+
+  function makeVolatilityDb({ riskRows = [], metricsRows = [], prRows = [] } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM risk_scores'))     return { rows: riskRows };
+        if (sql.includes('FROM repo_metrics'))    return { rows: metricsRows };
+        if (sql.includes('FROM repo_pr_metrics')) return { rows: prRows };
+        return { rows: [] };
+      }),
+    };
+  }
+
+  it('returns 200 with detectEngineeringVolatility result on success', async () => {
+    const db  = makeVolatilityDb({ riskRows: [{ score: 45, label: 'monitor' }] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_VOLATILITY_RESULT);
+  });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'abc' } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('risk_scores SQL scopes to req.user.userId', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('FROM risk_scores'));
+    expect(riskCall[0]).toMatch(/r\.user_id/);
+    expect(riskCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('repo_metrics SQL scopes to req.user.userId', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_metrics'));
+    expect(metricsCall[0]).toMatch(/r\.user_id/);
+    expect(metricsCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('risk_scores SQL filters active repos', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('FROM risk_scores'));
+    expect(riskCall[0]).toContain('is_active');
+  });
+
+  it('repo_metrics SQL filters active repos', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_metrics'));
+    expect(metricsCall[0]).toContain('is_active');
+  });
+
+  it('repo_pr_metrics SQL filters active repos', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const prCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_pr_metrics'));
+    expect(prCall[0]).toContain('is_active');
+  });
+
+  it('passes riskHistory rows from DB directly to detectEngineeringVolatility', async () => {
+    const riskRows = [{ score: 70, label: 'critical' }, { score: 45, label: 'monitor' }];
+    const db  = makeVolatilityDb({ riskRows });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(detectEngineeringVolatility).toHaveBeenCalledWith(
+      expect.objectContaining({ riskHistory: riskRows })
+    );
+  });
+
+  it('passes metricsHistory rows from DB directly to detectEngineeringVolatility', async () => {
+    const metricsRows = [{ ciStatus: 'passing' }, { ciStatus: 'failing' }];
+    const db  = makeVolatilityDb({ metricsRows });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(detectEngineeringVolatility).toHaveBeenCalledWith(
+      expect.objectContaining({ metricsHistory: metricsRows })
+    );
+  });
+
+  it('calls scorePullRequestHealth once per repo_pr_metrics row', async () => {
+    const prRows = [MOCK_PR_ROW_EV, MOCK_PR_ROW_EV, MOCK_PR_ROW_EV];
+    const db  = makeVolatilityDb({ prRows });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledTimes(prRows.length);
+  });
+
+  it('passes prHealthHistory (mapped through scorePullRequestHealth) to detectEngineeringVolatility', async () => {
+    const prRows = [MOCK_PR_ROW_EV];
+    const db  = makeVolatilityDb({ prRows });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(detectEngineeringVolatility).toHaveBeenCalledWith(
+      expect.objectContaining({ prHealthHistory: [MOCK_PR_HEALTH_SCORE] })
+    );
+  });
+
+  it('calls detectEngineeringVolatility with anomalyHistory: [] (v1 behaviour)', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(detectEngineeringVolatility).toHaveBeenCalledWith(
+      expect.objectContaining({ anomalyHistory: [] })
+    );
+  });
+
+  it('returns helper result when all histories are empty (no-data → low volatility)', async () => {
+    const LOW_RESULT = { volatilityLevel: 'low', volatilityScore: 0, signals: [], reasons: [], confidenceLevel: 'low' };
+    detectEngineeringVolatility.mockReturnValue(LOW_RESULT);
+    const db  = makeVolatilityDb({ riskRows: [], metricsRows: [], prRows: [] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(LOW_RESULT);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('passes empty prHealthHistory when repo_pr_metrics returns no rows', async () => {
+    const db  = makeVolatilityDb({ prRows: [] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(detectEngineeringVolatility).toHaveBeenCalledWith(
+      expect.objectContaining({ prHealthHistory: [] })
+    );
+  });
+
+  it('forwards DB error to next', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('response shape has volatilityLevel, volatilityScore, signals, reasons, confidenceLevel', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('volatilityLevel');
+    expect(body).toHaveProperty('volatilityScore');
+    expect(body).toHaveProperty('signals');
+    expect(body).toHaveProperty('reasons');
+    expect(body).toHaveProperty('confidenceLevel');
+  });
+
+  it('risk_scores query uses LIMIT 10', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('FROM risk_scores'));
+    expect(riskCall[0]).toContain('LIMIT 10');
+  });
+
+  it('repo_metrics query uses LIMIT 10', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_metrics'));
+    expect(metricsCall[0]).toContain('LIMIT 10');
+  });
+
+  it('repo_pr_metrics query uses LIMIT 10', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    const prCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_pr_metrics'));
+    expect(prCall[0]).toContain('LIMIT 10');
+  });
+
+  it('all three queries include the parsed repoId in their params', async () => {
+    const db  = makeVolatilityDb();
+    const req = makeReq({ params: { id: '42' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getEngineeringVolatilityHandler(req, res, next);
+    for (const [, params] of db.query.mock.calls) {
+      expect(params).toContain(42);
+    }
   });
 });

@@ -14,7 +14,8 @@ const { buildOperationalEvents }   = require('../../execution/risk/buildOperatio
 const { getEscalationSignals }     = require('../../execution/risk/getEscalationSignals');
 const { getOperationalForecast }   = require('../../execution/risk/getOperationalForecast');
 const { getOperationalConfidence }  = require('../../execution/risk/getOperationalConfidence');
-const { scorePullRequestHealth }    = require('../../execution/risk/scorePullRequestHealth');
+const { scorePullRequestHealth }         = require('../../execution/risk/scorePullRequestHealth');
+const { detectEngineeringVolatility }    = require('../../execution/risk/detectEngineeringVolatility');
 
 const router = express.Router();
 
@@ -448,6 +449,91 @@ router.get('/:id/pr-health', async (req, res, next) => {
     };
 
     res.json(scorePullRequestHealth(telemetry));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/engineering-volatility
+// Returns deterministic engineering volatility for a single repository.
+// Loads the 10 most recent snapshots from risk_scores, repo_metrics, and
+// repo_pr_metrics. PR metrics are mapped through scorePullRequestHealth to
+// produce scored label history for the volatility detector.
+// No-data (empty history) returns low volatility / low confidence — not a 404.
+router.get('/:id/engineering-volatility', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [riskResult, metricsResult, prMetricsResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT rs.score, rs.label
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY rs.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT m.ci_status AS "ciStatus"
+         FROM repo_metrics m
+         JOIN repositories r ON r.id = m.repo_id
+         WHERE m.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY m.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT
+           pm.open_pr_count           AS "openPrCount",
+           pm.merged_pr_count_30d     AS "mergedPrCount30d",
+           pm.stale_pr_count          AS "stalePrCount",
+           pm.avg_merge_latency_hours AS "avgMergeLatencyHours",
+           pm.failed_check_pr_count   AS "failedCheckPrCount",
+           pm.avg_pr_size             AS "avgPrSize",
+           pm.throughput_30d          AS "throughput30d",
+           pm.abandoned_pr_count      AS "abandonedPrCount",
+           pm.oldest_open_pr_age_days AS "oldestOpenPrAgeDays",
+           pm.pr_telemetry_status     AS "prTelemetryStatus"
+         FROM repo_pr_metrics pm
+         JOIN repositories r ON r.id = pm.repo_id
+         WHERE pm.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY pm.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    const riskHistory    = riskResult.rows;
+    const metricsHistory = metricsResult.rows;
+
+    // Map each repo_pr_metrics row through scorePullRequestHealth to produce
+    // { score, label, confidenceLevel } entries for the volatility detector.
+    const prHealthHistory = prMetricsResult.rows.map(row => {
+      const telemetry = {
+        openPrCount:          row.openPrCount          != null ? Number(row.openPrCount)             : null,
+        mergedPrCount30d:     row.mergedPrCount30d      != null ? Number(row.mergedPrCount30d)         : null,
+        stalePrCount:         row.stalePrCount          != null ? Number(row.stalePrCount)             : null,
+        avgMergeLatencyHours: row.avgMergeLatencyHours  != null ? parseFloat(row.avgMergeLatencyHours) : null,
+        failedCheckPrCount:   row.failedCheckPrCount    != null ? Number(row.failedCheckPrCount)       : null,
+        avgPrSize:            row.avgPrSize             != null ? Number(row.avgPrSize)                : null,
+        throughput30d:        row.throughput30d          != null ? parseFloat(row.throughput30d)        : null,
+        abandonedPrCount:     row.abandonedPrCount      != null ? Number(row.abandonedPrCount)         : null,
+        oldestOpenPrAgeDays:  row.oldestOpenPrAgeDays   != null ? parseFloat(row.oldestOpenPrAgeDays)  : null,
+        prTelemetryStatus:    row.prTelemetryStatus,
+      };
+      return scorePullRequestHealth(telemetry);
+    });
+
+    res.json(detectEngineeringVolatility({
+      riskHistory,
+      metricsHistory,
+      prHealthHistory,
+      anomalyHistory: [],
+    }));
   } catch (err) {
     next(err);
   }
