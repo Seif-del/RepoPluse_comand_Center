@@ -13,6 +13,8 @@ const { getTrendIndicator }        = require('../../execution/risk/getTrendIndic
 const { buildOperationalEvents }   = require('../../execution/risk/buildOperationalEvents');
 const { getEscalationSignals }     = require('../../execution/risk/getEscalationSignals');
 const { getOperationalForecast }   = require('../../execution/risk/getOperationalForecast');
+const { getOperationalConfidence }  = require('../../execution/risk/getOperationalConfidence');
+const { scorePullRequestHealth }    = require('../../execution/risk/scorePullRequestHealth');
 
 const router = express.Router();
 
@@ -330,6 +332,122 @@ router.get('/:id/forecast', async (req, res, next) => {
     const forecast   = getOperationalForecast({ riskHistory, escalation, events });
 
     res.json(forecast);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/confidence
+// Returns a deterministic operational confidence assessment derived from the
+// repository's persisted risk and metrics history. Confidence reflects evidence
+// quality (snapshot depth, telemetry completeness, volatility) — not probability.
+router.get('/:id/confidence', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [riskResult, metricsResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT score, label, snapshot_at AS "snapshotAt"
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2
+         ORDER BY rs.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT ci_status          AS "ciStatus",
+                release_status     AS "releaseStatus",
+                contributor_status AS "contributorStatus",
+                snapshot_at        AS "snapshotAt"
+         FROM repo_metrics m
+         JOIN repositories r ON r.id = m.repo_id
+         WHERE m.repo_id = $1 AND r.user_id = $2
+         ORDER BY m.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    const riskHistory    = riskResult.rows;
+    const metricsHistory = metricsResult.rows;
+
+    // Build events from all consecutive snapshot pairs across the history window.
+    const events = [];
+    const maxIdx = Math.max(riskHistory.length, metricsHistory.length) - 1;
+    for (let i = 0; i < maxIdx; i++) {
+      const pairEvents = buildOperationalEvents({
+        currentRiskScore:  riskHistory[i]        || null,
+        previousRiskScore: riskHistory[i + 1]    || null,
+        currentMetrics:    metricsHistory[i]     || null,
+        previousMetrics:   metricsHistory[i + 1] || null,
+      });
+      pairEvents.forEach(e => events.push(e));
+    }
+
+    const escalation  = getEscalationSignals({ riskHistory, metricsHistory, events });
+    const currentRepo = metricsHistory[0] || {};
+
+    res.json(getOperationalConfidence({ riskHistory, metricsHistory, escalation, currentRepo }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/pr-health
+// Returns scored PR operational health for a single repository.
+// Loads the latest repo_pr_metrics row scoped to the authenticated user's active repos,
+// normalises it, and returns the scorePullRequestHealth result.
+// If no telemetry row exists, returns an unknown-status score rather than 404.
+router.get('/:id/pr-health', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const result = await req.app.locals.db.query(
+      `SELECT
+         pm.open_pr_count           AS "openPrCount",
+         pm.merged_pr_count_30d     AS "mergedPrCount30d",
+         pm.stale_pr_count          AS "stalePrCount",
+         pm.avg_merge_latency_hours AS "avgMergeLatencyHours",
+         pm.failed_check_pr_count   AS "failedCheckPrCount",
+         pm.avg_pr_size             AS "avgPrSize",
+         pm.throughput_30d          AS "throughput30d",
+         pm.abandoned_pr_count      AS "abandonedPrCount",
+         pm.oldest_open_pr_age_days AS "oldestOpenPrAgeDays",
+         pm.pr_telemetry_status     AS "prTelemetryStatus"
+       FROM repo_pr_metrics pm
+       JOIN repositories r ON r.id = pm.repo_id
+       WHERE pm.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+       ORDER BY pm.snapshot_at DESC
+       LIMIT 1`,
+      [repoId, req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json(scorePullRequestHealth({ prTelemetryStatus: 'unknown' }));
+    }
+
+    const row = result.rows[0];
+    const telemetry = {
+      openPrCount:          row.openPrCount          != null ? Number(row.openPrCount)             : null,
+      mergedPrCount30d:     row.mergedPrCount30d      != null ? Number(row.mergedPrCount30d)         : null,
+      stalePrCount:         row.stalePrCount          != null ? Number(row.stalePrCount)             : null,
+      avgMergeLatencyHours: row.avgMergeLatencyHours  != null ? parseFloat(row.avgMergeLatencyHours) : null,
+      failedCheckPrCount:   row.failedCheckPrCount    != null ? Number(row.failedCheckPrCount)       : null,
+      avgPrSize:            row.avgPrSize             != null ? Number(row.avgPrSize)                : null,
+      throughput30d:        row.throughput30d          != null ? parseFloat(row.throughput30d)        : null,
+      abandonedPrCount:     row.abandonedPrCount      != null ? Number(row.abandonedPrCount)         : null,
+      oldestOpenPrAgeDays:  row.oldestOpenPrAgeDays   != null ? parseFloat(row.oldestOpenPrAgeDays)  : null,
+      prTelemetryStatus:    row.prTelemetryStatus,
+    };
+
+    res.json(scorePullRequestHealth(telemetry));
   } catch (err) {
     next(err);
   }

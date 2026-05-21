@@ -12,6 +12,7 @@ jest.mock('../../../../execution/risk/getTrendIndicator');
 jest.mock('../../../../execution/risk/buildOperationalEvents');
 jest.mock('../../../../execution/risk/getEscalationSignals');
 jest.mock('../../../../execution/risk/getOperationalForecast');
+jest.mock('../../../../execution/risk/scorePullRequestHealth');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -26,8 +27,9 @@ const { getRepoRiskFactors }    = require('../../../../execution/risk/getRepoRis
 const { getAttentionQueue }      = require('../../../../execution/risk/getAttentionQueue');
 const { getTrendIndicator }      = require('../../../../execution/risk/getTrendIndicator');
 const { buildOperationalEvents } = require('../../../../execution/risk/buildOperationalEvents');
-const { getEscalationSignals }   = require('../../../../execution/risk/getEscalationSignals');
-const { getOperationalForecast } = require('../../../../execution/risk/getOperationalForecast');
+const { getEscalationSignals }    = require('../../../../execution/risk/getEscalationSignals');
+const { getOperationalForecast }  = require('../../../../execution/risk/getOperationalForecast');
+const { scorePullRequestHealth }  = require('../../../../execution/risk/scorePullRequestHealth');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -53,6 +55,7 @@ const getRiskHandler         = extractHandler(router, 'GET',  '/:id/risk');
 const getEventsHandler       = extractHandler(router, 'GET',  '/:id/events');
 const getEscalationHandler   = extractHandler(router, 'GET',  '/:id/escalation');
 const getForecastHandler     = extractHandler(router, 'GET',  '/:id/forecast');
+const getPrHealthHandler     = extractHandler(router, 'GET',  '/:id/pr-health');
 const postRegisterHandler    = extractHandler(router, 'POST', '/register');
 const postSyncHandler        = extractHandler(router, 'POST', '/sync');
 
@@ -785,6 +788,192 @@ describe('repoRoutes GET /:id/forecast', () => {
     await getForecastHandler(req, res, next);
     const metricsCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_metrics'));
     expect(metricsCall[0]).toContain('LIMIT 10');
+  });
+});
+
+// ── GET /:id/pr-health ────────────────────────────────────────────────────────
+
+describe('repoRoutes GET /:id/pr-health', () => {
+  const MOCK_PR_SCORE = {
+    score:           35,
+    label:           'monitor',
+    reasons:         ['1 pull request open for more than 30 days'],
+    signals:         ['abandoned_prs'],
+    confidenceLevel: 'high',
+  };
+
+  const MOCK_UNKNOWN_SCORE = {
+    score:           0,
+    label:           'unknown',
+    reasons:         [],
+    signals:         [],
+    confidenceLevel: 'low',
+  };
+
+  const MOCK_PR_ROW = {
+    openPrCount:          3,
+    mergedPrCount30d:     5,
+    stalePrCount:         1,
+    avgMergeLatencyHours: 24.5,
+    failedCheckPrCount:   0,
+    avgPrSize:            120,
+    throughput30d:        1.2,
+    abandonedPrCount:     1,
+    oldestOpenPrAgeDays:  35.0,
+    prTelemetryStatus:    'active',
+  };
+
+  beforeEach(() => {
+    scorePullRequestHealth.mockReturnValue(MOCK_PR_SCORE);
+  });
+
+  function makePrHealthDb(rows = [MOCK_PR_ROW]) {
+    return { query: jest.fn(async () => ({ rows })) };
+  }
+
+  it('returns 200 with the scorePullRequestHealth result on success', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_PR_SCORE);
+  });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'abc' } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns unknown score (200) when no PR telemetry row exists', async () => {
+    scorePullRequestHealth.mockReturnValue(MOCK_UNKNOWN_SCORE);
+    const db  = makePrHealthDb([]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_UNKNOWN_SCORE);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('calls scorePullRequestHealth with { prTelemetryStatus: "unknown" } when no row exists', async () => {
+    const db  = makePrHealthDb([]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledWith({ prTelemetryStatus: 'unknown' });
+  });
+
+  it('calls scorePullRequestHealth with normalised telemetry fields from the DB row', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledWith(expect.objectContaining({
+      openPrCount:          MOCK_PR_ROW.openPrCount,
+      mergedPrCount30d:     MOCK_PR_ROW.mergedPrCount30d,
+      stalePrCount:         MOCK_PR_ROW.stalePrCount,
+      failedCheckPrCount:   MOCK_PR_ROW.failedCheckPrCount,
+      avgPrSize:            MOCK_PR_ROW.avgPrSize,
+      abandonedPrCount:     MOCK_PR_ROW.abandonedPrCount,
+      prTelemetryStatus:    MOCK_PR_ROW.prTelemetryStatus,
+    }));
+  });
+
+  it('parses numeric (string) DB columns to numbers before calling scorer', async () => {
+    const rowWithStringNumerics = {
+      ...MOCK_PR_ROW,
+      avgMergeLatencyHours: '24.5',
+      throughput30d:        '1.2',
+      oldestOpenPrAgeDays:  '35.0',
+    };
+    const db  = makePrHealthDb([rowWithStringNumerics]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledWith(expect.objectContaining({
+      avgMergeLatencyHours: 24.5,
+      throughput30d:        1.2,
+      oldestOpenPrAgeDays:  35.0,
+    }));
+  });
+
+  it('maps null numeric columns to null rather than NaN', async () => {
+    const rowWithNulls = {
+      ...MOCK_PR_ROW,
+      avgMergeLatencyHours: null,
+      throughput30d:        null,
+      oldestOpenPrAgeDays:  null,
+    };
+    const db  = makePrHealthDb([rowWithNulls]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledWith(expect.objectContaining({
+      avgMergeLatencyHours: null,
+      throughput30d:        null,
+      oldestOpenPrAgeDays:  null,
+    }));
+  });
+
+  it('SQL query scopes by req.user.userId', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('r.user_id');
+    expect(params).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL query filters by repo_id from the route param', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '42' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    const [, params] = db.query.mock.calls[0];
+    expect(params).toContain(42);
+  });
+
+  it('SQL query filters active repos (is_active = true)', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL query orders by snapshot_at DESC and limits to 1 row', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('snapshot_at DESC');
+    expect(sql).toContain('LIMIT 1');
+  });
+
+  it('calls next with the error when the DB query throws', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('response shape contains score, label, reasons, signals, confidenceLevel', async () => {
+    const db  = makePrHealthDb([MOCK_PR_ROW]);
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getPrHealthHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('score');
+    expect(body).toHaveProperty('label');
+    expect(body).toHaveProperty('reasons');
+    expect(body).toHaveProperty('signals');
+    expect(body).toHaveProperty('confidenceLevel');
   });
 });
 
