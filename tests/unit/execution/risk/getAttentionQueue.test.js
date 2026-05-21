@@ -32,11 +32,11 @@ describe('getAttentionQueue — module shape', () => {
     const keys = [
       // Unified risk score band alignment
       'RISK_SCORE_CRITICAL', 'RISK_SCORE_AT_RISK', 'RISK_SCORE_MONITOR',
-      // Freshness signals
+      // Behavioral operational signals
       'CI_FAILING', 'CONTRIBUTOR_ABANDONED', 'CONTRIBUTOR_DORMANT',
       // Activity freshness
       'NO_RECENT_COMMITS',
-      // Structural freshness
+      // Structural context
       'CONTRIBUTOR_BUS_FACTOR', 'RELEASE_STALE', 'CONTRIBUTOR_LOW', 'RELEASE_NONE',
       // Data-gap signals
       'CI_UNKNOWN', 'RELEASE_UNKNOWN', 'CONTRIBUTOR_UNKNOWN', 'NO_METRICS',
@@ -45,6 +45,8 @@ describe('getAttentionQueue — module shape', () => {
       'FORECAST_CRITICAL', 'FORECAST_HIGH',
       'PERSISTENT_RISK', 'ESC_HIGH', 'ESC_CRITICAL',
       'VOLATILITY_HIGH', 'CI_UNRESOLVED',
+      // PR Health operational signals
+      'PR_HEALTH_CRITICAL', 'PR_HEALTH_AT_RISK', 'PR_HEALTH_MONITOR',
     ];
     keys.forEach(k => expect(WEIGHTS).toHaveProperty(k));
   });
@@ -229,10 +231,10 @@ describe('getAttentionQueue — signal weights', () => {
 
 describe('getAttentionQueue — attention levels (unified model)', () => {
   it('score >= 60 → critical', () => {
-    // RISK_SCORE_AT_RISK(45) + CI_FAILING(25) = 70 → critical
+    // RISK_SCORE_AT_RISK(45) + CI_FAILING(40) = 85 → critical
     const result = getAttentionQueue([makeRepo({ score: 50, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy' })]);
     expect(result[0].attentionLevel).toBe('critical');
-    expect(result[0].attentionScore).toBe(70);
+    expect(result[0].attentionScore).toBe(85);
   });
 
   it('RISK_SCORE_CRITICAL (score>=75) alone → critical', () => {
@@ -247,16 +249,17 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
     expect(result[0].attentionScore).toBe(45);
   });
 
-  it('CONTRIBUTOR_DORMANT freshness (score=0, abandoned + CI unknown) → low (10+1=11 pts)', () => {
-    // Unknown CI → dormant treatment. CONTRIBUTOR_DORMANT(10) + CI_UNKNOWN(1) = 11 → low.
+  it('CONTRIBUTOR_DORMANT freshness (score=0, abandoned + CI unknown) → low (10+2=12 pts)', () => {
+    // Unknown CI → dormant treatment. CONTRIBUTOR_DORMANT(10) + CI_UNKNOWN(2) = 12 → low.
     const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
     expect(result[0].attentionLevel).toBe('low');
     expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT + WEIGHTS.CI_UNKNOWN);
   });
 
-  it('CONTRIBUTOR_ABANDONED freshness alone (score=0, CI failing) → medium (CI_FAILING 25 + CONTRIBUTOR_ABANDONED 30 = 55 → high)', () => {
+  it('CONTRIBUTOR_ABANDONED freshness alone (score=0, CI failing) → critical (CI_FAILING 40 + CONTRIBUTOR_ABANDONED 40 = 80)', () => {
+    // Behavioral signals now significantly weighted: 40+40=80 → critical.
     const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
-    expect(result[0].attentionLevel).toBe('high');
+    expect(result[0].attentionLevel).toBe('critical');
     expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_ABANDONED + WEIGHTS.CI_FAILING);
   });
 
@@ -267,18 +270,18 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
   });
 
   it('CONTRIBUTOR_DORMANT + RISK_SCORE_MONITOR → medium (score=35, CI unknown)', () => {
-    // Unknown CI → dormant. RISK_SCORE_MONITOR(20) + CONTRIBUTOR_DORMANT(10) + CI_UNKNOWN(1) = 31 → medium.
+    // Unknown CI → dormant. RISK_SCORE_MONITOR(20) + CONTRIBUTOR_DORMANT(10) + CI_UNKNOWN(2) = 32 → medium.
     const result = getAttentionQueue([makeRepo({ score: 35, ciStatus: 'unknown', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
     expect(result[0].attentionLevel).toBe('medium');
-    expect(result[0].attentionScore).toBe(31);
+    expect(result[0].attentionScore).toBe(32);
   });
 
-  it('CONTRIBUTOR_ABANDONED + RISK_SCORE_MONITOR → high (score=35, CI failing)', () => {
+  it('CONTRIBUTOR_ABANDONED + RISK_SCORE_MONITOR → critical (score=35, CI failing)', () => {
     // Only failing CI triggers full abandoned weight.
-    // RISK_SCORE_MONITOR(20) + CI_FAILING(25) + CONTRIBUTOR_ABANDONED(30) = 75 → critical
+    // RISK_SCORE_MONITOR(20) + CI_FAILING(40) + CONTRIBUTOR_ABANDONED(40) = 100 → critical (capped)
     const result = getAttentionQueue([makeRepo({ score: 35, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
     expect(result[0].attentionLevel).toBe('critical');
-    expect(result[0].attentionScore).toBe(75);
+    expect(result[0].attentionScore).toBe(100);
   });
 
   it('CONTRIBUTOR_DORMANT + RISK_SCORE_MONITOR → medium (score=35, CI passing)', () => {
@@ -288,10 +291,11 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
     expect(result[0].attentionScore).toBe(30);
   });
 
-  it('CI_FAILING freshness alone (score=0) → medium (25 pts)', () => {
+  it('CI_FAILING behavioral alone (score=0) → high (40 pts)', () => {
+    // Behavioral CI_FAILING(40) dominates; high attention even without a base score.
     const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy' })]);
-    expect(result[0].attentionLevel).toBe('medium');
-    expect(result[0].attentionScore).toBe(25);
+    expect(result[0].attentionLevel).toBe('high');
+    expect(result[0].attentionScore).toBe(40);
   });
 
   it('RISK_SCORE_AT_RISK (score=50) → high (45 pts)', () => {
@@ -307,10 +311,10 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
   });
 
   it('score >= 5 and < 20 → low (RELEASE_STALE+BUS_FACTOR structural stack)', () => {
-    // RELEASE_STALE(3) + BUS_FACTOR(3) = 6 → low
+    // RELEASE_STALE(3) + BUS_FACTOR(5) = 8 → low (structural context only)
     const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'stale', contributorStatus: 'bus_factor_risk' })]);
     expect(result[0].attentionLevel).toBe('low');
-    expect(result[0].attentionScore).toBe(6);
+    expect(result[0].attentionScore).toBe(8);
   });
 
   it('score 0 → healthy', () => {
@@ -319,16 +323,16 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
     expect(result[0].attentionScore).toBe(0);
   });
 
-  it('all unknown signals with no score → low (7 pts: 1+1+1+4)', () => {
-    // CI_UNKNOWN(1) + RELEASE_UNKNOWN(1) + CONTRIBUTOR_UNKNOWN(1) + NO_METRICS(4) = 7
+  it('all unknown signals with no score → low (9 pts: 2+2+1+4)', () => {
+    // CI_UNKNOWN(2) + RELEASE_UNKNOWN(2) + CONTRIBUTOR_UNKNOWN(1) + NO_METRICS(4) = 9
     const result = getAttentionQueue([makeRepo({ score: null, ciStatus: 'unknown', releaseStatus: 'unknown', contributorStatus: 'unknown' })]);
-    expect(result[0].attentionScore).toBe(7);
+    expect(result[0].attentionScore).toBe(9);
     expect(result[0].attentionLevel).toBe('low');
   });
 
   it('no-metrics repo with all unknowns → low (not healthy)', () => {
     const result = getAttentionQueue([makeRepo({ score: null })]);
-    // NO_METRICS(4) + CI_UNKNOWN(1) + RELEASE_UNKNOWN(1) + CONTRIBUTOR_UNKNOWN(1) = 7 → low
+    // NO_METRICS(4) + CI_UNKNOWN(2) + RELEASE_UNKNOWN(2) + CONTRIBUTOR_UNKNOWN(1) = 9 → low
     expect(result[0].attentionLevel).toBe('low');
     expect(result[0].attentionLevel).not.toBe('healthy');
   });
@@ -729,15 +733,15 @@ describe('getAttentionQueue — unified model calibration', () => {
   });
 
   it('escalating trajectory + at-risk score crosses into critical attention', () => {
-    // RISK_SCORE_AT_RISK(45) + TRAJ_ESCALATING(15) = 60 → critical
+    // RISK_SCORE_AT_RISK(45) + TRAJ_ESCALATING(30) = 75 → critical
     const result = getAttentionQueue([makeForecastRepo({ score: 50, trajectory: 'escalating' })]);
-    expect(result[0].attentionScore).toBe(60);
+    expect(result[0].attentionScore).toBe(75);
     expect(result[0].attentionLevel).toBe('critical');
   });
 
   it('escalating trajectory outweighs structural-only concern stack', () => {
-    // structural: score=28 → no RISK_SCORE_MONITOR + CI_UNKNOWN(1)+RELEASE_STALE(3)+BUS_FACTOR(3) = 7
-    // escalating: score=25 → no RISK_SCORE_MONITOR + TRAJ_ESCALATING(15) = 15
+    // structural: score=28 → no RISK_SCORE_MONITOR + CI_UNKNOWN(2)+RELEASE_STALE(3)+BUS_FACTOR(5) = 10
+    // escalating: score=25 → no RISK_SCORE_MONITOR + TRAJ_ESCALATING(30) = 30
     const structural = getAttentionQueue([makeRepo({
       score: 28, ciStatus: 'unknown', releaseStatus: 'stale', contributorStatus: 'bus_factor_risk',
     })]);
@@ -745,23 +749,24 @@ describe('getAttentionQueue — unified model calibration', () => {
     expect(escalating[0].attentionScore).toBeGreaterThan(structural[0].attentionScore);
   });
 
-  it('persistent risk alone → low attention (15 pts < 20)', () => {
+  it('persistent risk alone → medium attention (25 pts)', () => {
+    // PERSISTENT_RISK(25) = 25 → medium (behavioral signal with meaningful weight)
     const result = getAttentionQueue([makeForecastRepo({ persistentRisk: true })]);
     expect(result[0].attentionScore).toBe(WEIGHTS.PERSISTENT_RISK);
-    expect(result[0].attentionLevel).toBe('low');
+    expect(result[0].attentionLevel).toBe('medium');
   });
 
-  it('persistent risk + CI failing freshness → high attention', () => {
-    // CI_FAILING(25) + PERSISTENT_RISK(15) = 40 → high
+  it('persistent risk + CI failing → critical attention', () => {
+    // CI_FAILING(40) + PERSISTENT_RISK(25) = 65 → critical
     const result = getAttentionQueue([makeForecastRepo({
       ciStatus: 'failing', persistentRisk: true,
     })]);
-    expect(result[0].attentionScore).toBe(40);
-    expect(result[0].attentionLevel).toBe('high');
+    expect(result[0].attentionScore).toBe(65);
+    expect(result[0].attentionLevel).toBe('critical');
   });
 
   it('data-gap signals alone cannot reach At Risk', () => {
-    // CI_UNKNOWN(1)+RELEASE_UNKNOWN(1)+CONTRIBUTOR_UNKNOWN(1)+NO_METRICS(4) = 7 < 40
+    // CI_UNKNOWN(2)+RELEASE_UNKNOWN(2)+CONTRIBUTOR_UNKNOWN(1)+NO_METRICS(4) = 9 < 40
     const result = getAttentionQueue([makeRepo({
       score: null, ciStatus: 'unknown', releaseStatus: 'unknown', contributorStatus: 'unknown',
     })]);
@@ -804,23 +809,22 @@ describe('getAttentionQueue — unified model calibration', () => {
     expect(result[0].attentionLevel).toBe('healthy');
   });
 
-  it('CI_FAILING freshness (score=0) → medium attention, not critical', () => {
-    // Pre-sync freshness: CI just started failing. score not yet updated → medium concern.
-    // After next sync: score=50 → attention high/critical.
+  it('CI_FAILING behavioral (score=0) → high attention pre-sync', () => {
+    // Behavioral CI_FAILING(40) alone → high. After next sync: score=50 → critical.
     const result = getAttentionQueue([makeRepo({
       score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy',
     })]);
-    expect(result[0].attentionScore).toBe(25);
-    expect(result[0].attentionLevel).toBe('medium');
+    expect(result[0].attentionScore).toBe(40);
+    expect(result[0].attentionLevel).toBe('high');
   });
 
-  it('CI failing still reaches At Risk when combined with monitor-band score', () => {
-    // score=30 → RISK_SCORE_MONITOR(20) + CI_FAILING(25) = 45 → high (At Risk)
+  it('CI failing + monitor-band score reaches critical attention', () => {
+    // score=30 → RISK_SCORE_MONITOR(20) + CI_FAILING(40) = 60 → critical
     const result = getAttentionQueue([makeRepo({
       score: 30, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy',
     })]);
-    expect(result[0].attentionScore).toBe(45);
-    expect(result[0].attentionLevel).toBe('high');
+    expect(result[0].attentionScore).toBe(60);
+    expect(result[0].attentionLevel).toBe('critical');
   });
 
   it('abandoned + CI failing reaches critical (at-risk band + both freshness signals)', () => {
@@ -836,13 +840,12 @@ describe('getAttentionQueue — unified model calibration', () => {
 // ── Reason ordering — no recent commits before bus-factor ─────────────────────
 
 describe('getAttentionQueue — reason ordering: no recent commits vs bus-factor', () => {
-  it('NO_RECENT_COMMITS adds 1 pt when noRecentCommits=true', () => {
+  it('NO_RECENT_COMMITS adds WEIGHTS.NO_RECENT_COMMITS pts when noRecentCommits=true', () => {
     const result = getAttentionQueue([makeRepo({
       score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
       noRecentCommits: true,
     })]);
     expect(result[0].attentionScore).toBe(WEIGHTS.NO_RECENT_COMMITS);
-    expect(result[0].attentionScore).toBe(1);
   });
 
   it('"No recent commits" reason appears before "High bus-factor risk" when both present', () => {
@@ -893,14 +896,14 @@ describe('getAttentionQueue — reason ordering: no recent commits vs bus-factor
     expect(result[0].reasons).not.toContain('No recent commits');
   });
 
-  it('structural-only repo with noRecentCommits + bus-factor stays low/healthy (not at-risk)', () => {
-    // NO_RECENT_COMMITS(1) + CONTRIBUTOR_BUS_FACTOR(3) = 4 → healthy (< 5)
+  it('structural-only repo with noRecentCommits + bus-factor stays low (not at-risk)', () => {
+    // NO_RECENT_COMMITS(6) + CONTRIBUTOR_BUS_FACTOR(5) = 11 → low (structural context only)
     const result = getAttentionQueue([makeRepo({
       score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'bus_factor_risk',
       noRecentCommits: true,
     })]);
-    expect(result[0].attentionScore).toBe(4);
-    expect(result[0].attentionLevel).toBe('healthy');
+    expect(result[0].attentionScore).toBe(11);
+    expect(result[0].attentionLevel).toBe('low');
     expect(result[0].attentionLevel).not.toBe('high');
     expect(result[0].attentionLevel).not.toBe('critical');
   });
@@ -927,8 +930,8 @@ describe('getAttentionQueue — reason ordering: no recent commits vs bus-factor
   });
 
   it('noRecentCommits does not make a structural-only repo At Risk', () => {
-    // Worst case structural: score=28 (< 30, no MONITOR tier) + noRecentCommits(1)
-    // + BUS_FACTOR(3) + CI_UNKNOWN(1) + RELEASE_STALE(3) = 8 → low, well below 40
+    // Worst case structural: score=28 (< 30, no MONITOR tier) + noRecentCommits(6)
+    // + BUS_FACTOR(5) + CI_UNKNOWN(2) + RELEASE_STALE(3) = 16 → low, well below 40
     const result = getAttentionQueue([makeRepo({
       score: 28, ciStatus: 'unknown', releaseStatus: 'stale', contributorStatus: 'bus_factor_risk',
       noRecentCommits: true,
@@ -998,5 +1001,215 @@ describe('getAttentionQueue — dormant vs abandoned full semantic model', () =>
     const result = getAttentionQueue([makeRepo({ score: 50, ciStatus: 'passing', contributorStatus: 'abandoned' })]);
     expect(result[0].reasons).not.toContain('Repository appears abandoned');
     expect(result[0].reasons).toContain('Repository appears dormant');
+  });
+});
+
+// ── Behavioral dominance over structural context ───────────────────────────────
+// These tests verify the core model: behavioral instability clearly outranks
+// static maturity signals (no releases, bus factor, no commits, CI unknown).
+
+describe('getAttentionQueue — behavioral dominance over structural context', () => {
+  // Heavy structural-only stack for comparison (score=0, all structural signals)
+  function makeStructuralRepo(overrides = {}) {
+    return makeRepo({
+      score: 0,
+      ciStatus: 'unknown',
+      releaseStatus: 'none',
+      contributorStatus: 'bus_factor_risk',
+      noRecentCommits: true,
+      ...overrides,
+    });
+  }
+
+  it('CI failing outranks structural-only repo (no releases + bus factor + no commits)', () => {
+    const ciFailingRepo  = makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy' });
+    const structuralRepo = makeStructuralRepo();
+    const result = getAttentionQueue([structuralRepo, ciFailingRepo]);
+    expect(result[0].repoId).toBe(ciFailingRepo.id);
+    expect(result[0].attentionScore).toBeGreaterThan(result[1].attentionScore);
+  });
+
+  it('escalating trajectory outranks structural-only stack', () => {
+    const escalating = makeForecastRepo({ score: 0, trajectory: 'escalating' });
+    const structural = makeStructuralRepo();
+    const result = getAttentionQueue([structural, escalating]);
+    expect(result[0].repoId).toBe(escalating.id);
+  });
+
+  it('deteriorating trajectory outranks structural-only stack', () => {
+    const deteriorating = makeForecastRepo({ score: 0, trajectory: 'deteriorating' });
+    const structural = makeStructuralRepo();
+    const result = getAttentionQueue([structural, deteriorating]);
+    expect(result[0].repoId).toBe(deteriorating.id);
+  });
+
+  it('engineering volatility elevated outranks structural-only stack', () => {
+    // VOLATILITY_HIGH(22) vs structural worst: CI_UNKNOWN(2)+RELEASE_NONE(3)+BUS_FACTOR(5)+NO_RECENT_COMMITS(6) = 16
+    const volatilityRepo = makeForecastRepo({ score: 0, volatilityLevel: 'high' });
+    const structuralRepo = makeStructuralRepo();
+    const result = getAttentionQueue([structuralRepo, volatilityRepo]);
+    expect(result[0].repoId).toBe(volatilityRepo.id);
+    expect(result[0].attentionScore).toBeGreaterThan(result[1].attentionScore);
+  });
+
+  it('VOLATILITY_HIGH alone exceeds the worst structural-only signal stack', () => {
+    // VOLATILITY_HIGH(22) > CI_UNKNOWN(2)+RELEASE_NONE(3)+BUS_FACTOR(5)+NO_RECENT_COMMITS(6) = 16
+    const volatility = getAttentionQueue([makeForecastRepo({ score: 0, volatilityLevel: 'high' })]);
+    const structural = getAttentionQueue([makeStructuralRepo()]);
+    expect(volatility[0].attentionScore).toBeGreaterThan(structural[0].attentionScore);
+  });
+
+  it('no recent commits alone is far below CI failing', () => {
+    const noCommits = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy', noRecentCommits: true })]);
+    const ciFailing = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy' })]);
+    expect(ciFailing[0].attentionScore).toBeGreaterThan(noCommits[0].attentionScore);
+    expect(noCommits[0].attentionLevel).not.toBe('high');
+    expect(noCommits[0].attentionLevel).not.toBe('critical');
+  });
+
+  it('no releases alone never outranks a repo with escalating trajectory', () => {
+    const noReleases = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'none', contributorStatus: 'healthy' })]);
+    const escalating = getAttentionQueue([makeForecastRepo({ score: 0, trajectory: 'escalating' })]);
+    expect(escalating[0].attentionScore).toBeGreaterThan(noReleases[0].attentionScore);
+  });
+
+  it('bus factor alone never outranks volatility elevated', () => {
+    const busFactor   = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'bus_factor_risk' })]);
+    const volatility  = getAttentionQueue([makeForecastRepo({ score: 0, volatilityLevel: 'high' })]);
+    expect(volatility[0].attentionScore).toBeGreaterThan(busFactor[0].attentionScore);
+  });
+
+  it('structural reasons still appear even when behavioral signals dominate', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'failing', releaseStatus: 'none',
+      contributorStatus: 'bus_factor_risk', noRecentCommits: true,
+    })]);
+    expect(result[0].reasons).toContain('CI pipeline is failing');
+    expect(result[0].reasons).toContain('High bus-factor risk');
+    expect(result[0].reasons).toContain('No releases found');
+    expect(result[0].reasons).toContain('No recent commits');
+  });
+
+  it('mixed behavioral + structural repo: both reason types present', () => {
+    const result = getAttentionQueue([makeForecastRepo({
+      score: 0, trajectory: 'escalating',
+      releaseStatus: 'none', contributorStatus: 'bus_factor_risk',
+    })]);
+    const reasons = result[0].reasons;
+    expect(reasons).toContain('Escalating operational trajectory');
+    expect(reasons).toContain('No releases found');
+    expect(reasons).toContain('High bus-factor risk');
+  });
+
+  it('structural-only repo (score=0, all structural signals) stays below high (< 40)', () => {
+    const result = getAttentionQueue([makeStructuralRepo()]);
+    expect(result[0].attentionScore).toBeLessThan(40);
+    expect(result[0].attentionLevel).not.toBe('high');
+    expect(result[0].attentionLevel).not.toBe('critical');
+  });
+
+  it('deterministic ordering: same behavioral signal always sorts the same way', () => {
+    const repos = [
+      makeRepo({ id: 3, fullName: 'c/repo', score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy', lastSyncedAt: '2025-01-01T00:00:00.000Z' }),
+      makeRepo({ id: 1, fullName: 'a/repo', score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy', lastSyncedAt: '2025-01-01T00:00:00.000Z' }),
+      makeRepo({ id: 2, fullName: 'b/repo', score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy', lastSyncedAt: '2025-01-01T00:00:00.000Z' }),
+    ];
+    const r1 = getAttentionQueue([...repos]);
+    const r2 = getAttentionQueue([...repos].reverse());
+    expect(r1.map(x => x.repoId)).toEqual(r2.map(x => x.repoId));
+  });
+});
+
+// ── PR Health operational signals ─────────────────────────────────────────────
+
+function makePrHealthRepo(overrides = {}) {
+  return makeRepo({
+    score: 0,
+    ciStatus: 'passing',
+    releaseStatus: 'healthy',
+    contributorStatus: 'healthy',
+    prHealthStatus: null,
+    ...overrides,
+  });
+}
+
+describe('getAttentionQueue — PR health signals', () => {
+  it('absent prHealthStatus adds no PR health points', () => {
+    const result = getAttentionQueue([makePrHealthRepo()]);
+    expect(result[0].attentionScore).toBe(0);
+    expect(result[0].reasons).not.toContain('PR health critical');
+    expect(result[0].reasons).not.toContain('PR health at-risk');
+    expect(result[0].reasons).not.toContain('PR health monitored');
+  });
+
+  it('prHealthStatus=healthy adds no PR health points', () => {
+    const result = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'healthy' })]);
+    expect(result[0].attentionScore).toBe(0);
+  });
+
+  it('prHealthStatus=monitor adds PR_HEALTH_MONITOR pts', () => {
+    const result = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'monitor' })]);
+    expect(result[0].attentionScore).toBe(WEIGHTS.PR_HEALTH_MONITOR);
+    expect(result[0].reasons).toContain('PR health monitored');
+  });
+
+  it('prHealthStatus=at-risk adds PR_HEALTH_AT_RISK pts', () => {
+    const result = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'at-risk' })]);
+    expect(result[0].attentionScore).toBe(WEIGHTS.PR_HEALTH_AT_RISK);
+    expect(result[0].reasons).toContain('PR health at-risk');
+  });
+
+  it('prHealthStatus=critical adds PR_HEALTH_CRITICAL pts', () => {
+    const result = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'critical' })]);
+    expect(result[0].attentionScore).toBe(WEIGHTS.PR_HEALTH_CRITICAL);
+    expect(result[0].reasons).toContain('PR health critical');
+  });
+
+  it('PR_HEALTH_CRITICAL > PR_HEALTH_AT_RISK > PR_HEALTH_MONITOR', () => {
+    expect(WEIGHTS.PR_HEALTH_CRITICAL).toBeGreaterThan(WEIGHTS.PR_HEALTH_AT_RISK);
+    expect(WEIGHTS.PR_HEALTH_AT_RISK).toBeGreaterThan(WEIGHTS.PR_HEALTH_MONITOR);
+  });
+
+  it('PR health status values are exclusive (critical does not also fire at-risk)', () => {
+    const result = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'critical' })]);
+    const reasons = result[0].reasons;
+    expect(reasons.filter(r => r.startsWith('PR health')).length).toBe(1);
+    expect(reasons).toContain('PR health critical');
+  });
+
+  it('PR health at-risk outranks structural-only stack (no releases + bus factor)', () => {
+    // PR_HEALTH_AT_RISK(20) vs RELEASE_NONE(3)+BUS_FACTOR(5) = 8
+    const prAtRisk   = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'at-risk' })]);
+    const structural = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'none', contributorStatus: 'bus_factor_risk' })]);
+    expect(prAtRisk[0].attentionScore).toBeGreaterThan(structural[0].attentionScore);
+  });
+
+  it('PR health critical outranks structural-only stack', () => {
+    const prCritical = getAttentionQueue([makePrHealthRepo({ prHealthStatus: 'critical' })]);
+    const structural = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', releaseStatus: 'none', contributorStatus: 'bus_factor_risk', noRecentCommits: true })]);
+    expect(prCritical[0].attentionScore).toBeGreaterThan(structural[0].attentionScore);
+  });
+
+  it('PR health stacks additively with base score signals', () => {
+    // RISK_SCORE_MONITOR(20) + PR_HEALTH_CRITICAL(30) = 50 → high
+    const result = getAttentionQueue([makePrHealthRepo({ score: 30, prHealthStatus: 'critical' })]);
+    expect(result[0].attentionScore).toBe(50);
+    expect(result[0].attentionLevel).toBe('high');
+  });
+
+  it('PR health stacks with CI failing (both behavioral signals)', () => {
+    // CI_FAILING(40) + PR_HEALTH_CRITICAL(30) = 70 → critical
+    const result = getAttentionQueue([makePrHealthRepo({ ciStatus: 'failing', prHealthStatus: 'critical' })]);
+    expect(result[0].attentionScore).toBe(70);
+    expect(result[0].attentionLevel).toBe('critical');
+  });
+
+  it('PR health repo sorts above structural-only repo in queue', () => {
+    const repos = [
+      makeRepo({ id: 1, fullName: 'o/structural', score: 0, ciStatus: 'unknown', releaseStatus: 'none', contributorStatus: 'bus_factor_risk' }),
+      makePrHealthRepo({ id: 2, fullName: 'o/pr-health', prHealthStatus: 'at-risk' }),
+    ];
+    const result = getAttentionQueue(repos);
+    expect(result[0].repoId).toBe(2);
   });
 });

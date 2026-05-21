@@ -2,63 +2,74 @@
 
 // Points awarded per matched signal. Values are additive; total is capped at 100.
 //
-// Unified Operational Risk Model alignment:
+// Priority tiers:
+//
+//   behavioralCritical  CI failing, confirmed abandoned
+//   behavioralHigh      escalating/deteriorating/volatile trajectory, persistent risk,
+//                       engineering volatility, repeated CI instability
+//   behavioralMedium    PR health monitor/at-risk/critical, forecast signals, escalation
+//   structuralContext   bus factor, no releases, stale releases, low activity, no commits
+//   telemetryContext    CI unknown, release unknown, contributor unknown
 //
 // PRIMARY driver: unified risk score bands (from scoreRepo).
-// Thresholds mirror scoreRepo's LABEL_THRESHOLDS exactly.
 //   RISK_SCORE_CRITICAL (≥75) → 65 pts → attention lands in critical region (≥60)
 //   RISK_SCORE_AT_RISK  (≥50) → 45 pts → attention lands in high region (≥40)
 //   RISK_SCORE_MONITOR  (≥30) → 20 pts → attention lands in medium region (≥20)
 //
-// FRESHNESS signals: CI/contributor may have degraded since the last sync.
-//   Reduced from their former primary-driver weights; unified score reflects them
-//   after the next sync. They provide a bounded freshness window.
+// BEHAVIORAL signals: substantially increased so behavioral instability dominates
+//   structural context in the attention queue.
 //
-// STRUCTURAL signals: very low weight — now captured in the unified score.
-//   Structural-only concern cannot alone push attention to high (≥40).
+// STRUCTURAL signals: small weights — captured in unified score.
+//   Structural-only concerns cannot alone push attention to high (≥40).
 //
-// FORECAST / TRAJECTORY modifiers: prioritization boosts within or across bands.
-//   Primary severity comes from the risk score; these promote repos within a tier
-//   and can cross a band boundary when paired with a base score signal.
+// FORECAST / TRAJECTORY modifiers: increased to ensure behavioral trends clearly
+//   outrank structural-only repos.
+//
+// PR HEALTH signals: graceful — only fire when repo.prHealthStatus is present.
 const WEIGHTS = {
   // ── Risk score band alignment (unified model — primary severity driver) ───────
   RISK_SCORE_CRITICAL: 65,  // score >= 75 → starts attention in critical region
   RISK_SCORE_AT_RISK:  45,  // score >= 50 → starts attention in high region
-  RISK_SCORE_MONITOR:  20,  // score >= 30 → starts attention in medium region (mirrors scoreRepo monitor threshold)
+  RISK_SCORE_MONITOR:  20,  // score >= 30 → starts attention in medium region
 
-  // ── Freshness signals (may have changed since last sync) ─────────────────────
-  CI_FAILING:            25,  // freshness — CI may have degraded since last sync
-  CONTRIBUTOR_ABANDONED: 30,  // freshness — team may have gone dark (no commits + CI not passing)
-  CONTRIBUTOR_DORMANT:   10,  // freshness — no commits but CI passing; repo is intentionally quiet
+  // ── Behavioral operational signals ───────────────────────────────────────────
+  // Increased significantly so behavioral instability dominates structural context.
+  CI_FAILING:            40,  // active CI failure — high-urgency operational event
+  CONTRIBUTOR_ABANDONED: 40,  // confirmed abandonment (CI failing + no contributors)
+  CONTRIBUTOR_DORMANT:   10,  // intentionally quiet repo — lower urgency than abandoned
 
-  // ── Activity freshness (ordering signal — commits absence is actionable) ─────
-  NO_RECENT_COMMITS:       1,
+  // ── Activity freshness ───────────────────────────────────────────────────────
+  NO_RECENT_COMMITS:      6,  // visible context signal; well below behavioral weights
 
-  // ── Structural freshness signals (very reduced — now in unified score) ────────
-  CONTRIBUTOR_BUS_FACTOR:  3,
-  RELEASE_STALE:           3,
-  CONTRIBUTOR_LOW:         2,
-  RELEASE_NONE:            2,
+  // ── Structural context (very low — captured in unified score) ─────────────────
+  CONTRIBUTOR_BUS_FACTOR: 5,  // structural context, not an active failure
+  RELEASE_STALE:          3,  // maturity context
+  CONTRIBUTOR_LOW:        2,  // maturity context
+  RELEASE_NONE:           3,  // maturity context
 
-  // ── Data-gap signals (near-zero — telemetry absence is not an alert) ─────────
-  CI_UNKNOWN:              1,
-  RELEASE_UNKNOWN:         1,
-  CONTRIBUTOR_UNKNOWN:     1,
-  NO_METRICS:              4,
+  // ── Data-gap signals (near-zero — telemetry absence is not an alert) ──────────
+  CI_UNKNOWN:             2,  // coverage gap — not an operational event
+  RELEASE_UNKNOWN:        2,  // coverage gap — not an operational event
+  CONTRIBUTOR_UNKNOWN:    1,  // coverage gap
+  NO_METRICS:             4,  // no data at all — needs first sync
 
   // ── Forecast / trajectory prioritization modifiers ───────────────────────────
-  // Boost within or across attention bands. Paired with a base score signal,
-  // these can cross a band boundary (e.g. at-risk + escalating → critical).
-  TRAJ_ESCALATING:    15,
-  TRAJ_DETERIORATING: 10,
-  TRAJ_VOLATILE:       5,
-  FORECAST_CRITICAL:  12,
-  FORECAST_HIGH:       6,
-  PERSISTENT_RISK:    15,
-  ESC_HIGH:            5,
-  ESC_CRITICAL:       15,
-  VOLATILITY_HIGH:     5,
-  CI_UNRESOLVED:       8,
+  // Increased so behavioral trends clearly outrank structural-only stacks.
+  TRAJ_ESCALATING:       30,  // strong behavioral signal — actively worsening
+  TRAJ_DETERIORATING:    22,  // notable deterioration trend
+  TRAJ_VOLATILE:         10,  // changing direction — behaviorally uncertain
+  FORECAST_CRITICAL:     12,  // forecast at critical level
+  FORECAST_HIGH:          6,  // forecast at high level
+  PERSISTENT_RISK:       25,  // sustained behavioral risk pattern
+  ESC_HIGH:               8,  // escalation elevated
+  ESC_CRITICAL:          15,  // escalation at critical
+  VOLATILITY_HIGH:       22,  // engineering volatility elevated — key behavioral signal
+  CI_UNRESOLVED:         12,  // repeated unresolved CI — behavioral instability pattern
+
+  // ── PR Health operational signals (graceful: only fire when fields present) ───
+  PR_HEALTH_CRITICAL:    30,  // PR pipeline in critical state — active operational risk
+  PR_HEALTH_AT_RISK:     20,  // PR pipeline at-risk — active concern
+  PR_HEALTH_MONITOR:     10,  // PR pipeline monitored — worth noting
 };
 
 // Thresholds evaluated in descending order of severity.
@@ -92,6 +103,10 @@ function _scoreRepo(repo) {
   var unresolvedCiRun  = repo.unresolvedCiRun  === true;
   var noRecentCommits  = repo.noRecentCommits  === true;
 
+  // Optional PR health field — graceful fallback when absent.
+  // Accepted values: 'healthy' | 'monitor' | 'at-risk' | 'critical' | null
+  var prHealthStatus = repo.prHealthStatus || null;
+
   var total   = 0;
   var reasons = [];
 
@@ -107,7 +122,7 @@ function _scoreRepo(repo) {
     reasons.push('Monitored risk score (' + riskScore + ')');
   }
 
-  // ── Freshness signals ─────────────────────────────────────────────────────────
+  // ── Behavioral operational signals ───────────────────────────────────────────
   if (ci === 'failing') {
     total += WEIGHTS.CI_FAILING;
     reasons.push('CI pipeline is failing');
@@ -135,7 +150,7 @@ function _scoreRepo(repo) {
     reasons.push('No recent commits');
   }
 
-  // ── Structural freshness signals ──────────────────────────────────────────────
+  // ── Structural context signals ────────────────────────────────────────────────
   if (con === 'bus_factor_risk') {
     total += WEIGHTS.CONTRIBUTOR_BUS_FACTOR;
     reasons.push('High bus-factor risk');
@@ -212,6 +227,18 @@ function _scoreRepo(repo) {
     reasons.push('Repeated unresolved CI instability');
   }
 
+  // ── PR Health operational signals (fires only when prHealthStatus present) ────
+  if (prHealthStatus === 'critical') {
+    total += WEIGHTS.PR_HEALTH_CRITICAL;
+    reasons.push('PR health critical');
+  } else if (prHealthStatus === 'at-risk') {
+    total += WEIGHTS.PR_HEALTH_AT_RISK;
+    reasons.push('PR health at-risk');
+  } else if (prHealthStatus === 'monitor') {
+    total += WEIGHTS.PR_HEALTH_MONITOR;
+    reasons.push('PR health monitored');
+  }
+
   var attentionScore = Math.min(100, total);
   var attentionLevel = _attentionLevel(attentionScore);
 
@@ -224,7 +251,8 @@ function _scoreRepo(repo) {
  *
  * The attention score derives primarily from the unified risk score bands
  * (RISK_SCORE_CRITICAL/AT_RISK/MONITOR), ensuring attention mirrors severity.
- * Forecast/trajectory modifiers boost priority within or across bands.
+ * Behavioral signals (CI failing, trajectories, volatility, PR health) substantially
+ * outweigh structural context (bus factor, no releases, no commits).
  *
  * Sort: attentionScore DESC → lastSyncedAt DESC → fullName ASC.
  *
