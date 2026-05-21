@@ -1540,6 +1540,58 @@
     .pr-health-reasons li:first-child {
       border-top: none;
     }
+    .ev-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: 6px;
+    }
+    .ev-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .ev-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .ev-score {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+    .ev-reasons {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .ev-reasons li {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      padding: 3px 0;
+      border-top: 1px solid var(--border);
+    }
+    .ev-reasons li:first-child {
+      border-top: none;
+    }
+    .ev-stable {
+      font-size: 0.81rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    .ev-risk-note {
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -1887,6 +1939,36 @@
       if (el) el.innerHTML = '<p class="error-msg">Error: ' + esc(String(msg)) + '</p>';
     }
 
+    // ── Risk signal classification ───────────────────────────────────────────
+    // Reasons that start with one of these prefixes are active operational risks
+    // (instability or degradation happening now). Everything else is structural /
+    // maturity context — useful background but not an active incident.
+
+    var ACTIVE_OPERATIONAL_PREFIXES = [
+      'CI pipeline is failing',
+      'Repository appears abandoned',
+      'Repository appears dormant',
+      'Escalating operational trajectory',
+      'Persistent operational risk',
+      'Critical risk score',
+      'Elevated risk score',
+      'Deteriorating operational trajectory',
+      'Volatile operational trajectory',
+      'Critical forecast level',
+      'High forecast level',
+      'Escalation level is critical',
+      'Escalation level is high',
+      'Operational volatility elevated',
+      'Repeated unresolved CI instability',
+    ];
+
+    function isActiveOperationalRisk(reason) {
+      for (var i = 0; i < ACTIVE_OPERATIONAL_PREFIXES.length; i++) {
+        if (reason.indexOf(ACTIVE_OPERATIONAL_PREFIXES[i]) === 0) return true;
+      }
+      return false;
+    }
+
     // ── Risk explanation panel ───────────────────────────────────────────────
 
     function buildExplanationHtml(exp) {
@@ -1895,23 +1977,54 @@
           + 'No metrics available yet. Click <strong>Sync Now</strong> to analyze this repository.'
           + '</p>';
       }
+
       var html = '';
+      var labelStyle = 'font-size:0.67rem;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;'
+                     + 'color:var(--text-muted);margin-bottom:6px;';
+
+      // ── Section A: Active Operational Risks ─────────────────────────────────
+      html += '<div style="' + labelStyle + 'margin-top:8px;">Active Operational Risks</div>';
+
       if (exp.allClear) {
         html += '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0;">&#10003; No risk signals detected for this repository.</p>';
+        return html;
+      }
+
+      var activeRisks    = exp.triggered.filter(isActiveOperationalRisk);
+      var structuralItems = exp.triggered.filter(function(r) { return !isActiveOperationalRisk(r); });
+      var hasNotMeasured = exp.notMeasured && exp.notMeasured.length;
+
+      if (activeRisks.length === 0) {
+        html += '<p style="font-size:0.82rem;color:var(--text-muted);padding:4px 0 8px;font-style:italic;">No active operational instability detected.</p>';
       } else {
-        html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:10px;">';
-        exp.triggered.forEach(function(f) {
+        html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:8px;">';
+        activeRisks.forEach(function(f) {
           html += '<li style="color:var(--sev-critical-text);">&#9888;&#xFE0E; ' + esc(f) + '</li>';
         });
         html += '</ul>';
       }
-      if (exp.notMeasured && exp.notMeasured.length) {
-        html += '<ul style="font-size:0.78rem;color:var(--sev-unknown-text);padding-left:18px;line-height:1.8;">';
-        exp.notMeasured.forEach(function(m) {
-          html += '<li>' + esc(m) + ': not yet measured</li>';
-        });
-        html += '</ul>';
+
+      // ── Section B: Structural / Maturity Context ─────────────────────────────
+      if (structuralItems.length > 0 || hasNotMeasured) {
+        html += '<div style="' + labelStyle + 'margin-top:14px;">Structural / Maturity Context</div>';
+
+        if (structuralItems.length > 0) {
+          html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:6px;">';
+          structuralItems.forEach(function(f) {
+            html += '<li style="color:var(--text-secondary);">&#8212; ' + esc(f) + '</li>';
+          });
+          html += '</ul>';
+        }
+
+        if (hasNotMeasured) {
+          html += '<ul style="font-size:0.78rem;color:var(--sev-unknown-text);padding-left:18px;line-height:1.8;">';
+          exp.notMeasured.forEach(function(m) {
+            html += '<li>' + esc(m) + ': not yet measured</li>';
+          });
+          html += '</ul>';
+        }
       }
+
       return html;
     }
 
@@ -3062,6 +3175,82 @@
         });
     }
 
+    function buildEngineeringVolatilityHtml(data) {
+      var level = data.volatilityLevel || 'low';
+      var score = typeof data.volatilityScore === 'number' ? data.volatilityScore : 0;
+      var conf  = data.confidenceLevel || 'low';
+      var reasons = Array.isArray(data.reasons) ? data.reasons : [];
+
+      var levelClass = {
+        low:      'severity-neutral',
+        medium:   'severity-medium',
+        high:     'severity-high',
+        critical: 'severity-critical',
+      }[level] || 'severity-neutral';
+
+      var confClass = {
+        high:   'conf-high',
+        medium: 'conf-medium',
+        low:    'conf-low',
+      }[conf] || 'conf-low';
+
+      var badge = '<span class="ev-badge ' + levelClass + '">' + level.charAt(0).toUpperCase() + level.slice(1) + '</span>';
+      var confBadge = '<span class="confidence-badge ' + confClass + '">' + conf + ' confidence</span>';
+      var scoreTxt = '<span class="ev-score">Score: ' + score + ' / 100</span>';
+
+      var body;
+      if (!reasons.length || level === 'low') {
+        body = '<p class="ev-stable">Engineering behavior appears stable over recent snapshots.</p>';
+      } else {
+        var capped = reasons.slice(0, 3);
+        body = '<ul class="ev-reasons">'
+          + capped.map(function(r) { return '<li>' + r + '</li>'; }).join('')
+          + '</ul>';
+      }
+
+      return '<div class="ev-panel">'
+        + '<div class="ev-meta">' + badge + confBadge + scoreTxt + '</div>'
+        + body
+        + '</div>';
+    }
+
+    function buildEvRiskNoteHtml(data) {
+      var level = data.volatilityLevel || 'low';
+      if (level === 'low') return '';
+      var levelClass = {
+        medium:   'severity-medium',
+        high:     'severity-high',
+        critical: 'severity-critical',
+      }[level] || 'severity-medium';
+      return '<div class="ev-risk-note ' + levelClass + '">'
+        + 'Engineering volatility detected across recent snapshots.'
+        + '</div>';
+    }
+
+    function loadRepoEngineeringVolatility(repoId) {
+      var evContainer   = document.getElementById('repo-ev-content');
+      var riskContainer = document.getElementById('repo-ev-risk-note');
+      if (evContainer)   evContainer.innerHTML   = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      if (riskContainer) riskContainer.innerHTML = '';
+      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/engineering-volatility', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          if (evContainer)   evContainer.innerHTML   = buildEngineeringVolatilityHtml(d);
+          if (riskContainer) riskContainer.innerHTML = buildEvRiskNoteHtml(d);
+        })
+        .catch(function() {
+          console.warn('Engineering volatility data unavailable for repo', repoId);
+          if (evContainer) {
+            evContainer.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+              + 'Engineering volatility data unavailable.</p>';
+          }
+        });
+    }
+
     function loadRepoConfidence(repoId) {
       var container = document.getElementById('repo-confidence-content');
       if (!container) return;
@@ -3279,10 +3468,10 @@
         +   buildActionsHtml(repo)
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="risk">'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Why this repo is risky</div>'
         +   buildExplanationHtml(exp)
         +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Pull Request Health</div>'
         +   '<div id="repo-pr-health-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
+        +   '<div id="repo-ev-risk-note"></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="forecast">'
         +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Operational Forecast</div>'
@@ -3291,6 +3480,8 @@
         +   '<div id="repo-stability-content"></div>'
         +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Confidence</div>'
         +   '<div id="repo-confidence-content"></div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Engineering Volatility</div>'
+        +   '<div id="repo-ev-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="timeline">'
         +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Operational Timeline</div>'
@@ -3309,6 +3500,7 @@
       loadRepoForecast(repo.id);
       loadRepoConfidence(repo.id);
       loadRepoPrHealth(repo.id);
+      loadRepoEngineeringVolatility(repo.id);
     }
 
     function renderReposTable(filtered) {
