@@ -1,13 +1,27 @@
 'use strict';
 
-const { fetchUserRepos }      = require('./fetchUserRepos');
-const { fetchRepoMetrics }    = require('./fetchRepoMetrics');
-const { fetchCiStatus }       = require('./fetchCiStatus');
-const { fetchReleaseInfo }    = require('./fetchReleaseInfo');
-const { fetchContributorInfo } = require('./fetchContributorInfo');
-const { scoreRepo }           = require('../risk/scoreRepo');
+const { fetchUserRepos }        = require('./fetchUserRepos');
+const { fetchRepoMetrics }      = require('./fetchRepoMetrics');
+const { fetchCiStatus }         = require('./fetchCiStatus');
+const { fetchReleaseInfo }      = require('./fetchReleaseInfo');
+const { fetchContributorInfo }  = require('./fetchContributorInfo');
+const { fetchPullRequestHealth } = require('./fetchPullRequestHealth');
+const { scoreRepo }             = require('../risk/scoreRepo');
 
 const MS_PER_DAY = 86_400_000;
+
+const UNKNOWN_PR_HEALTH = {
+  openPrCount:          null,
+  mergedPrCount30d:     null,
+  stalePrCount:         null,
+  avgMergeLatencyHours: null,
+  failedCheckPrCount:   null,
+  avgPrSize:            null,
+  throughput30d:        null,
+  abandonedPrCount:     null,
+  oldestOpenPrAgeDays:  null,
+  prTelemetryStatus:    'unknown',
+};
 
 /**
  * Orchestrates a full sync cycle for one user:
@@ -52,14 +66,16 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
       // Upsert repository row
       const repoRow = await _upsertRepository({ db, userId, repo, now });
 
-      // Fetch metrics, CI status, release info, and contributor info in parallel
+      // Fetch metrics, CI status, release info, contributor info, and PR health in parallel
       const UNKNOWN_RELEASE      = { latestReleaseName: null, latestReleasePublishedAt: null, releaseStatus: 'unknown' };
       const UNKNOWN_CONTRIBUTORS = { activeContributorCount: null, topContributorPercentage: null, contributorStatus: 'unknown' };
-      const [metrics, ciStatus, releaseInfo, contributorInfo] = await Promise.all([
+      const [owner, repoName]    = repo.fullName.split('/');
+      const [metrics, ciStatus, releaseInfo, contributorInfo, prHealth] = await Promise.all([
         fetchRepoMetrics({ accessToken, fullName: repo.fullName, fetchFn, now }),
         fetchCiStatus({ accessToken, fullName: repo.fullName, fetchFn }).catch(() => 'unknown'),
         fetchReleaseInfo({ accessToken, fullName: repo.fullName, fetchFn, now }).catch(() => UNKNOWN_RELEASE),
         fetchContributorInfo({ accessToken, fullName: repo.fullName, fetchFn }).catch(() => UNKNOWN_CONTRIBUTORS),
+        fetchPullRequestHealth({ accessToken, owner, repo: repoName, fetchFn }).catch(() => ({ ...UNKNOWN_PR_HEALTH })),
       ]);
 
       // Insert metrics snapshot
@@ -84,6 +100,29 @@ async function syncUserRepos({ db, userId, accessToken, fetchFn, now } = {}) {
           contributorInfo.activeContributorCount,
           contributorInfo.topContributorPercentage,
           contributorInfo.contributorStatus,
+        ]
+      );
+
+      // Insert PR telemetry snapshot
+      await db.query(
+        `INSERT INTO repo_pr_metrics
+           (repo_id, snapshot_at, open_pr_count, merged_pr_count_30d, stale_pr_count,
+            avg_merge_latency_hours, failed_check_pr_count, avg_pr_size, throughput_30d,
+            abandoned_pr_count, oldest_open_pr_age_days, pr_telemetry_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          repoRow.id,
+          now,
+          prHealth.openPrCount,
+          prHealth.mergedPrCount30d,
+          prHealth.stalePrCount,
+          prHealth.avgMergeLatencyHours,
+          prHealth.failedCheckPrCount,
+          prHealth.avgPrSize,
+          prHealth.throughput30d,
+          prHealth.abandonedPrCount,
+          prHealth.oldestOpenPrAgeDays,
+          prHealth.prTelemetryStatus,
         ]
       );
 

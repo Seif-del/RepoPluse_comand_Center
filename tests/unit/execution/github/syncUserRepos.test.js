@@ -7,17 +7,19 @@ jest.mock('../../../../execution/github/fetchRepoMetrics');
 jest.mock('../../../../execution/github/fetchCiStatus');
 jest.mock('../../../../execution/github/fetchReleaseInfo');
 jest.mock('../../../../execution/github/fetchContributorInfo');
+jest.mock('../../../../execution/github/fetchPullRequestHealth');
 jest.mock('../../../../execution/risk/scoreRepo');
 
 // ── Imports ────────────────────────────────────────────────────────────────────
 
-const { syncUserRepos }       = require('../../../../execution/github/syncUserRepos');
-const { fetchUserRepos }      = require('../../../../execution/github/fetchUserRepos');
-const { fetchRepoMetrics }    = require('../../../../execution/github/fetchRepoMetrics');
-const { fetchCiStatus }       = require('../../../../execution/github/fetchCiStatus');
-const { fetchReleaseInfo }    = require('../../../../execution/github/fetchReleaseInfo');
-const { fetchContributorInfo } = require('../../../../execution/github/fetchContributorInfo');
-const { scoreRepo }           = require('../../../../execution/risk/scoreRepo');
+const { syncUserRepos }          = require('../../../../execution/github/syncUserRepos');
+const { fetchUserRepos }         = require('../../../../execution/github/fetchUserRepos');
+const { fetchRepoMetrics }       = require('../../../../execution/github/fetchRepoMetrics');
+const { fetchCiStatus }          = require('../../../../execution/github/fetchCiStatus');
+const { fetchReleaseInfo }       = require('../../../../execution/github/fetchReleaseInfo');
+const { fetchContributorInfo }   = require('../../../../execution/github/fetchContributorInfo');
+const { fetchPullRequestHealth } = require('../../../../execution/github/fetchPullRequestHealth');
+const { scoreRepo }              = require('../../../../execution/risk/scoreRepo');
 
 // ── Shared fixtures ────────────────────────────────────────────────────────────
 
@@ -55,20 +57,34 @@ const MOCK_SCORE = {
   factors: ['3 or more stale pull requests (open > 7 days)'],
 };
 
+const MOCK_PR_HEALTH = {
+  openPrCount:          3,
+  mergedPrCount30d:     5,
+  stalePrCount:         1,
+  avgMergeLatencyHours: 24.5,
+  failedCheckPrCount:   0,
+  avgPrSize:            120,
+  throughput30d:        1.2,
+  abandonedPrCount:     0,
+  oldestOpenPrAgeDays:  8.0,
+  prTelemetryStatus:    'active',
+};
+
 const REPO_ROW = { id: 42 };
 
 function makeDb({ repoRow = REPO_ROW, prevScore = null, registeredRepos = [] } = {}) {
   return {
     query: jest.fn(async (sql) => {
       // Must be checked before 'INSERT INTO repositories' — both contain 'repositories'
-      if (sql.includes('SELECT github_repo_id'))     return { rows: registeredRepos };
-      if (sql.includes('INSERT INTO repositories'))  return { rows: [repoRow] };
+      if (sql.includes('SELECT github_repo_id'))         return { rows: registeredRepos };
+      if (sql.includes('INSERT INTO repositories'))      return { rows: [repoRow] };
       if (sql.includes('SELECT score FROM risk_scores')) {
         return prevScore !== null ? { rows: [{ score: prevScore }] } : { rows: [] };
       }
-      if (sql.includes('INSERT INTO repo_metrics')) return { rows: [] };
-      if (sql.includes('INSERT INTO risk_scores'))  return { rows: [] };
-      if (sql.includes('UPDATE repositories'))      return { rows: [] };
+      if (sql.includes('INSERT INTO repo_metrics'))     return { rows: [] };
+      if (sql.includes('INSERT INTO repo_pr_metrics'))  return { rows: [] };
+      if (sql.includes('INSERT INTO risk_scores'))      return { rows: [] };
+      if (sql.includes('UPDATE repositories'))          return { rows: [] };
       return { rows: [] };
     }),
   };
@@ -80,6 +96,7 @@ function resetMocks() {
   fetchCiStatus.mockReset();
   fetchReleaseInfo.mockReset();
   fetchContributorInfo.mockReset();
+  fetchPullRequestHealth.mockReset();
   scoreRepo.mockReset();
 }
 
@@ -90,6 +107,7 @@ beforeEach(() => {
   fetchCiStatus.mockResolvedValue('passing');
   fetchReleaseInfo.mockResolvedValue(MOCK_RELEASE);
   fetchContributorInfo.mockResolvedValue(MOCK_CONTRIBUTORS);
+  fetchPullRequestHealth.mockResolvedValue(MOCK_PR_HEALTH);
   scoreRepo.mockReturnValue(MOCK_SCORE);
 });
 
@@ -492,5 +510,129 @@ describe('syncUserRepos — error isolation for registered repos', () => {
     expect(result.synced).toBe(1);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].fullName).toBe('org/broken');
+  });
+});
+
+// ── PR telemetry — fetchPullRequestHealth integration ─────────────────────────
+
+describe('syncUserRepos — PR telemetry', () => {
+  it('calls fetchPullRequestHealth during sync', async () => {
+    const fetchFn = jest.fn();
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn, now: NOW });
+    expect(fetchPullRequestHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls fetchPullRequestHealth with split owner and repo from fullName', async () => {
+    const fetchFn = jest.fn();
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn, now: NOW });
+    expect(fetchPullRequestHealth).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: 'tok', owner: 'owner', repo: 'repo', fetchFn })
+    );
+  });
+
+  it('inserts a repo_pr_metrics row on success', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const prCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_pr_metrics'));
+    expect(prCall).toBeDefined();
+  });
+
+  it('inserts pr_telemetry_status active when PR health is available', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const prCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_pr_metrics'));
+    expect(prCall[1]).toContain('active');
+  });
+
+  it('inserts pr_telemetry_status none when repo has no PRs', async () => {
+    fetchPullRequestHealth.mockResolvedValue({
+      openPrCount: 0, mergedPrCount30d: 0, stalePrCount: 0, avgMergeLatencyHours: null,
+      failedCheckPrCount: 0, avgPrSize: null, throughput30d: 0, abandonedPrCount: 0,
+      oldestOpenPrAgeDays: null, prTelemetryStatus: 'none',
+    });
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const prCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_pr_metrics'));
+    expect(prCall[1]).toContain('none');
+  });
+
+  it('inserts pr_telemetry_status unknown and null metrics when fetchPullRequestHealth throws', async () => {
+    fetchPullRequestHealth.mockRejectedValue(new Error('GitHub API down'));
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const prCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_pr_metrics'));
+    expect(prCall).toBeDefined();
+    expect(prCall[1]).toContain('unknown');
+    // Numeric metrics should be null when telemetry is unknown
+    expect(prCall[1][2]).toBeNull();  // open_pr_count
+    expect(prCall[1][3]).toBeNull();  // merged_pr_count_30d
+  });
+
+  it('does not fail the sync when fetchPullRequestHealth throws', async () => {
+    fetchPullRequestHealth.mockRejectedValue(new Error('rate limited'));
+    const db = makeDb();
+    const result = await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(result.synced).toBe(1);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('maps all PR health fields into the insert payload', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const prCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_pr_metrics'));
+    const params = prCall[1];
+    expect(params[2]).toBe(MOCK_PR_HEALTH.openPrCount);           // open_pr_count
+    expect(params[3]).toBe(MOCK_PR_HEALTH.mergedPrCount30d);      // merged_pr_count_30d
+    expect(params[4]).toBe(MOCK_PR_HEALTH.stalePrCount);          // stale_pr_count
+    expect(params[5]).toBe(MOCK_PR_HEALTH.avgMergeLatencyHours);  // avg_merge_latency_hours
+    expect(params[6]).toBe(MOCK_PR_HEALTH.failedCheckPrCount);    // failed_check_pr_count
+    expect(params[7]).toBe(MOCK_PR_HEALTH.avgPrSize);             // avg_pr_size
+    expect(params[8]).toBe(MOCK_PR_HEALTH.throughput30d);         // throughput_30d
+    expect(params[9]).toBe(MOCK_PR_HEALTH.abandonedPrCount);      // abandoned_pr_count
+    expect(params[10]).toBe(MOCK_PR_HEALTH.oldestOpenPrAgeDays);  // oldest_open_pr_age_days
+    expect(params[11]).toBe(MOCK_PR_HEALTH.prTelemetryStatus);    // pr_telemetry_status
+  });
+
+  it('uses the sync now timestamp as snapshot_at for repo_pr_metrics', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const prCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_pr_metrics'));
+    expect(prCall[1][1]).toBe(NOW);  // snapshot_at
+  });
+});
+
+// ── PR telemetry does not affect existing inserts ─────────────────────────────
+
+describe('syncUserRepos — PR telemetry does not affect existing inserts', () => {
+  it('still inserts repo_metrics when PR telemetry succeeds', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
+    expect(metricsCall).toBeDefined();
+  });
+
+  it('still inserts risk_scores when PR telemetry succeeds', async () => {
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO risk_scores'));
+    expect(riskCall).toBeDefined();
+  });
+
+  it('still inserts repo_metrics when PR telemetry throws', async () => {
+    fetchPullRequestHealth.mockRejectedValue(new Error('API error'));
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const metricsCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_metrics'));
+    expect(metricsCall).toBeDefined();
+  });
+
+  it('still inserts risk_scores when PR telemetry throws', async () => {
+    fetchPullRequestHealth.mockRejectedValue(new Error('API error'));
+    const db = makeDb();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    const riskCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO risk_scores'));
+    expect(riskCall).toBeDefined();
   });
 });
