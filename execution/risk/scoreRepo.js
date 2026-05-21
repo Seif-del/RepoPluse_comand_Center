@@ -64,10 +64,41 @@ const RULES = [
   },
   {
     id:       'contributor_abandoned',
-    test:     ({ contributorStatus })              => contributorStatus === 'abandoned',
+    // Requires full corroboration: abandoned only fires when no commits AND CI is
+    // actively failing. Unknown CI is insufficient — it may simply be unmeasured.
+    // Mutually exclusive with contributor_dormant (dormant fires when CI is unknown).
+    test:     ({ contributorStatus, commits7d, ciStatus }) =>
+                contributorStatus === 'abandoned' &&
+                commits7d === 0 &&
+                ciStatus === 'failing',
     points:   50,
-    factor:   'Repository appears abandoned (no contributors)',
+    factor:   'Repository appears abandoned',
     category: 'operational',
+  },
+  {
+    id:       'repo_dormant',
+    // Fires when no recent commits and CI is actively passing — repo is intentionally
+    // quiet/stable. Mutually exclusive with contributor_dormant and contributor_abandoned.
+    test:     ({ commits7d, ciStatus }) => commits7d === 0 && ciStatus === 'passing',
+    points:   15,
+    factor:   'Repository appears dormant',
+    category: 'structural',
+  },
+  {
+    id:       'contributor_dormant',
+    // Fires when contributor API returned no contributors AND no recent commits AND
+    // CI is not actively failing (unknown or passing). Treats the repo as dormant
+    // rather than abandoned — absence of maintenance evidence is not confirmation of
+    // abandonment. Mutually exclusive with repo_dormant (repo_dormant requires passing
+    // CI) and contributor_abandoned (requires failing CI).
+    test:     ({ contributorStatus, commits7d, ciStatus }) =>
+                contributorStatus === 'abandoned' &&
+                commits7d === 0 &&
+                ciStatus !== 'passing' &&
+                ciStatus !== 'failing',
+    points:   15,
+    factor:   'Repository appears dormant',
+    category: 'structural',
   },
   {
     id:       'release_stale',
@@ -115,7 +146,7 @@ const LABEL_THRESHOLDS = [
 // Exported for use by getRepoRiskFactors categorization.
 const OPERATIONAL_FACTOR_STRINGS = new Set([
   'CI/CD pipeline has recent failing runs',
-  'Repository appears abandoned (no contributors)',
+  'Repository appears abandoned',
 ]);
 
 /**

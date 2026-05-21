@@ -247,6 +247,49 @@ describe('fetchContributorInfo — healthy', () => {
   });
 });
 
+// ── API URL ───────────────────────────────────────────────────────────────────
+
+describe('fetchContributorInfo — API URL', () => {
+  it('includes anon=1 in the contributors request URL', async () => {
+    let capturedUrl = null;
+    const fetchFn = async (url) => {
+      capturedUrl = url;
+      return { status: 200, ok: true, json: async () => [] };
+    };
+    await fetchContributorInfo({ ...VALID, fetchFn });
+    expect(capturedUrl).toContain('anon=1');
+  });
+
+  it('includes per_page=100 alongside anon=1', async () => {
+    let capturedUrl = null;
+    const fetchFn = async (url) => {
+      capturedUrl = url;
+      return { status: 200, ok: true, json: async () => [] };
+    };
+    await fetchContributorInfo({ ...VALID, fetchFn });
+    expect(capturedUrl).toContain('per_page=100');
+    expect(capturedUrl).toContain('anon=1');
+  });
+
+  it('anon=1 is still included when the repo has contributors', async () => {
+    let capturedUrl = null;
+    const fetchFn = async (url) => {
+      capturedUrl = url;
+      return {
+        status: 200,
+        ok: true,
+        json: async () => [
+          { login: 'alice', contributions: 50 },
+          { login: 'bob',   contributions: 50 },
+          { login: 'carol', contributions: 50 },
+        ],
+      };
+    };
+    await fetchContributorInfo({ ...VALID, fetchFn });
+    expect(capturedUrl).toContain('anon=1');
+  });
+});
+
 // ── Return shape ──────────────────────────────────────────────────────────────
 
 describe('fetchContributorInfo — return shape', () => {

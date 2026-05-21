@@ -66,15 +66,20 @@ describe('decrypt — tamper detection', () => {
   it('throws when ciphertext is modified', () => {
     const enc = encrypt('secret', VALID_KEY);
     const parts = enc.split(':');
-    // Flip last char of ciphertext
-    const tampered = parts[0] + ':' + parts[1] + ':' + parts[2].slice(0, -1) + 'f';
+    const lastChar = parts[2].slice(-1);
+    const replacement = lastChar === 'f' ? 'e' : 'f';
+    const tampered = parts[0] + ':' + parts[1] + ':' + parts[2].slice(0, -1) + replacement;
     expect(() => decrypt(tampered, VALID_KEY)).toThrow();
   });
 
   it('throws when auth tag is modified', () => {
     const enc = encrypt('secret', VALID_KEY);
     const parts = enc.split(':');
-    const tampered = parts[0] + ':' + parts[1].replace(/.$/, 'f') + ':' + parts[2];
+    const tag = parts[1];
+    const lastChar = tag.slice(-1);
+    // Pick a replacement that is guaranteed to differ from the original character.
+    const replacement = lastChar === 'f' ? 'e' : 'f';
+    const tampered = parts[0] + ':' + tag.slice(0, -1) + replacement + ':' + parts[2];
     expect(() => decrypt(tampered, VALID_KEY)).toThrow();
   });
 

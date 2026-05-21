@@ -1,11 +1,12 @@
 'use strict';
 
-const CI_FAILING_FACTOR        = 'CI/CD pipeline has recent failing runs';
-const RELEASE_STALE_FACTOR     = 'No releases in the last 90 days';
-const RELEASE_NONE_FACTOR      = 'No releases found for this repository';
-const CONTRIBUTOR_LOW_FACTOR   = 'Low contributor activity (1-2 contributors)';
-const CONTRIBUTOR_BUS_FACTOR   = 'High bus-factor risk: one contributor dominates';
-const CONTRIBUTOR_NONE_FACTOR  = 'Repository appears abandoned (no contributors)';
+const CI_FAILING_FACTOR           = 'CI/CD pipeline has recent failing runs';
+const RELEASE_STALE_FACTOR        = 'No releases in the last 90 days';
+const RELEASE_NONE_FACTOR         = 'No releases found for this repository';
+const CONTRIBUTOR_LOW_FACTOR      = 'Low contributor activity (1-2 contributors)';
+const CONTRIBUTOR_BUS_FACTOR      = 'High bus-factor risk: one contributor dominates';
+const CONTRIBUTOR_NONE_FACTOR     = 'Repository appears abandoned';
+const CONTRIBUTOR_DORMANT_FACTOR  = 'Repository appears dormant';
 
 // Full list of signals that cannot yet be derived from the current DB schema.
 // Exposed as a module export so tests can assert against the canonical list.
@@ -19,6 +20,7 @@ const NOT_MEASURED = [
 
 // Factors representing active operational instability (not structural maturity).
 // Used to populate operationalFactors in the returned explanation.
+// Dormant is structural (intentional quietness), not operational instability.
 const OPERATIONAL_FACTOR_STRINGS = new Set([
   CI_FAILING_FACTOR,
   CONTRIBUTOR_NONE_FACTOR,
@@ -61,7 +63,8 @@ function getRepoRiskFactors({ score, label, factors, ciStatus, releaseStatus, co
   const contributorKnown = contributorStatus === 'healthy'
                         || contributorStatus === 'low_activity'
                         || contributorStatus === 'bus_factor_risk'
-                        || contributorStatus === 'abandoned';
+                        || contributorStatus === 'abandoned'
+                        || contributorStatus === 'dormant';
 
   const notMeasured = NOT_MEASURED.filter(m => {
     if (m === 'CI/CD pipeline status' && ciKnown)          return false;
@@ -99,7 +102,14 @@ function getRepoRiskFactors({ score, label, factors, ciStatus, releaseStatus, co
   if (releaseStatus === 'none')                 _addIfNew(RELEASE_NONE_FACTOR);
   if (contributorStatus === 'low_activity')     _addIfNew(CONTRIBUTOR_LOW_FACTOR);
   if (contributorStatus === 'bus_factor_risk')  _addIfNew(CONTRIBUTOR_BUS_FACTOR);
-  if (contributorStatus === 'abandoned')        _addIfNew(CONTRIBUTOR_NONE_FACTOR);
+  if (contributorStatus === 'dormant')          _addIfNew(CONTRIBUTOR_DORMANT_FACTOR);
+  if (contributorStatus === 'abandoned') {
+    // Only confirm abandonment when CI is actively failing — that corroborates
+    // the absence of contributors. Passing or unknown CI means the repo may be
+    // intentionally quiet (dormant), not truly abandoned.
+    if (ciStatus === 'failing') _addIfNew(CONTRIBUTOR_NONE_FACTOR);
+    else                        _addIfNew(CONTRIBUTOR_DORMANT_FACTOR);
+  }
 
   const operationalFactors = triggered.filter(f => OPERATIONAL_FACTOR_STRINGS.has(f));
   const structuralFactors  = triggered.filter(f => !OPERATIONAL_FACTOR_STRINGS.has(f));

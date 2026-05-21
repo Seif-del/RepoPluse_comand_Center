@@ -870,6 +870,67 @@
       margin-top: 1px;
     }
 
+    /* ── Operational Anomalies feed ──────────────────────────────────────── */
+    .anomaly-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 0;
+    }
+
+    .anomaly-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+    }
+
+    .anomaly-item.severity-critical { border-left-color: var(--sev-critical-border); }
+    .anomaly-item.severity-high     { border-left-color: var(--sev-high-border);     }
+    .anomaly-item.severity-medium   { border-left-color: var(--sev-medium-border);   }
+    .anomaly-item.severity-low      { border-left-color: var(--sev-low-border);      }
+    .anomaly-item.severity-unknown  { border-left-color: var(--border);              }
+    .anomaly-item.anomaly-low-conf  { opacity: 0.68; }
+
+    .anomaly-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .anomaly-title {
+      font-size: 0.80rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.35;
+    }
+
+    .anomaly-body {
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    .anomaly-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+      font-size: 0.70rem;
+      color: var(--text-muted);
+    }
+
+    .anomaly-more {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      padding: 4px 12px;
+      font-style: italic;
+    }
+
     .timeline-content {
       flex: 1;
       min-width: 0;
@@ -1386,6 +1447,99 @@
 
     .repo-tab-panel { display: none; }
     .repo-tab-panel.active { display: block; }
+
+    /* ── Observability Maturity panel ──────────────────────────────────────── */
+    .maturity-grid {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 5px 12px;
+      margin-bottom: 12px;
+    }
+
+    .maturity-label {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+
+    .maturity-value {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .maturity-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.62rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 7px;
+      border-radius: 99px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    /* high = green (capability present), medium = amber (partial), low = orange (gap) */
+    .maturity-badge.mat-high   { background: var(--sev-healthy-bg); border-color: var(--sev-healthy-border); color: var(--sev-healthy-text); }
+    .maturity-badge.mat-medium { background: var(--sev-medium-bg);  border-color: var(--sev-medium-border);  color: var(--sev-medium-text);  }
+    .maturity-badge.mat-low    { background: var(--sev-high-bg);    border-color: var(--sev-high-border);    color: var(--sev-high-text);    }
+
+    .maturity-sentence {
+      font-size: 0.79rem;
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+      margin-top: 6px;
+      line-height: 1.45;
+    }
+
+    .pr-health-badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      padding: 2px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+    .pr-health-panel {
+      margin-top: 6px;
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+    .pr-health-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+      flex-wrap: wrap;
+    }
+    .pr-health-score {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .pr-health-reasons {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .pr-health-reasons li {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      padding: 3px 0;
+      border-top: 1px solid var(--border);
+    }
+    .pr-health-reasons li:first-child {
+      border-top: none;
+    }
   </style>
 </head>
 <body>
@@ -1431,14 +1585,33 @@
       </div>
     </div>
 
+    <!-- Observability Maturity panel -->
+    <div class="section" id="section-telemetry-coverage">
+      <div class="section-header">
+        <span class="section-title">Observability Maturity</span>
+        <div class="section-divider"></div>
+      </div>
+      <div id="telemetry-coverage-panel"></div>
+    </div>
+
     <!-- Operational changes panel -->
-    <div class="section" style="margin-bottom:24px;">
+    <div id="section-operational-changes" class="section" style="margin-bottom:24px;">
       <div class="section-header">
         <span class="section-title">Operational Changes</span>
         <span id="changes-count" style="margin-left:8px;font-size:0.78rem;color:var(--text-muted);"></span>
         <div class="section-divider"></div>
       </div>
       <div id="operational-changes"></div>
+    </div>
+
+    <!-- Operational Anomalies panel -->
+    <div class="section" style="margin-bottom:24px;">
+      <div class="section-header">
+        <span class="section-title">Operational Anomalies</span>
+        <span id="anomalies-count" style="margin-left:8px;font-size:0.78rem;color:var(--text-muted);"></span>
+        <div class="section-divider"></div>
+      </div>
+      <div id="operational-anomalies"></div>
     </div>
 
     <!-- Executive Summary briefing -->
@@ -1571,6 +1744,7 @@
     var REASON_TAGS = [
       ['CI pipeline is failing',       'CI Failing',          'severity-critical'],
       ['Repository appears abandoned', 'Abandoned',           'severity-critical'],
+      ['Repository appears dormant',   'Dormant',             'severity-high'],
       ['Critical risk score',          'Critical Risk',       'severity-critical'],
       ['No recent commits',             'No Commits',          'severity-medium'],
       ['High bus-factor risk',         'Bus Factor',          'severity-high'],
@@ -1639,6 +1813,7 @@
       // Tier 0 — operational instability
       ['CI pipeline is failing',            0],
       ['Repository appears abandoned',      1],
+      ['Repository appears dormant',        1.5],
       ['Escalating operational trajectory', 2],
       ['Persistent operational risk',       3],
       ['Critical risk score',               4],
@@ -2048,8 +2223,9 @@
 
       // Operational concerns — ordered by severity
       var concerns = [];
-      if (ci === 'failing')            concerns.push('CI pipeline failures');
-      if (contr === 'abandoned')       concerns.push('the repository appears abandoned');
+      if (ci === 'failing')                                         concerns.push('CI pipeline failures');
+      if (contr === 'abandoned' && ci === 'failing')               concerns.push('the repository appears abandoned');
+      if (contr === 'abandoned' && ci !== 'failing')               concerns.push('the repository appears dormant');
       if (exp.structuralFactors && exp.structuralFactors.some(function(f) { return f.indexOf('No commits in the last 7 days') === 0; }))
                                        concerns.push('no recent commits');
       if (contr === 'bus_factor_risk') concerns.push('contributor concentration');
@@ -2146,8 +2322,9 @@
       }
 
       var actions = [];
-      if (ci === 'failing')            actions.push('Investigate failing CI workflows');
-      if (contr === 'abandoned')       actions.push('Review repository ownership');
+      if (ci === 'failing')                          actions.push('Investigate failing CI workflows');
+      if (contr === 'abandoned' && ci === 'failing') actions.push('Review repository ownership');
+      if (contr === 'abandoned' && ci !== 'failing') actions.push('Verify repository maintenance status');
       if (contr === 'bus_factor_risk') actions.push('Add additional maintainers');
       if (rel === 'stale')             actions.push('Review release cadence');
       if (rel === 'none')              actions.push('Create a tagged release');
@@ -2509,6 +2686,24 @@
       return html;
     }
 
+    // ── Operational-section visibility state ─────────────────────────────────
+    // null  = fetch not yet resolved for this page load
+    // true  = section has content
+    // false = section is empty (confirmed by completed fetch)
+    // The section is hidden only when BOTH flags are confirmed false.
+    // Flags are never reset during refresh, preventing flicker while reloading.
+
+    var _hasOperationalChanges   = null;
+    var _hasOperationalAnomalies = null;
+
+    function _syncOperationalVisibility() {
+      var section = document.getElementById('section-operational-changes');
+      if (!section) return;
+      var shouldHide = _hasOperationalChanges  === false
+                    && _hasOperationalAnomalies === false;
+      section.style.display = shouldHide ? 'none' : '';
+    }
+
     function loadOperationalChanges() {
       var container = document.getElementById('operational-changes');
       var countEl   = document.getElementById('changes-count');
@@ -2528,9 +2723,155 @@
           if (countEl) {
             countEl.textContent = d.length ? '(' + d.length + ')' : '';
           }
+          _hasOperationalChanges = Array.isArray(d) && d.length > 0;
+          _syncOperationalVisibility();
         })
         .catch(function(err) {
           console.warn('[OperationalChanges] failed to load:', err);
+        });
+    }
+
+    // ── Operational Anomalies ─────────────────────────────────────────────────
+
+    function buildOperationalAnomaliesHtml(payload) {
+      var clusters  = Array.isArray(payload.clusters)  ? payload.clusters  : [];
+      var anomalies = Array.isArray(payload.anomalies) ? payload.anomalies : [];
+
+      if (!clusters.length && !anomalies.length) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:8px 0;">'
+          + 'No operational anomalies detected.</p>';
+      }
+
+      var html = '<div class="anomaly-feed">';
+
+      if (clusters.length) {
+        var visible = clusters.slice(0, 3);
+        var extra   = clusters.length - visible.length;
+
+        for (var i = 0; i < visible.length; i++) {
+          var cl      = visible[i];
+          var sev     = cl.severity || 'unknown';
+          var sevLbl  = SEV_LABEL[sev] || sev.toUpperCase();
+          var confLvl = (cl.confidence && cl.confidence.level) || 'low';
+          var r       = Array.isArray(cl.affectedRepos) ? cl.affectedRepos.length : 0;
+          var n       = cl.anomalyCount || 0;
+          var tw      = cl.timeWindow || {};
+          var timeStr = _fmtDetectedAt(tw.end || tw.start || '');
+
+          html += '<div class="anomaly-item severity-' + esc(sev)
+               + (confLvl === 'low' ? ' anomaly-low-conf' : '') + '">';
+          html += '<span class="change-badge severity-' + esc(sev) + '">' + esc(sevLbl) + '</span>';
+          html += '<div class="anomaly-content">';
+          html += '<div class="anomaly-title">' + esc(cl.title || 'Anomaly cluster') + '</div>';
+          if (cl.summary) {
+            html += '<div class="anomaly-body">' + esc(cl.summary) + '</div>';
+          }
+          html += '<div class="anomaly-meta">';
+          html += '<span class="confidence-badge conf-' + esc(confLvl)
+               + '" style="font-size:0.62rem;">'
+               + esc(confLvl.charAt(0).toUpperCase() + confLvl.slice(1)) + '</span>';
+          if (r > 0) html += '<span>' + r + ' repo' + (r !== 1 ? 's' : '') + '</span>';
+          if (n > 0) html += '<span>' + n + ' anomal' + (n !== 1 ? 'ies' : 'y') + '</span>';
+          if (timeStr) html += '<span class="change-meta">' + esc(timeStr) + '</span>';
+          html += '</div>';
+          html += '</div>';
+          html += '</div>';
+        }
+
+        if (extra > 0) {
+          html += '<p class="anomaly-more">+' + extra + ' more anomaly cluster'
+               + (extra !== 1 ? 's' : '') + '</p>';
+        }
+      } else {
+        var visA  = anomalies.slice(0, 3);
+        var extrA = anomalies.length - visA.length;
+
+        for (var j = 0; j < visA.length; j++) {
+          var a      = visA[j];
+          var aSev   = a.severity || 'unknown';
+          var aSevLbl = SEV_LABEL[aSev] || aSev.toUpperCase();
+          var aConf  = (a.confidence && a.confidence.level) || 'low';
+          var aRepos = Array.isArray(a.affectedRepos) ? a.affectedRepos.length : 0;
+          var aTime  = _fmtDetectedAt(a.detectedAt || '');
+
+          html += '<div class="anomaly-item severity-' + esc(aSev)
+               + (aConf === 'low' ? ' anomaly-low-conf' : '') + '">';
+          html += '<span class="change-badge severity-' + esc(aSev) + '">' + esc(aSevLbl) + '</span>';
+          html += '<div class="anomaly-content">';
+          html += '<div class="anomaly-title">' + esc(a.title || 'Anomaly') + '</div>';
+          if (a.summary) {
+            html += '<div class="anomaly-body">' + esc(a.summary) + '</div>';
+          }
+          html += '<div class="anomaly-meta">';
+          html += '<span class="confidence-badge conf-' + esc(aConf)
+               + '" style="font-size:0.62rem;">'
+               + esc(aConf.charAt(0).toUpperCase() + aConf.slice(1)) + '</span>';
+          if (aRepos > 0) html += '<span>' + aRepos + ' repo' + (aRepos !== 1 ? 's' : '') + '</span>';
+          if (aTime) html += '<span class="change-meta">' + esc(aTime) + '</span>';
+          html += '</div>';
+          html += '</div>';
+          html += '</div>';
+        }
+
+        if (extrA > 0) {
+          html += '<p class="anomaly-more">+' + extrA + ' more anomal' + (extrA !== 1 ? 'ies' : 'y') + '</p>';
+        }
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function loadOperationalAnomalies() {
+      var container = document.getElementById('operational-anomalies');
+      var countEl   = document.getElementById('anomalies-count');
+      if (!container) return;
+
+      function _render(payload) {
+        if (!payload) return;
+        container.innerHTML = buildOperationalAnomaliesHtml(payload);
+        var nc = Array.isArray(payload.clusters)  ? payload.clusters.length  : 0;
+        var na = Array.isArray(payload.anomalies) ? payload.anomalies.length : 0;
+        if (countEl) {
+          if (nc) {
+            countEl.textContent = '(' + nc + ' cluster' + (nc !== 1 ? 's' : '') + ')';
+          } else if (na) {
+            countEl.textContent = '(' + na + ' anomal' + (na !== 1 ? 'ies' : 'y') + ')';
+          } else {
+            countEl.textContent = '';
+          }
+        }
+        _hasOperationalAnomalies = nc > 0 || na > 0;
+        _syncOperationalVisibility();
+      }
+
+      function _fallback() {
+        return fetch('/api/portfolio/anomalies', { credentials: 'include' })
+          .then(function(r) {
+            if (!r.ok) return { clusters: [], anomalies: [] };
+            return r.json().then(function(d) {
+              return { clusters: [], anomalies: Array.isArray(d.anomalies) ? d.anomalies : [] };
+            });
+          })
+          .catch(function() { return { clusters: [], anomalies: [] }; });
+      }
+
+      fetch('/api/portfolio/anomaly-clusters', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) {
+            console.warn('[OperationalAnomalies] cluster endpoint returned:', r.status);
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          if (d && Array.isArray(d.clusters) && d.clusters.length) return d;
+          return _fallback();
+        })
+        .then(_render)
+        .catch(function(err) {
+          console.warn('[OperationalAnomalies] failed to load:', err);
         });
     }
 
@@ -2639,6 +2980,86 @@
 
       html += '</div>';
       return html;
+    }
+
+    function buildPrHealthHtml(data) {
+      var label   = data.label   || 'unknown';
+      var score   = typeof data.score === 'number' ? data.score : null;
+      var conf    = data.confidenceLevel || 'low';
+      var reasons = Array.isArray(data.reasons) ? data.reasons : [];
+
+      var LABEL_MAP = {
+        'none':    { text: 'No PR Activity', cls: 'severity-neutral'  },
+        'unknown': { text: 'Unknown',        cls: 'severity-unknown'  },
+        'healthy': { text: 'Healthy',        cls: 'severity-healthy'  },
+        'monitor': { text: 'Monitor',        cls: 'severity-medium'   },
+        'at-risk': { text: 'At Risk',        cls: 'severity-high'     },
+        'critical':{ text: 'Critical',       cls: 'severity-critical' },
+      };
+      var lm = LABEL_MAP[label] || LABEL_MAP['unknown'];
+
+      if (label === 'none') {
+        return '<div class="pr-health-panel">'
+          + '<span class="pr-health-badge ' + esc(lm.cls) + '">' + esc(lm.text) + '</span>'
+          + '<p style="margin-top:8px;font-size:0.8rem;color:var(--text-muted);font-style:italic;">'
+          + 'No pull request activity found — nothing to assess.</p>'
+          + '</div>';
+      }
+
+      if (label === 'unknown') {
+        return '<div class="pr-health-panel">'
+          + '<span class="pr-health-badge ' + esc(lm.cls) + '">' + esc(lm.text) + '</span>'
+          + '<p style="margin-top:8px;font-size:0.8rem;color:var(--text-muted);font-style:italic;">'
+          + 'Pull request telemetry not yet available for this repository.</p>'
+          + '</div>';
+      }
+
+      var scoreStr = score != null ? 'Score: ' + score + '/100' : '';
+      var confCls  = 'conf-' + esc(conf);
+      var reasonsHtml = '';
+      if (reasons.length > 0) {
+        var shown = reasons.slice(0, 3);
+        var extra = reasons.length - shown.length;
+        reasonsHtml = '<ul class="pr-health-reasons">'
+          + shown.map(function(r) { return '<li>' + esc(r) + '</li>'; }).join('')
+          + (extra > 0
+              ? '<li style="color:var(--text-muted);font-style:italic;">+' + extra + ' more</li>'
+              : '')
+          + '</ul>';
+      } else {
+        reasonsHtml = '<p style="font-size:0.78rem;color:var(--text-muted);font-style:italic;margin-top:4px;">'
+          + 'No risk signals detected.</p>';
+      }
+
+      return '<div class="pr-health-panel">'
+        + '<div class="pr-health-meta">'
+        + '<span class="pr-health-badge ' + esc(lm.cls) + '">' + esc(lm.text) + '</span>'
+        + '<span class="confidence-badge ' + confCls + '">' + esc(conf) + ' confidence</span>'
+        + (scoreStr ? '<span class="pr-health-score">' + esc(scoreStr) + '</span>' : '')
+        + '</div>'
+        + reasonsHtml
+        + '</div>';
+    }
+
+    function loadRepoPrHealth(repoId) {
+      var container = document.getElementById('repo-pr-health-content');
+      if (!container) return;
+      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/pr-health', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          if (container) container.innerHTML = buildPrHealthHtml(d);
+        })
+        .catch(function() {
+          if (container) {
+            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+              + 'Pull request health data unavailable.</p>';
+          }
+        });
     }
 
     function loadRepoConfidence(repoId) {
@@ -2792,15 +3213,21 @@
       if (contrPct !== null && (contrStatus === 'bus_factor_risk')) {
         contrDetail = ' (' + contrPct + '% by top)';
       }
-      var contrLabel  = contrStatus === 'healthy'         ? 'Healthy'     + contrDetail
-                      : contrStatus === 'low_activity'    ? 'Low activity' + contrDetail
-                      : contrStatus === 'bus_factor_risk' ? 'Bus-factor risk' + contrDetail
-                      : contrStatus === 'abandoned'       ? 'Abandoned'
+      // Treat as dormant unless CI is actively failing — only failing CI fully
+      // corroborates abandonment. Passing or unknown CI means intentionally quiet.
+      var contrEffective = (contrStatus === 'abandoned' && ciStatus !== 'failing')
+                         ? 'dormant' : contrStatus;
+      var contrLabel  = contrEffective === 'healthy'         ? 'Healthy'          + contrDetail
+                      : contrEffective === 'low_activity'    ? 'Low activity'     + contrDetail
+                      : contrEffective === 'bus_factor_risk' ? 'Bus-factor risk'  + contrDetail
+                      : contrEffective === 'dormant'         ? 'Dormant'
+                      : contrEffective === 'abandoned'       ? 'Abandoned'
                       : 'Unknown';
-      var contrCls    = contrStatus === 'healthy'         ? 'severity-healthy'
-                      : contrStatus === 'low_activity'    ? 'severity-medium'
-                      : contrStatus === 'bus_factor_risk' ? 'severity-high'
-                      : contrStatus === 'abandoned'       ? 'severity-critical'
+      var contrCls    = contrEffective === 'healthy'         ? 'severity-healthy'
+                      : contrEffective === 'low_activity'    ? 'severity-medium'
+                      : contrEffective === 'bus_factor_risk' ? 'severity-high'
+                      : contrEffective === 'dormant'         ? 'severity-high'
+                      : contrEffective === 'abandoned'       ? 'severity-critical'
                       : 'severity-unknown';
 
       var trendCardHtml = (function() {
@@ -2854,6 +3281,8 @@
         + '<div class="repo-tab-panel" data-panel="risk">'
         +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Why this repo is risky</div>'
         +   buildExplanationHtml(exp)
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Pull Request Health</div>'
+        +   '<div id="repo-pr-health-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="forecast">'
         +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Operational Forecast</div>'
@@ -2879,6 +3308,7 @@
       loadRepoEscalation(repo.id);
       loadRepoForecast(repo.id);
       loadRepoConfidence(repo.id);
+      loadRepoPrHealth(repo.id);
     }
 
     function renderReposTable(filtered) {
@@ -3240,15 +3670,142 @@
         .catch(function() {});
     }
 
+    // ── Telemetry Coverage (Observability Maturity) ──────────────────────────
+
+    function _matBadge(level) {
+      var cls = level === 'high' ? 'mat-high' : level === 'medium' ? 'mat-medium' : 'mat-low';
+      return '<span class="maturity-badge ' + cls + '">' + esc(level.toUpperCase()) + '</span>';
+    }
+
+    function _joinList(items) {
+      if (!items.length) return '';
+      if (items.length === 1) return items[0];
+      return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
+    }
+
+    function _maturitySentence(data) {
+      if (!data.repoCount) return 'No active repositories to assess.';
+
+      if (data.overallMaturity === 'high') {
+        return 'Portfolio telemetry is comprehensive — operational signals are well-covered and up to date.';
+      }
+
+      var lowAreas = [];
+      if (data.ciCoverage.level          === 'low') lowAreas.push('CI');
+      if (data.releaseCoverage.level     === 'low') lowAreas.push('release');
+      if (data.contributorCoverage.level === 'low') lowAreas.push('contributor');
+
+      if (lowAreas.length) {
+        return 'Operational observability maturity is limited by sparse '
+          + _joinList(lowAreas) + ' telemetry.';
+      }
+
+      // All coverages ≥ medium but overall is not high — depth or freshness is limiting
+      var gaps = [];
+      if (data.historicalDepth.level !== 'high') {
+        gaps.push(data.historicalDepth.level === 'low'
+          ? 'limited snapshot history' : 'partial snapshot history');
+      }
+      if (data.syncFreshness.level !== 'high') {
+        gaps.push(data.syncFreshness.level === 'low'
+          ? 'stale repository syncs' : 'some stale syncs');
+      }
+      if (gaps.length) {
+        return 'Telemetry signals are partially covered — assessment quality is reduced by '
+          + _joinList(gaps) + '.';
+      }
+      return 'Telemetry coverage is partial across one or more operational signals.';
+    }
+
+    function buildTelemetryCoverageHtml(data) {
+      if (!data) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:8px 0;">'
+          + 'Telemetry maturity data unavailable.</p>';
+      }
+
+      var overall    = data.overallMaturity || 'low';
+      var overallCls = overall === 'high' ? 'mat-high' : overall === 'medium' ? 'mat-medium' : 'mat-low';
+
+      var html = '<div class="panel">';
+      html += '<div class="panel-head">';
+      html += '<h2>Telemetry Coverage</h2>';
+      html += '<span class="maturity-badge ' + overallCls + '" style="margin-left:auto;">'
+            + esc(overall.toUpperCase() + ' MATURITY') + '</span>';
+      if (data.repoCount != null) {
+        html += '<span class="panel-count">'
+              + esc(String(data.repoCount)) + ' repo' + (data.repoCount !== 1 ? 's' : '')
+              + '</span>';
+      }
+      html += '</div>';
+
+      html += '<div class="panel-body" style="padding:14px 20px 16px;">';
+
+      if (!data.repoCount) {
+        html += '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;">'
+              + 'No active repositories — sync to begin telemetry collection.</p>';
+        html += '</div></div>';
+        return html;
+      }
+
+      var freshnessValue = data.syncFreshness.staleCount === 0
+        ? 'All fresh'
+        : data.syncFreshness.staleCount + ' stale (' + data.syncFreshness.stalePercentage + '%)';
+
+      var metrics = [
+        { label: 'CI Coverage',            value: data.ciCoverage.percentage + '%',            level: data.ciCoverage.level            },
+        { label: 'Release Coverage',       value: data.releaseCoverage.percentage + '%',        level: data.releaseCoverage.level        },
+        { label: 'Contributor Coverage',   value: data.contributorCoverage.percentage + '%',    level: data.contributorCoverage.level    },
+        { label: 'Telemetry Completeness', value: data.telemetryCompleteness.percentage + '%',  level: data.telemetryCompleteness.level  },
+        { label: 'Historical Depth',       value: data.historicalDepth.averageSnapshots + ' avg snapshots', level: data.historicalDepth.level },
+        { label: 'Sync Freshness',         value: freshnessValue,                               level: data.syncFreshness.level          },
+      ];
+
+      html += '<div class="maturity-grid">';
+      metrics.forEach(function(m) {
+        html += '<span class="maturity-label">' + esc(m.label) + '</span>';
+        html += '<span class="maturity-value">' + esc(m.value) + '</span>';
+        html += _matBadge(m.level);
+      });
+      html += '</div>';
+
+      html += '<div class="maturity-sentence">' + esc(_maturitySentence(data)) + '</div>';
+
+      html += '</div></div>';
+      return html;
+    }
+
+    function loadTelemetryCoverage() {
+      var container = document.getElementById('telemetry-coverage-panel');
+      if (!container) return;
+      fetch('/api/portfolio/telemetry-coverage', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) {
+            console.warn('[TelemetryCoverage] unexpected HTTP status:', r.status);
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          container.innerHTML = buildTelemetryCoverageHtml(d);
+        })
+        .catch(function(err) {
+          console.warn('[TelemetryCoverage] failed to load:', err);
+        });
+    }
+
     // ── Initial load + auto-refresh ──────────────────────────────────────────
 
     function refresh() {
       loadSummary();
+      loadTelemetryCoverage();
       loadRepos();
       loadAttentionQueue();
       loadHistory();
-      loadExecutiveSummary();
       loadOperationalChanges();
+      loadOperationalAnomalies();
+      loadExecutiveSummary();
     }
 
     refresh();

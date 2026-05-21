@@ -128,22 +128,306 @@ describe('scoreRepo — operational rule: ci_failing (+50)', () => {
 });
 
 describe('scoreRepo — operational rule: contributor_abandoned (+50)', () => {
-  it('adds 50 points when contributorStatus is abandoned', () => {
-    expect(scoreRepo({ ...healthy(), contributorStatus: 'abandoned' }).score).toBe(50);
+  it('adds 50 points when contributorStatus is abandoned with no commits and FAILING CI', () => {
+    // Only failing CI fully corroborates abandonment. ci_failing(50) + contributor_abandoned(50) + no_commits(8) = 108 → 100.
+    expect(scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned' }).score).toBe(100);
+  });
+
+  it('does NOT add abandoned penalty when CI is unknown (dormant fires instead)', () => {
+    // Unknown CI → contributor_dormant fires (15 pts), not contributor_abandoned.
+    const { score, factors } = scoreRepo({ ...healthy(), commits7d: 0, contributorStatus: 'abandoned' });
+    expect(score).toBe(23); // no_commits(8) + contributor_dormant(15)
+    expect(factors).not.toContain('Repository appears abandoned');
+    expect(factors).toContain('Repository appears dormant');
   });
 
   it('does not trigger when contributorStatus is healthy', () => {
     expect(scoreRepo({ ...healthy(), contributorStatus: 'healthy' }).score).toBe(0);
   });
 
-  it('contributor_abandoned alone → at-risk label (score=50 ≥ 50)', () => {
-    expect(scoreRepo({ ...healthy(), contributorStatus: 'abandoned' }).label).toBe('at-risk');
+  it('contributor_abandoned + no commits + failing CI → at-risk label (score=100, capped)', () => {
+    expect(scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned' }).label).toBe('critical');
   });
 
-  it('ci_failing + contributor_abandoned → critical (50+50=100, capped)', () => {
-    const { score, label } = scoreRepo({ ...healthy(), ciStatus: 'failing', contributorStatus: 'abandoned' });
+  it('ci_failing + contributor_abandoned + no commits → critical (50+50+8=108, capped at 100)', () => {
+    const { score, label } = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned' });
     expect(score).toBe(100);
     expect(label).toBe('critical');
+  });
+});
+
+// ── Abandonment corroboration gate ────────────────────────────────────────────
+// contributor_abandoned fires only when: abandoned AND commits7d===0 AND ciStatus!=='passing'
+
+describe('scoreRepo — contributor_abandoned corroboration gate', () => {
+  it('abandoned + commits7d > 0 does NOT add abandoned penalty', () => {
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: 5, contributorStatus: 'abandoned',
+    });
+    expect(score).toBe(0);
+    expect(factors).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + commits7d 1 (exactly 1 commit) does NOT add abandoned penalty', () => {
+    const { score } = scoreRepo({
+      ...healthy(), commits7d: 1, contributorStatus: 'abandoned',
+    });
+    expect(score).toBe(0);
+  });
+
+  it('abandoned + ciStatus passing → dormant fires instead (score=23), NOT abandoned', () => {
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'passing', contributorStatus: 'abandoned',
+    });
+    // no_commits(8) + repo_dormant(15) = 23; abandoned blocked by passing CI
+    expect(score).toBe(23);
+    expect(factors).not.toContain('Repository appears abandoned');
+    expect(factors).toContain('Repository appears dormant');
+  });
+
+  it('abandoned + commits7d 0 + ciStatus unknown → dormant fires, NOT abandoned', () => {
+    // Unknown CI is not sufficient corroboration for abandonment — treat as dormant.
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    });
+    expect(score).toBe(23); // no_commits(8) + contributor_dormant(15)
+    expect(factors).toContain('Repository appears dormant');
+    expect(factors).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + commits7d 0 + ciStatus failing DOES add abandoned penalty', () => {
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned',
+    });
+    // ci_failing(50) + contributor_abandoned(50) + no_commits(8) = 108 → 100
+    expect(score).toBe(100);
+    expect(factors).toContain('Repository appears abandoned');
+    expect(factors).toContain('CI/CD pipeline has recent failing runs');
+  });
+
+  it('abandoned + commits7d 0 + ciStatus omitted → dormant fires (unknown CI is not enough to confirm abandonment)', () => {
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: 0, contributorStatus: 'abandoned',
+      // ciStatus not passed — defaults to 'unknown'; only failing CI confirms abandonment
+    });
+    expect(score).toBe(23); // no_commits(8) + contributor_dormant(15)
+    expect(factors).toContain('Repository appears dormant');
+    expect(factors).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + commits7d null does NOT add abandoned penalty (null !== 0)', () => {
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: null, contributorStatus: 'abandoned',
+    });
+    expect(factors).not.toContain('Repository appears abandoned');
+    // null is not === 0 so the corroboration gate is not satisfied
+    expect(score).toBe(0);
+  });
+
+  it('abandoned + commits7d undefined does NOT add abandoned penalty (undefined !== 0)', () => {
+    const input = { openPrs: 2, stalePrs: 0, openIssues: 5, daysSincePush: 3,
+                    contributorStatus: 'abandoned' };
+    const { factors } = scoreRepo(input);
+    expect(factors).not.toContain('Repository appears abandoned');
+  });
+
+  it('non-abandoned contributorStatus with zero commits does NOT add abandoned penalty', () => {
+    const { factors } = scoreRepo({
+      ...healthy(), commits7d: 0, contributorStatus: 'low_activity',
+    });
+    expect(factors).not.toContain('Repository appears abandoned');
+  });
+});
+
+// ── Dormant rule ─────────────────────────────────────────────────────────────
+// repo_dormant fires ONLY when: commits7d===0 AND ciStatus==='passing'
+// Mutually exclusive with contributor_abandoned (abandoned requires ciStatus!=='passing').
+
+describe('scoreRepo — structural rule: repo_dormant (+15)', () => {
+  it('adds 15 points when commits7d is 0 and ciStatus is passing', () => {
+    // no_commits(8) + repo_dormant(15) = 23
+    expect(scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'passing' }).score).toBe(23);
+  });
+
+  it('includes the dormant factor string', () => {
+    const { factors } = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'passing' });
+    expect(factors).toContain('Repository appears dormant');
+  });
+
+  it('dormant alone (healthy contributor, no commits, passing CI) → healthy label (23 < 30)', () => {
+    const { label } = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'passing' });
+    expect(label).toBe('healthy');
+  });
+
+  it('does NOT fire when commits7d is > 0 and CI is passing', () => {
+    expect(scoreRepo({ ...healthy(), commits7d: 5, ciStatus: 'passing' }).score).toBe(0);
+  });
+
+  it('does NOT fire when commits7d is 0 but CI is failing (ci_failing takes over)', () => {
+    // Only ci_failing(50) + no_commits(8) fires; dormant does not (ciStatus !== 'passing')
+    const { score, factors } = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'failing' });
+    expect(score).toBe(58);
+    expect(factors).not.toContain('Repository appears dormant');
+  });
+
+  it('does NOT fire when commits7d is 0 and CI is unknown', () => {
+    // no_commits(8) only; dormant requires ciStatus==='passing'
+    const { score, factors } = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'unknown' });
+    expect(score).toBe(8);
+    expect(factors).not.toContain('Repository appears dormant');
+  });
+
+  it('does NOT fire when commits7d is 0 and ciStatus is omitted (defaults unknown)', () => {
+    const { score, factors } = scoreRepo({ ...healthy(), commits7d: 0 });
+    expect(score).toBe(8);
+    expect(factors).not.toContain('Repository appears dormant');
+  });
+
+  it('abandoned + passing CI → dormant fires, abandoned does NOT fire', () => {
+    const { factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'passing', contributorStatus: 'abandoned',
+    });
+    expect(factors).toContain('Repository appears dormant');
+    expect(factors).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + passing CI → score = no_commits(8) + dormant(15) = 23, NOT 50+', () => {
+    const { score } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'passing', contributorStatus: 'abandoned',
+    });
+    expect(score).toBe(23);
+  });
+
+  it('dormant and contributor_abandoned are mutually exclusive for any ciStatus', () => {
+    // unknown CI: dormant fires (via contributor_dormant), abandoned does NOT
+    const { factors: fUnk } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    });
+    expect(fUnk).toContain('Repository appears dormant');
+    expect(fUnk).not.toContain('Repository appears abandoned');
+
+    // passing CI: dormant fires (via repo_dormant), abandoned does NOT
+    const { factors: fPass } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'passing', contributorStatus: 'abandoned',
+    });
+    expect(fPass).not.toContain('Repository appears abandoned');
+    expect(fPass).toContain('Repository appears dormant');
+
+    // failing CI: abandoned fires, dormant does NOT
+    const { factors: fFail } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned',
+    });
+    expect(fFail).toContain('Repository appears abandoned');
+    expect(fFail).not.toContain('Repository appears dormant');
+  });
+
+  it('structural worst case with passing CI still stays healthy (dormant adds 15 to 28 = 43 → monitor)', () => {
+    // This documents the new scoring: passing CI on a quiet repo pushes it to monitor.
+    // 28 (structural worst) + 15 (dormant) = 43 → monitor
+    const worstWithPassingCI = {
+      commits7d: 0, openPrs: 15, stalePrs: 5, openIssues: 25, daysSincePush: 30,
+      ciStatus: 'passing',
+    };
+    const { score, label } = scoreRepo(worstWithPassingCI);
+    expect(score).toBe(43);
+    expect(label).toBe('monitor');
+  });
+
+  it('structural worst case with UNKNOWN CI remains healthy (dormant does not fire, score=28)', () => {
+    // contributor_dormant only fires when contributorStatus==='abandoned'; default unknown does not.
+    const worstUnknownCI = {
+      commits7d: 0, openPrs: 15, stalePrs: 5, openIssues: 25, daysSincePush: 30,
+    };
+    expect(scoreRepo(worstUnknownCI).score).toBe(28);
+    expect(scoreRepo(worstUnknownCI).label).toBe('healthy');
+  });
+});
+
+// ── Contributor dormant rule ───────────────────────────────────────────────────
+// contributor_dormant fires ONLY when: contributorStatus==='abandoned' AND
+// commits7d===0 AND ciStatus is neither 'passing' nor 'failing' (i.e. 'unknown').
+// This distinguishes "confirmed abandonment" (CI failing) from "quiet but unmonitored".
+
+describe('scoreRepo — structural rule: contributor_dormant (+15)', () => {
+  it('adds 15 points when abandoned contributor + no commits + ciStatus unknown', () => {
+    // no_commits(8) + contributor_dormant(15) = 23
+    const { score, factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    });
+    expect(score).toBe(23);
+    expect(factors).toContain('Repository appears dormant');
+  });
+
+  it('does NOT fire when contributorStatus is healthy (even with no commits + unknown CI)', () => {
+    const { factors } = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'unknown' });
+    // contributorStatus defaults to 'unknown', not 'abandoned'
+    expect(factors).not.toContain('Repository appears dormant');
+  });
+
+  it('does NOT fire when contributorStatus is low_activity', () => {
+    const { factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'low_activity',
+    });
+    expect(factors).not.toContain('Repository appears dormant');
+  });
+
+  it('does NOT fire when commits7d > 0 (even with abandoned + unknown CI)', () => {
+    const { factors } = scoreRepo({
+      ...healthy(), commits7d: 5, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    });
+    expect(factors).not.toContain('Repository appears dormant');
+  });
+
+  it('does NOT fire when ciStatus is passing (repo_dormant fires instead)', () => {
+    const { factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'passing', contributorStatus: 'abandoned',
+    });
+    // repo_dormant fires; contributor_dormant does not (ciStatus==='passing')
+    expect(factors).toContain('Repository appears dormant'); // from repo_dormant
+    expect(factors.filter(f => f === 'Repository appears dormant').length).toBe(1);
+  });
+
+  it('does NOT fire when ciStatus is failing (contributor_abandoned fires instead)', () => {
+    const { factors } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned',
+    });
+    expect(factors).not.toContain('Repository appears dormant');
+    expect(factors).toContain('Repository appears abandoned');
+  });
+
+  it('contributor_dormant and repo_dormant are mutually exclusive', () => {
+    // repo_dormant: passing CI; contributor_dormant: unknown CI (non-passing, non-failing)
+    const { factors: fPass } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'passing', contributorStatus: 'abandoned',
+    });
+    const { factors: fUnk } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    });
+    // Both produce exactly one dormant factor
+    expect(fPass.filter(f => f === 'Repository appears dormant').length).toBe(1);
+    expect(fUnk.filter(f => f === 'Repository appears dormant').length).toBe(1);
+    // Neither produces abandoned
+    expect(fPass).not.toContain('Repository appears abandoned');
+    expect(fUnk).not.toContain('Repository appears abandoned');
+  });
+
+  it('dormant score (23) is lower than abandoned score (58+)', () => {
+    const dormantScore = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    }).score;
+    const abandonedScore = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned',
+    }).score;
+    expect(dormantScore).toBeLessThan(abandonedScore);
+    expect(dormantScore).toBe(23);
+    expect(abandonedScore).toBe(100); // capped: 8+50+50
+  });
+
+  it('dormant label remains healthy (23 < 30)', () => {
+    const { label } = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'unknown', contributorStatus: 'abandoned',
+    });
+    expect(label).toBe('healthy');
   });
 });
 
@@ -352,14 +636,20 @@ describe('scoreRepo — unified severity alignment', () => {
     expect(result.label).toBe('at-risk');
   });
 
-  it('abandoned contributors alone reaches at-risk (50)', () => {
-    const result = scoreRepo({ ...healthy(), contributorStatus: 'abandoned' });
+  it('abandoned contributors + no commits + failing CI reaches at-risk (≥50)', () => {
+    const result = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned' });
     expect(result.score).toBeGreaterThanOrEqual(50);
-    expect(result.label).toBe('at-risk');
+    expect(result.label).toBe('critical'); // 100 capped
   });
 
-  it('severe escalation (CI + abandoned) reaches critical (100, capped)', () => {
-    const result = scoreRepo({ ...healthy(), ciStatus: 'failing', contributorStatus: 'abandoned' });
+  it('abandoned contributors + no commits + unknown CI → dormant, stays healthy (23 < 30)', () => {
+    const result = scoreRepo({ ...healthy(), commits7d: 0, contributorStatus: 'abandoned' });
+    expect(result.score).toBe(23);
+    expect(result.label).toBe('healthy');
+  });
+
+  it('severe escalation (CI + abandoned + no commits) reaches critical (100, capped)', () => {
+    const result = scoreRepo({ ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned' });
     expect(result.score).toBe(100);
     expect(result.label).toBe('critical');
   });
@@ -391,7 +681,11 @@ describe('scoreRepo — OPERATIONAL_FACTOR_STRINGS', () => {
   });
 
   it('contributor abandoned factor is in OPERATIONAL_FACTOR_STRINGS', () => {
-    expect(OPERATIONAL_FACTOR_STRINGS.has('Repository appears abandoned (no contributors)')).toBe(true);
+    expect(OPERATIONAL_FACTOR_STRINGS.has('Repository appears abandoned')).toBe(true);
+  });
+
+  it('dormant factor is NOT in OPERATIONAL_FACTOR_STRINGS (structural, not operational)', () => {
+    expect(OPERATIONAL_FACTOR_STRINGS.has('Repository appears dormant')).toBe(false);
   });
 
   it('structural factors are NOT in OPERATIONAL_FACTOR_STRINGS', () => {

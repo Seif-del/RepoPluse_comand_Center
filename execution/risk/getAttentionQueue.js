@@ -28,7 +28,8 @@ const WEIGHTS = {
 
   // ── Freshness signals (may have changed since last sync) ─────────────────────
   CI_FAILING:            25,  // freshness — CI may have degraded since last sync
-  CONTRIBUTOR_ABANDONED: 30,  // freshness — team may have gone dark
+  CONTRIBUTOR_ABANDONED: 30,  // freshness — team may have gone dark (no commits + CI not passing)
+  CONTRIBUTOR_DORMANT:   10,  // freshness — no commits but CI passing; repo is intentionally quiet
 
   // ── Activity freshness (ordering signal — commits absence is actionable) ─────
   NO_RECENT_COMMITS:       1,
@@ -112,8 +113,20 @@ function _scoreRepo(repo) {
     reasons.push('CI pipeline is failing');
   }
   if (con === 'abandoned') {
-    total += WEIGHTS.CONTRIBUTOR_ABANDONED;
-    reasons.push('Repository appears abandoned');
+    // Only treat as abandoned when CI is actively failing — that fully corroborates
+    // the absence of contributors. Passing or unknown CI means the repo is dormant,
+    // not confirmed abandoned.
+    if (ci === 'failing') {
+      total += WEIGHTS.CONTRIBUTOR_ABANDONED;
+      reasons.push('Repository appears abandoned');
+    } else {
+      total += WEIGHTS.CONTRIBUTOR_DORMANT;
+      reasons.push('Repository appears dormant');
+    }
+  }
+  if (con === 'dormant') {
+    total += WEIGHTS.CONTRIBUTOR_DORMANT;
+    reasons.push('Repository appears dormant');
   }
 
   // ── Activity freshness — no recent commits (precedes structural signals) ──────

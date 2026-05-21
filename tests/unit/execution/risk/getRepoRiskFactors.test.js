@@ -461,17 +461,117 @@ describe('getRepoRiskFactors — contributorStatus bus_factor_risk', () => {
 // ── Contributor status — abandoned ────────────────────────────────────────────
 
 describe('getRepoRiskFactors — contributorStatus abandoned', () => {
-  it('adds abandoned factor to triggered', () => {
+  it('adds dormant factor (not abandoned) when no ciStatus provided (unknown CI)', () => {
+    // Unknown CI is not enough to confirm abandonment — treated as dormant.
     const { triggered } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned' });
-    expect(triggered.some(f => f.toLowerCase().includes('abandoned'))).toBe(true);
+    expect(triggered).toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
   });
 
-  it('allClear is false when abandoned', () => {
+  it('adds abandoned factor when ciStatus is failing (full corroboration)', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'failing',
+    });
+    expect(triggered).toContain('Repository appears abandoned');
+    expect(triggered).not.toContain('Repository appears dormant');
+  });
+
+  it('allClear is false when abandoned (regardless of CI)', () => {
     expect(getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned' }).allClear).toBe(false);
+    expect(getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'failing' }).allClear).toBe(false);
   });
 
   it('removes Contributor activity from notMeasured', () => {
     const { notMeasured } = getRepoRiskFactors({ score: 0, factors: [], contributorStatus: 'abandoned' });
+    expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(false);
+  });
+});
+
+// ── Contributor status — dormant (abandoned + CI passing) ─────────────────────
+
+describe('getRepoRiskFactors — contributorStatus abandoned + ciStatus passing → dormant display', () => {
+  it('adds dormant factor (not abandoned) when abandoned + CI passing', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'passing',
+    });
+    expect(triggered).toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('dormant factor is in structuralFactors, not operationalFactors', () => {
+    const { structuralFactors, operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'passing',
+    });
+    expect(structuralFactors).toContain('Repository appears dormant');
+    expect(operationalFactors).not.toContain('Repository appears dormant');
+  });
+
+  it('adds abandoned factor (not dormant) when abandoned + CI failing', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'failing',
+    });
+    expect(triggered).toContain('Repository appears abandoned');
+    expect(triggered).not.toContain('Repository appears dormant');
+  });
+
+  it('adds dormant factor (not abandoned) when abandoned + CI unknown', () => {
+    // Unknown CI cannot confirm abandonment — treated as dormant.
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'unknown',
+    });
+    expect(triggered).toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('adds dormant factor (not abandoned) when abandoned + no ciStatus provided', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned',
+    });
+    expect(triggered).toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned factor is operational; dormant is always structural', () => {
+    // CI failing → abandoned is in operationalFactors
+    const { operationalFactors: opA } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'failing',
+    });
+    expect(opA).toContain('Repository appears abandoned');
+
+    // CI passing or unknown → dormant is in structuralFactors, not operational
+    const { operationalFactors: opD, structuralFactors: sfD } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'passing',
+    });
+    expect(sfD).toContain('Repository appears dormant');
+    expect(opD).not.toContain('Repository appears dormant');
+
+    const { operationalFactors: opDUnk, structuralFactors: sfDUnk } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'unknown',
+    });
+    expect(sfDUnk).toContain('Repository appears dormant');
+    expect(opDUnk).not.toContain('Repository appears dormant');
+  });
+
+  it('dormant factor from scoreRepo factors array is not duplicated by intelligence layer', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 23, factors: ['Repository appears dormant'],
+      contributorStatus: 'abandoned', ciStatus: 'passing',
+    });
+    const count = triggered.filter(f => f === 'Repository appears dormant').length;
+    expect(count).toBe(1);
+  });
+
+  it('contributorStatus dormant (synthetic) adds dormant factor', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'dormant',
+    });
+    expect(triggered).toContain('Repository appears dormant');
+  });
+
+  it('contributorStatus dormant removes Contributor activity from notMeasured', () => {
+    const { notMeasured } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'dormant',
+    });
     expect(notMeasured.some(m => m.toLowerCase().includes('contributor'))).toBe(false);
   });
 });
@@ -539,11 +639,20 @@ describe('getRepoRiskFactors — factor categorization', () => {
     expect(structuralFactors.some(f => f.toLowerCase().includes('ci'))).toBe(false);
   });
 
-  it('contributor abandoned → operationalFactors', () => {
+  it('contributor abandoned + CI failing → operationalFactors', () => {
+    // Abandoned is only operational when CI is failing (full corroboration).
     const { operationalFactors } = getRepoRiskFactors({
-      score: 0, factors: [], contributorStatus: 'abandoned',
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'failing',
     });
     expect(operationalFactors.some(f => f.toLowerCase().includes('abandoned'))).toBe(true);
+  });
+
+  it('contributor abandoned + CI unknown → structuralFactors (dormant, not operational)', () => {
+    const { operationalFactors, structuralFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'unknown',
+    });
+    expect(operationalFactors.some(f => f.toLowerCase().includes('abandoned'))).toBe(false);
+    expect(structuralFactors).toContain('Repository appears dormant');
   });
 
   it('stale release → structuralFactors (not operational)', () => {
@@ -619,14 +728,87 @@ describe('getRepoRiskFactors — deduplication of triggered factors', () => {
     expect(count).toBe(1);
   });
 
-  it('contributor abandoned factor is not duplicated', () => {
+  it('contributor abandoned factor is not duplicated (ciStatus failing)', () => {
     const { triggered } = getRepoRiskFactors({
       score: 35,
-      factors: ['Repository appears abandoned (no contributors)'],
+      factors: ['Repository appears abandoned'],
       contributorStatus: 'abandoned',
+      ciStatus: 'failing',
     });
-    const count = triggered.filter(f => f === 'Repository appears abandoned (no contributors)').length;
+    const count = triggered.filter(f => f === 'Repository appears abandoned').length;
     expect(count).toBe(1);
+  });
+});
+
+// ── Dormant vs abandoned semantic model ──────────────────────────────────────
+// Abandoned is only confirmed when CI is actively failing.
+// Passing or unknown CI → dormant (intentionally quiet or unmonitored).
+
+describe('getRepoRiskFactors — dormant vs abandoned full semantic model', () => {
+  it('abandoned + CI failing → abandoned factor (operational)', () => {
+    const { triggered, operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'failing',
+    });
+    expect(triggered).toContain('Repository appears abandoned');
+    expect(operationalFactors).toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + CI passing → dormant factor (structural)', () => {
+    const { triggered, structuralFactors, operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'passing',
+    });
+    expect(triggered).toContain('Repository appears dormant');
+    expect(structuralFactors).toContain('Repository appears dormant');
+    expect(operationalFactors).not.toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + CI unknown → dormant factor (structural)', () => {
+    const { triggered, structuralFactors, operationalFactors } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'abandoned', ciStatus: 'unknown',
+    });
+    expect(triggered).toContain('Repository appears dormant');
+    expect(structuralFactors).toContain('Repository appears dormant');
+    expect(operationalFactors).not.toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('no regression: healthy contributor + CI failing → no contributor factor', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'healthy', ciStatus: 'failing',
+    });
+    expect(triggered).toContain('CI/CD pipeline has recent failing runs');
+    expect(triggered).not.toContain('Repository appears abandoned');
+    expect(triggered).not.toContain('Repository appears dormant');
+  });
+
+  it('low_activity contributor remains low-severity and distinct from dormant', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'low_activity',
+    });
+    expect(triggered).toContain('Low contributor activity (1-2 contributors)');
+    expect(triggered).not.toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('bus_factor_risk remains distinct from dormant and abandoned', () => {
+    const { triggered } = getRepoRiskFactors({
+      score: 0, factors: [], contributorStatus: 'bus_factor_risk',
+    });
+    expect(triggered).toContain('High bus-factor risk: one contributor dominates');
+    expect(triggered).not.toContain('Repository appears dormant');
+    expect(triggered).not.toContain('Repository appears abandoned');
+  });
+
+  it('false-abandonment regression: abandoned contributor + passing CI → dormant, never abandoned', () => {
+    // Regression guard: anon=1 fixed false abandonments but CI-passing repos should
+    // still never be labeled abandoned regardless of contributor API result.
+    const { triggered } = getRepoRiskFactors({
+      score: 23, factors: ['Repository appears dormant'],
+      contributorStatus: 'abandoned', ciStatus: 'passing',
+    });
+    expect(triggered).not.toContain('Repository appears abandoned');
+    expect(triggered.filter(f => f === 'Repository appears dormant').length).toBe(1);
   });
 });
 

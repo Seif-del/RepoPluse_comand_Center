@@ -33,7 +33,7 @@ describe('getAttentionQueue — module shape', () => {
       // Unified risk score band alignment
       'RISK_SCORE_CRITICAL', 'RISK_SCORE_AT_RISK', 'RISK_SCORE_MONITOR',
       // Freshness signals
-      'CI_FAILING', 'CONTRIBUTOR_ABANDONED',
+      'CI_FAILING', 'CONTRIBUTOR_ABANDONED', 'CONTRIBUTOR_DORMANT',
       // Activity freshness
       'NO_RECENT_COMMITS',
       // Structural freshness
@@ -111,9 +111,22 @@ describe('getAttentionQueue — signal weights', () => {
     expect(result[0].attentionScore).toBe(WEIGHTS.CI_FAILING);
   });
 
-  it('CONTRIBUTOR_ABANDONED freshness adds WEIGHTS.CONTRIBUTOR_ABANDONED pts when score is 0', () => {
+  it('CONTRIBUTOR_ABANDONED freshness adds WEIGHTS.CONTRIBUTOR_ABANDONED pts only when CI is failing', () => {
+    // Only failing CI corroborates abandonment.
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_ABANDONED + WEIGHTS.CI_FAILING);
+  });
+
+  it('CONTRIBUTOR_DORMANT fires (not ABANDONED) when abandoned + CI unknown', () => {
+    // Unknown CI is not enough to confirm abandonment — treat as dormant.
+    // CI_UNKNOWN(1) also fires alongside CONTRIBUTOR_DORMANT(10).
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT + WEIGHTS.CI_UNKNOWN);
+  });
+
+  it('CONTRIBUTOR_DORMANT freshness adds WEIGHTS.CONTRIBUTOR_DORMANT pts when abandoned + CI passing', () => {
     const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
-    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_ABANDONED);
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT);
   });
 
   it('RISK_SCORE_CRITICAL adds 65 pts when score >= 75', () => {
@@ -234,17 +247,45 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
     expect(result[0].attentionScore).toBe(45);
   });
 
-  it('CONTRIBUTOR_ABANDONED freshness alone (score=0) → medium (30 pts)', () => {
-    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
-    expect(result[0].attentionLevel).toBe('medium');
-    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_ABANDONED);
+  it('CONTRIBUTOR_DORMANT freshness (score=0, abandoned + CI unknown) → low (10+1=11 pts)', () => {
+    // Unknown CI → dormant treatment. CONTRIBUTOR_DORMANT(10) + CI_UNKNOWN(1) = 11 → low.
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionLevel).toBe('low');
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT + WEIGHTS.CI_UNKNOWN);
   });
 
-  it('CONTRIBUTOR_ABANDONED + RISK_SCORE_MONITOR → high (score=35 ≥ 30)', () => {
-    // score=35 ≥ 30 → RISK_SCORE_MONITOR(20) + CONTRIBUTOR_ABANDONED(30) = 50 → high
-    const result = getAttentionQueue([makeRepo({ score: 35, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+  it('CONTRIBUTOR_ABANDONED freshness alone (score=0, CI failing) → medium (CI_FAILING 25 + CONTRIBUTOR_ABANDONED 30 = 55 → high)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
     expect(result[0].attentionLevel).toBe('high');
-    expect(result[0].attentionScore).toBe(50);
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_ABANDONED + WEIGHTS.CI_FAILING);
+  });
+
+  it('CONTRIBUTOR_DORMANT freshness alone (score=0, abandoned + CI passing) → low (10 pts)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionLevel).toBe('low');
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT);
+  });
+
+  it('CONTRIBUTOR_DORMANT + RISK_SCORE_MONITOR → medium (score=35, CI unknown)', () => {
+    // Unknown CI → dormant. RISK_SCORE_MONITOR(20) + CONTRIBUTOR_DORMANT(10) + CI_UNKNOWN(1) = 31 → medium.
+    const result = getAttentionQueue([makeRepo({ score: 35, ciStatus: 'unknown', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionLevel).toBe('medium');
+    expect(result[0].attentionScore).toBe(31);
+  });
+
+  it('CONTRIBUTOR_ABANDONED + RISK_SCORE_MONITOR → high (score=35, CI failing)', () => {
+    // Only failing CI triggers full abandoned weight.
+    // RISK_SCORE_MONITOR(20) + CI_FAILING(25) + CONTRIBUTOR_ABANDONED(30) = 75 → critical
+    const result = getAttentionQueue([makeRepo({ score: 35, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionLevel).toBe('critical');
+    expect(result[0].attentionScore).toBe(75);
+  });
+
+  it('CONTRIBUTOR_DORMANT + RISK_SCORE_MONITOR → medium (score=35, CI passing)', () => {
+    // score=35 ≥ 30 → RISK_SCORE_MONITOR(20) + CONTRIBUTOR_DORMANT(10) = 30 → medium
+    const result = getAttentionQueue([makeRepo({ score: 35, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].attentionLevel).toBe('medium');
+    expect(result[0].attentionScore).toBe(30);
   });
 
   it('CI_FAILING freshness alone (score=0) → medium (25 pts)', () => {
@@ -293,6 +334,42 @@ describe('getAttentionQueue — attention levels (unified model)', () => {
   });
 });
 
+// ── Dormant contributor semantics ─────────────────────────────────────────────
+
+describe('getAttentionQueue — dormant contributor semantics', () => {
+  it('abandoned + CI passing → reason is "Repository appears dormant"', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears dormant');
+    expect(result[0].reasons).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + CI unknown → reason is "Repository appears dormant" (not abandoned)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears dormant');
+    expect(result[0].reasons).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + CI failing → reason is "Repository appears abandoned"', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears abandoned');
+    expect(result[0].reasons).not.toContain('Repository appears dormant');
+  });
+
+  it('dormant attention score is lower than fully-corroborated abandoned score', () => {
+    // dormant (CI passing, release healthy): CONTRIBUTOR_DORMANT(10) only
+    // abandoned (CI failing, release healthy): CI_FAILING(25) + CONTRIBUTOR_ABANDONED(30) = 55
+    const dormant   = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    const abandoned = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(dormant[0].attentionScore).toBeLessThan(abandoned[0].attentionScore);
+    expect(dormant[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT);
+    expect(abandoned[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_ABANDONED + WEIGHTS.CI_FAILING);
+  });
+
+  it('WEIGHTS.CONTRIBUTOR_DORMANT is less than WEIGHTS.CONTRIBUTOR_ABANDONED', () => {
+    expect(WEIGHTS.CONTRIBUTOR_DORMANT).toBeLessThan(WEIGHTS.CONTRIBUTOR_ABANDONED);
+  });
+});
+
 // ── Score cap ──────────────────────────────────────────────────────────────────
 
 describe('getAttentionQueue — score capped at 100', () => {
@@ -316,9 +393,15 @@ describe('getAttentionQueue — reason strings', () => {
     expect(result[0].reasons).toContain('CI pipeline is failing');
   });
 
-  it('contributor abandoned produces a reason', () => {
-    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+  it('contributor abandoned + CI failing produces abandoned reason', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
     expect(result[0].reasons).toContain('Repository appears abandoned');
+  });
+
+  it('contributor abandoned + CI passing produces dormant reason (not abandoned)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears dormant');
+    expect(result[0].reasons).not.toContain('Repository appears abandoned');
   });
 
   it('critical risk score produces a reason mentioning the score value', () => {
@@ -853,5 +936,67 @@ describe('getAttentionQueue — reason ordering: no recent commits vs bus-factor
     expect(result[0].attentionScore).toBeLessThan(40);
     expect(result[0].attentionLevel).not.toBe('high');
     expect(result[0].attentionLevel).not.toBe('critical');
+  });
+});
+
+// ── Full dormant/abandoned semantic model ─────────────────────────────────────
+
+describe('getAttentionQueue — dormant vs abandoned full semantic model', () => {
+  it('abandoned + CI failing → abandoned reason (high-severity corroborated)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears abandoned');
+    expect(result[0].reasons).not.toContain('Repository appears dormant');
+  });
+
+  it('abandoned + CI passing → dormant reason (orange/amber, not red)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears dormant');
+    expect(result[0].reasons).not.toContain('Repository appears abandoned');
+  });
+
+  it('abandoned + CI unknown → dormant reason (unknown CI insufficient to confirm abandonment)', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).toContain('Repository appears dormant');
+    expect(result[0].reasons).not.toContain('Repository appears abandoned');
+  });
+
+  it('direct dormant contributorStatus produces dormant reason', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', contributorStatus: 'dormant' })]);
+    expect(result[0].reasons).toContain('Repository appears dormant');
+  });
+
+  it('direct dormant contributorStatus attentionScore equals CONTRIBUTOR_DORMANT', () => {
+    const result = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'dormant' })]);
+    expect(result[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT);
+  });
+
+  it('severity ordering: abandoned (CI failing) > dormant (CI unknown) > dormant (CI passing)', () => {
+    const abandoned = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    const dormantUnk = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'unknown', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    const dormantPass = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    expect(abandoned[0].attentionScore).toBeGreaterThan(dormantUnk[0].attentionScore);
+    expect(dormantUnk[0].attentionScore).toBeGreaterThan(dormantPass[0].attentionScore);
+  });
+
+  it('low_activity remains distinct and lower than dormant', () => {
+    const dormant    = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'abandoned' })]);
+    const lowActivity = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'low_activity' })]);
+    expect(dormant[0].attentionScore).toBeGreaterThan(lowActivity[0].attentionScore);
+    expect(dormant[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_DORMANT);
+    expect(lowActivity[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_LOW);
+  });
+
+  it('bus_factor_risk remains distinct from both dormant and abandoned', () => {
+    const busFactor = getAttentionQueue([makeRepo({ score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'bus_factor_risk' })]);
+    expect(busFactor[0].reasons).toContain('High bus-factor risk');
+    expect(busFactor[0].reasons).not.toContain('Repository appears dormant');
+    expect(busFactor[0].reasons).not.toContain('Repository appears abandoned');
+    expect(busFactor[0].attentionScore).toBe(WEIGHTS.CONTRIBUTOR_BUS_FACTOR);
+  });
+
+  it('false-abandonment regression: CI passing always prevents abandoned reason', () => {
+    const result = getAttentionQueue([makeRepo({ score: 50, ciStatus: 'passing', contributorStatus: 'abandoned' })]);
+    expect(result[0].reasons).not.toContain('Repository appears abandoned');
+    expect(result[0].reasons).toContain('Repository appears dormant');
   });
 });

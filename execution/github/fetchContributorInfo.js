@@ -47,7 +47,7 @@ async function fetchContributorInfo({ accessToken, fullName, fetchFn } = {}) {
     throw err;
   }
 
-  const url = `${GITHUB_API}/repos/${fullName}/contributors?per_page=100`;
+  const url = `${GITHUB_API}/repos/${fullName}/contributors?per_page=100&anon=1`;
 
   let res;
   try {
