@@ -4,7 +4,7 @@
 //
 // Active operational instability dominates:
 //   ci_failing, contributor_abandoned, escalating, persistent_risk,
-//   no_commits, volatile, deteriorating
+//   pr_risk, repeated_ci, no_commits, volatile, deteriorating, forecast_signal
 //
 // Structural maturity signals are secondary/supporting:
 //   contributor_bus_factor, release_stale, contributor_low, release_none
@@ -17,9 +17,12 @@ var CONCERN_WEIGHT = {
   contributor_abandoned:  40,
   escalating:             35,
   persistent_risk:        30,
+  pr_risk:                28,  // PR health critical / at-risk / monitored
+  repeated_ci:            26,  // repeated unresolved CI instability
   no_commits:             25,  // absent commit activity across repos
   volatile:               20,  // operational volatility at portfolio level
   deteriorating:          20,
+  forecast_signal:        18,  // high / critical forecast level
   telemetry_gaps:         18,  // incomplete CI/release/contributor data — limits assessment
 
   // ── Structural maturity signals (secondary/supporting) ───────────────────────
@@ -28,6 +31,13 @@ var CONCERN_WEIGHT = {
   contributor_low:         8,
   release_none:            8,
 };
+
+// ── Purely behavioral concern keys (excludes inactivity and telemetry gaps) ────
+// Used to detect structural-only portfolios where calm language is appropriate.
+var BEHAVIORAL_CORE_KEYS = [
+  'ci_failing', 'contributor_abandoned', 'escalating',
+  'persistent_risk', 'pr_risk', 'repeated_ci', 'volatile', 'deteriorating', 'forecast_signal',
+];
 
 // ── Severity map from portfolioRiskLevel ──────────────────────────────────────
 var RISK_TO_SEV = {
@@ -63,7 +73,8 @@ var STRUCTURAL_CONCERN_THRESHOLD = 3;
 
 var OPERATIONAL_CONCERN_KEYS = [
   'ci_failing', 'contributor_abandoned', 'escalating',
-  'persistent_risk', 'no_commits', 'volatile', 'deteriorating', 'telemetry_gaps',
+  'persistent_risk', 'pr_risk', 'repeated_ci', 'no_commits', 'volatile', 'deteriorating',
+  'forecast_signal', 'telemetry_gaps',
 ];
 
 var STRUCTURAL_CONCERN_KEYS = [
@@ -77,9 +88,12 @@ function _zeroCounts() {
     contributor_abandoned:  0,
     escalating:             0,
     persistent_risk:        0,
+    pr_risk:                0,
+    repeated_ci:            0,
     no_commits:             0,
     volatile:               0,
     deteriorating:          0,
+    forecast_signal:        0,
     telemetry_gaps:         0,
     contributor_bus_factor: 0,
     release_stale:          0,
@@ -111,6 +125,16 @@ function _aggregateConcernsFromAttention(attentionMap, portfolioTrajectory) {
       if (!hit.no_commits            && r.indexOf('No recent commits')                   === 0) { counts.no_commits++;            hit.no_commits            = true; }
       if (!hit.deteriorating         && r.indexOf('Deteriorating operational trajectory') === 0) { counts.deteriorating++;         hit.deteriorating         = true; }
       if (!hit.volatile && (r.indexOf('Volatile operational trajectory') === 0 || r.indexOf('Operational volatility elevated') === 0)) { counts.volatile++; hit.volatile = true; }
+      if (!hit.pr_risk && (
+          r.indexOf('PR health critical') === 0 ||
+          r.indexOf('PR health at-risk')  === 0 ||
+          r.indexOf('PR health monitored') === 0
+      )) { counts.pr_risk++; hit.pr_risk = true; }
+      if (!hit.repeated_ci && r.indexOf('Repeated unresolved CI instability') === 0) { counts.repeated_ci++; hit.repeated_ci = true; }
+      if (!hit.forecast_signal && (
+          r.indexOf('Critical forecast level') === 0 ||
+          r.indexOf('High forecast level')     === 0
+      )) { counts.forecast_signal++; hit.forecast_signal = true; }
       if (!hit.contributor_bus_factor && r.indexOf('High bus-factor risk')               === 0) { counts.contributor_bus_factor++; hit.contributor_bus_factor = true; }
       if (!hit.release_stale         && r.indexOf('Stale release cadence')               === 0) { counts.release_stale++;         hit.release_stale         = true; }
       if (!hit.contributor_low       && r.indexOf('Low contributor activity')            === 0) { counts.contributor_low++;       hit.contributor_low       = true; }
@@ -154,6 +178,9 @@ function _aggregateConcernsFromRepos(repos, portfolioTrajectory) {
     if (r.trajectory         === 'deteriorating')    counts.deteriorating++;
     if (r.contributorStatus  === 'low_activity')     counts.contributor_low++;
     if (r.releaseStatus      === 'none')             counts.release_none++;
+    if (r.prHealthStatus === 'critical' || r.prHealthStatus === 'at-risk' || r.prHealthStatus === 'monitored') counts.pr_risk++;
+    if (r.forecastLevel  === 'critical' || r.forecastLevel  === 'high')   counts.forecast_signal++;
+    if (r.unresolvedCiRun)                           counts.repeated_ci++;
     var hasTelemetryGap = r.ciStatus === 'unknown' || r.releaseStatus === 'unknown' ||
                           r.contributorStatus === 'unknown' || r.score == null;
     if (hasTelemetryGap) counts.telemetry_gaps++;
@@ -212,6 +239,14 @@ function _suppressStructural(concerns) {
     }
   }
   return result;
+}
+
+// ── Detect purely behavioral instability (excludes inactivity + telemetry) ───
+function _hasBehavioralCoreConcerns(concerns) {
+  for (var i = 0; i < BEHAVIORAL_CORE_KEYS.length; i++) {
+    if ((concerns[BEHAVIORAL_CORE_KEYS[i]] || 0) > 0) return true;
+  }
+  return false;
 }
 
 // ── Promote isolated critical instability into top-3 ─────────────────────────
@@ -300,6 +335,9 @@ function _themeText(key, count) {
     case 'release_stale':          return 'Release cadence declining across ' + count + ' ' + noun;
     case 'contributor_low':        return 'Low contributor activity in ' + count + ' ' + noun;
     case 'release_none':           return 'No releases found in ' + count + ' ' + noun;
+    case 'pr_risk':                return 'PR health concerns across ' + count + ' ' + noun;
+    case 'repeated_ci':            return 'Repeated CI instability in ' + count + ' ' + noun;
+    case 'forecast_signal':        return 'Elevated forecast signals across ' + count + ' ' + noun;
     case 'telemetry_gaps':         return 'Telemetry gaps limiting visibility across ' + count + ' ' + noun;
     default:                       return null;
   }
@@ -321,6 +359,9 @@ function _recommendation(key) {
     case 'release_stale':          return 'Improve release cadence consistency';
     case 'contributor_low':        return 'Expand contributor ownership coverage';
     case 'release_none':           return 'Establish release cadence for stagnant repositories';
+    case 'pr_risk':                return 'Review and resolve PR health degradation';
+    case 'repeated_ci':            return 'Address repeated CI instability at the root cause';
+    case 'forecast_signal':        return 'Investigate elevated forecast signals before they materialize';
     case 'telemetry_gaps':         return 'Improve telemetry coverage by completing repository sync';
     default:                       return null;
   }
@@ -494,6 +535,19 @@ function _buildSummary(trajectory, counts, rankedKeys, concerns, confidence) {
 
     case 'stable':
     default:
+      // Structural-only portfolio: no behavioral instability, no inactivity, no telemetry gaps.
+      // Use calm language — structural maturity gaps are not active operational crises.
+      if (!_hasBehavioralCoreConcerns(concerns)
+          && !(concerns.no_commits > 0)
+          && !(concerns.telemetry_gaps > 0)) {
+        if (t2) {
+          return 'Portfolio remains operationally quiet. '
+            + t1 + ' and ' + t2.charAt(0).toLowerCase() + t2.slice(1)
+            + ' represent structural maturity gaps.';
+        }
+        return 'Portfolio remains operationally quiet. '
+          + t1 + ' represents a structural maturity gap.';
+      }
       if (rankedKeys[0] === 'no_commits') {
         if (highConf) {
           if (t2) return 'Confirmed ' + t1.charAt(0).toLowerCase() + t1.slice(1)

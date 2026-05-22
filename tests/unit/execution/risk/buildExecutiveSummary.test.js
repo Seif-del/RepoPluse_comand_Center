@@ -2043,3 +2043,211 @@ describe('buildExecutiveSummary — production route flow (getAttentionQueue →
     expect(result.themes.some(function(t) { return t.toLowerCase().includes('commit'); })).toBe(true);
   });
 });
+
+// ── Behavioral instability integration ───────────────────────────────────────
+//
+// Validates that PR health, forecast signals, and repeated CI instability are
+// treated as first-class behavioral concerns — dominating structural/maturity
+// signals in themes and recommendations. Also validates structural-only calm language.
+
+describe('buildExecutiveSummary — behavioral instability integration', () => {
+  function makeAMItem(repoId, level, score, reasons) {
+    return { repoId, attentionLevel: level, attentionScore: score, reasons };
+  }
+
+  // ── PR health surfaces as a theme via attention reasons ──────────────────
+
+  it('pr_risk theme surfaces when attention reasons include PR health at-risk', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 70, ['PR health at-risk']),
+      makeAMItem(2, 'high', 68, ['PR health at-risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 })],
+      attentionMap:      am,
+    });
+    expect(result.themes.some(t => t.toLowerCase().includes('pr health'))).toBe(true);
+  });
+
+  it('pr_risk recommendation emitted when PR health critical is in attention reasons', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'critical', 90, ['PR health critical']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap:      am,
+    });
+    expect(result.recommendations.some(r => r.toLowerCase().includes('pr health'))).toBe(true);
+  });
+
+  // ── Forecast signal surfaces as a theme via attention reasons ─────────────
+
+  it('forecast_signal theme surfaces when attention reasons include High forecast level', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 65, ['High forecast level']),
+      makeAMItem(2, 'high', 62, ['High forecast level']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 })],
+      attentionMap:      am,
+    });
+    expect(result.themes.some(t => t.toLowerCase().includes('forecast'))).toBe(true);
+  });
+
+  it('forecast_signal recommendation emitted when Critical forecast level is in attention reasons', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'critical', 88, ['Critical forecast level']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'escalating', portfolioRiskLevel: 'critical' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap:      am,
+    });
+    expect(result.recommendations.some(r => r.toLowerCase().includes('forecast'))).toBe(true);
+  });
+
+  // ── Repeated CI instability surfaces via attention reasons ────────────────
+
+  it('repeated_ci theme surfaces when attention reasons include Repeated unresolved CI instability', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 72, ['Repeated unresolved CI instability']),
+      makeAMItem(2, 'high', 70, ['Repeated unresolved CI instability']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 })],
+      attentionMap:      am,
+    });
+    expect(result.themes.some(t => /repeat|ci instability/i.test(t))).toBe(true);
+  });
+
+  it('repeated_ci recommendation emitted for repeated CI instability', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 72, ['Repeated unresolved CI instability']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap:      am,
+    });
+    expect(result.recommendations.some(r => /repeat|root cause/i.test(r))).toBe(true);
+  });
+
+  // ── Behavioral signals dominate structural in themes ─────────────────────
+
+  it('behavioral themes precede structural themes when both are present', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 75, ['PR health at-risk', 'High bus-factor risk']),
+      makeAMItem(2, 'medium', 50, ['High bus-factor risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 })],
+      attentionMap:      am,
+    });
+    const prIdx  = result.themes.findIndex(t => t.toLowerCase().includes('pr health'));
+    const busIdx = result.themes.findIndex(t => t.toLowerCase().includes('concentration'));
+    if (prIdx !== -1 && busIdx !== -1) {
+      expect(prIdx).toBeLessThan(busIdx);
+    } else {
+      // pr_risk (28) > contributor_bus_factor (12) → pr_risk must appear if both present
+      expect(result.themes.some(t => t.toLowerCase().includes('pr health'))).toBe(true);
+    }
+  });
+
+  it('widespread behavioral signals suppress structural themes entirely', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 80, ['PR health critical', 'High bus-factor risk']),
+      makeAMItem(2, 'high', 78, ['PR health critical', 'High bus-factor risk']),
+      makeAMItem(3, 'medium', 45, ['High bus-factor risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 }), makeRepo({ id: 3, repoId: 3 })],
+      attentionMap:      am,
+    });
+    // pr_risk count=2 → widespread behavioral → structural suppressed
+    expect(result.themes.some(t => t.toLowerCase().includes('concentration'))).toBe(false);
+    expect(result.themes.some(t => t.toLowerCase().includes('pr health'))).toBe(true);
+  });
+
+  // ── Structural-only portfolio → calm language ─────────────────────────────
+
+  it('structural-only portfolio uses calm "operationally quiet" language in summary', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'low', 20, ['High bus-factor risk']),
+      makeAMItem(2, 'low', 18, ['Stale release cadence']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 })],
+      attentionMap:      am,
+    });
+    expect(result.summary.toLowerCase()).toContain('operationally quiet');
+  });
+
+  it('structural-only summary names "structural maturity gap" when only one structural concern', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'low', 20, ['High bus-factor risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap:      am,
+    });
+    expect(result.summary.toLowerCase()).toContain('structural maturity gap');
+  });
+
+  it('structural-only calm language absent when behavioral signals are present', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 75, ['PR health at-risk', 'High bus-factor risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos:             [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap:      am,
+    });
+    expect(result.summary.toLowerCase()).not.toContain('operationally quiet');
+  });
+
+  // ── New signals via repos fallback fields ─────────────────────────────────
+
+  it('pr_risk theme surfaces via repos prHealthStatus field (fallback path)', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, prHealthStatus: 'critical' }),
+        makeRepo({ id: 2, repoId: 2, prHealthStatus: 'at-risk'  }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.themes.some(t => t.toLowerCase().includes('pr health'))).toBe(true);
+  });
+
+  it('forecast_signal theme surfaces via repos forecastLevel field (fallback path)', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'escalating', portfolioRiskLevel: 'high' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, forecastLevel: 'high'     }),
+        makeRepo({ id: 2, repoId: 2, forecastLevel: 'critical' }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.themes.some(t => t.toLowerCase().includes('forecast'))).toBe(true);
+  });
+
+  it('repeated_ci theme surfaces via repos unresolvedCiRun field (fallback path)', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, unresolvedCiRun: true }),
+        makeRepo({ id: 2, repoId: 2, unresolvedCiRun: true }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.themes.some(t => /repeat|ci instability/i.test(t))).toBe(true);
+  });
+});
