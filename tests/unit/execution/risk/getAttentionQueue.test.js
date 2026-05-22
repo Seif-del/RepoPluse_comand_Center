@@ -1213,3 +1213,291 @@ describe('getAttentionQueue — PR health signals', () => {
     expect(result[0].repoId).toBe(2);
   });
 });
+
+// ── Volatility-adjusted sorting ───────────────────────────────────────────────
+
+describe('getAttentionQueue — volatility-adjusted sorting', () => {
+  // Repos are in a same severity tier unless stated otherwise.
+  // All structural signals: ciStatus='unknown', releaseStatus='none',
+  // contributorStatus='bus_factor_risk' (no behavioral state).
+
+  function makeStructural(overrides = {}) {
+    // A repo whose attentionScore comes entirely from structural/maturity signals.
+    // RELEASE_NONE(3) + BUS_FACTOR(5) + CI_UNKNOWN(2) = 10 → low tier.
+    // Pass score override to push into medium tier when needed.
+    return makeRepo({
+      id:                99,
+      fullName:          'o/structural',
+      score:             null,
+      ciStatus:          'unknown',
+      releaseStatus:     'none',
+      contributorStatus: 'bus_factor_risk',
+      ...overrides,
+    });
+  }
+
+  // ── Tier 1 behavioral signals outrank structural within same severity band ──
+
+  it('high volatility repo (medium, attentionScore=22) outranks structural-only repo (medium, attentionScore=28)', () => {
+    // Structural gets RISK_SCORE_MONITOR(20) from score=35 + BUS_FACTOR(5) + RELEASE_NONE(3) = 28 → medium
+    const structural = makeStructural({ id: 1, fullName: 'o/structural-higher', score: 35 });
+    // Volatility-high gets VOLATILITY_HIGH(22) = 22 → medium; behavioral score = 30
+    const volatile_  = makeRepo({
+      id:             2,
+      fullName:       'o/volatile',
+      score:          null,
+      ciStatus:       'unknown',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+      volatilityLevel: 'high',
+    });
+    const result = getAttentionQueue([structural, volatile_]);
+    expect(result[0].repoId).toBe(2);
+    expect(result[0].attentionLevel).toBe('medium');
+    expect(result[1].repoId).toBe(1);
+    expect(result[1].attentionLevel).toBe('medium');
+  });
+
+  it('deteriorating trajectory repo (medium) outranks structural-only repo (medium) with higher attentionScore', () => {
+    // Structural: RISK_SCORE_MONITOR(20) + BUS_FACTOR(5) + RELEASE_NONE(3) + CI_UNKNOWN(2) = 30 → medium
+    const structural = makeStructural({ id: 1, fullName: 'o/structural-higher', score: 35 });
+    // Deteriorating: TRAJ_DETERIORATING(22) = 22 → medium; behavioral score = 35
+    const deteriorating = makeRepo({
+      id:             2,
+      fullName:       'o/deteriorating',
+      score:          null,
+      ciStatus:       'unknown',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+      trajectory:     'deteriorating',
+    });
+    const result = getAttentionQueue([structural, deteriorating]);
+    expect(result[0].repoId).toBe(2);
+    expect(result[0].attentionLevel).toBe('medium');
+    expect(result[1].repoId).toBe(1);
+    expect(result[1].attentionLevel).toBe('medium');
+  });
+
+  it('PR at-risk repo (medium) outranks structural-only repo (medium) with higher attentionScore', () => {
+    // Structural: RISK_SCORE_MONITOR(20) + BUS_FACTOR(5) + RELEASE_NONE(3) + CI_UNKNOWN(2) = 30 → medium
+    const structural = makeStructural({ id: 1, fullName: 'o/structural-higher', score: 35 });
+    // PR at-risk: PR_HEALTH_AT_RISK(20) = 20 → medium; behavioral score = 12
+    const prAtRisk = makeRepo({
+      id:             2,
+      fullName:       'o/pr-at-risk',
+      score:          null,
+      ciStatus:       'unknown',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+      prHealthStatus: 'at-risk',
+    });
+    const result = getAttentionQueue([structural, prAtRisk]);
+    expect(result[0].repoId).toBe(2);
+    expect(result[0].attentionLevel).toBe('medium');
+    expect(result[1].repoId).toBe(1);
+    expect(result[1].attentionLevel).toBe('medium');
+  });
+
+  it('persistent risk repo (medium) outranks no-commit-only structural repo (medium) with higher attentionScore', () => {
+    // Structural: RISK_SCORE_MONITOR(20) + NO_RECENT_COMMITS(6) = 26 → medium
+    const structural = makeStructural({
+      id:               1,
+      fullName:         'o/no-commits',
+      score:            35,
+      releaseStatus:    'unknown',
+      contributorStatus: 'unknown',
+      noRecentCommits:  true,
+    });
+    // Persistent risk: PERSISTENT_RISK(25) = 25 → medium; behavioral score = 25
+    const persistent = makeRepo({
+      id:             2,
+      fullName:       'o/persistent',
+      score:          null,
+      ciStatus:       'unknown',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+      persistentRisk: true,
+    });
+    const result = getAttentionQueue([structural, persistent]);
+    expect(result[0].repoId).toBe(2);
+    expect(result[0].attentionLevel).toBe('medium');
+  });
+
+  // ── Severity tier still dominates behavioral sort score ───────────────────
+
+  it('critical-tier structural repo outranks low-tier behavioral repo', () => {
+    // Critical structural: RISK_SCORE_CRITICAL(65) + BUS_FACTOR(5) + RELEASE_NONE(3) + CI_UNKNOWN(2) = 75 → critical
+    const criticalStructural = makeStructural({
+      id:       1,
+      fullName: 'o/critical-structural',
+      score:    80,
+      releaseStatus:     'unknown',
+      contributorStatus: 'bus_factor_risk',
+    });
+    // Low behavioral: TRAJ_VOLATILE(10) = 10 → low tier; behavioral sort score = 8
+    const lowBehavioral = makeRepo({
+      id:                2,
+      fullName:          'o/low-behavioral',
+      score:             null,
+      ciStatus:          'unknown',
+      releaseStatus:     'unknown',
+      contributorStatus: 'unknown',
+      trajectory:        'volatile',
+    });
+    const result = getAttentionQueue([lowBehavioral, criticalStructural]);
+    expect(result[0].repoId).toBe(1);
+    expect(result[0].attentionLevel).toBe('critical');
+    expect(result[1].repoId).toBe(2);
+    expect(result[1].attentionLevel).toBe('low');
+  });
+
+  // ── CI failing and abandoned still dominate within their tier ─────────────
+
+  it('CI failing (behavioral=100) outranks escalating+volatile+persistent in same tier', () => {
+    // escalating+volatile+persistent: TRAJ_ESCALATING(30)+TRAJ_VOLATILE(10)+PERSISTENT_RISK(25) = 65 → critical
+    // CI failing alone = 40 → high. So they won't be same tier. Use score to push CI-failing to critical.
+    // CI failing + RISK_SCORE_CRITICAL(65 from score>=60) = 105 → capped at 100 → critical, behavioral=100
+    const ciFailing = makeRepo({
+      id:             1,
+      fullName:       'o/ci-failing',
+      score:          70,
+      ciStatus:       'failing',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+    });
+    // escalating+volatile+persistent = 65 → critical, behavioral = 40+8+25 = 73
+    const escalatingMulti = makeRepo({
+      id:             2,
+      fullName:       'o/escalating-multi',
+      score:          null,
+      ciStatus:       'unknown',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+      trajectory:     'escalating',
+      persistentRisk: true,
+    });
+    const result = getAttentionQueue([escalatingMulti, ciFailing]);
+    // Both critical tier. CI failing has behavioral=100, escalating+persistent has 40+25=65
+    expect(result[0].repoId).toBe(1);
+    expect(result[0].attentionLevel).toBe('critical');
+    expect(result[1].repoId).toBe(2);
+  });
+
+  it('abandoned + CI failing (behavioral=150) outranks CI-failing-only (behavioral=100)', () => {
+    // abandoned + CI failing: CONTRIBUTOR_ABANDONED(40) + CI_FAILING(40) = 80 → critical
+    // behavioral: ci=failing(100) + (abandoned&&failing)(50) = 150
+    const abandonedCiFailing = makeRepo({
+      id:             1,
+      fullName:       'o/abandoned-ci',
+      score:          null,
+      ciStatus:       'failing',
+      releaseStatus:  'unknown',
+      contributorStatus: 'abandoned',
+    });
+    // CI failing only: CI_FAILING(40) → high. Push to critical with score.
+    const ciFailing = makeRepo({
+      id:             2,
+      fullName:       'o/ci-only',
+      score:          70,
+      ciStatus:       'failing',
+      releaseStatus:  'unknown',
+      contributorStatus: 'unknown',
+    });
+    const result = getAttentionQueue([ciFailing, abandonedCiFailing]);
+    // Both critical tier. abandonedCiFailing behavioral=150, ciFailing behavioral=100
+    expect(result[0].repoId).toBe(1);
+    expect(result[0].attentionLevel).toBe('critical');
+    expect(result[1].repoId).toBe(2);
+  });
+
+  // ── Structural-only repos cluster at behavioral=0 and sort by attentionScore ─
+
+  it('structural-only repos sort by attentionScore DESC when behavioral scores are equal', () => {
+    // All structural: behavioral=0; sort falls through to attentionScore
+    const low    = makeStructural({ id: 1, fullName: 'o/low',    score: null }); // ~10 pts → low
+    const medium = makeStructural({ id: 2, fullName: 'o/medium', score: 35   }); // ~30 pts → medium
+    const high_  = makeStructural({ id: 3, fullName: 'o/high',   score: 60   }); // RISK_SCORE_CRITICAL(65)+BUS(5)+NONE(3)+UNK(2)=75→critical actually
+    // Use score=45 for high: RISK_SCORE_AT_RISK(45)+BUS(5)+NONE(3)+UNK(2)=55 → high
+    const highRepo = makeStructural({ id: 3, fullName: 'o/high', score: 45 });
+    const result = getAttentionQueue([low, medium, highRepo]);
+    // high > medium > low by severity, then attentionScore within tier
+    expect(result[0].repoId).toBe(3);
+    expect(result[1].repoId).toBe(2);
+    expect(result[2].repoId).toBe(1);
+  });
+
+  it('two structural-only repos in same tier sort by attentionScore DESC', () => {
+    // Both medium tier (20-39): higher attentionScore first
+    const lower  = makeStructural({ id: 1, fullName: 'o/lower',  score: 30 }); // RISK_SCORE_MONITOR(20)+BUS(5)+NONE(3)+UNK(2)=30
+    const higher = makeStructural({ id: 2, fullName: 'o/higher', score: 35 }); // same breakdown but score=35 gives same RISK_SCORE_MONITOR
+    // Actually both score=30 and score=35 map to RISK_SCORE_MONITOR(20). Add extra CI_UNKNOWN for higher.
+    // Make "higher" have more structural signals: add noRecentCommits
+    const lowerRepo  = makeStructural({ id: 1, fullName: 'o/lower',  score: null });   // BUS(5)+NONE(3)+UNK(2)=10
+    const higherRepo = makeStructural({ id: 2, fullName: 'o/higher', score: null, noRecentCommits: true }); // BUS(5)+NONE(3)+UNK(2)+NO_COMMITS(6)=16
+    const result = getAttentionQueue([lowerRepo, higherRepo]);
+    expect(result[0].repoId).toBe(2);
+    expect(result[1].repoId).toBe(1);
+  });
+
+  // ── Output shape ─────────────────────────────────────────────────────────────
+
+  it('output items do not expose internal sort fields (_severityRank, _behavioralScore, _riskScore, _syncedAt)', () => {
+    const repos = [
+      makeRepo({ id: 1, volatilityLevel: 'high' }),
+      makeStructural({ id: 2 }),
+    ];
+    const result = getAttentionQueue(repos);
+    for (const item of result) {
+      expect(item).not.toHaveProperty('_severityRank');
+      expect(item).not.toHaveProperty('_behavioralScore');
+      expect(item).not.toHaveProperty('_riskScore');
+      expect(item).not.toHaveProperty('_syncedAt');
+    }
+  });
+
+  it('each output item has exactly the public fields: repoId, name, attentionLevel, attentionScore, reasons, trajectory', () => {
+    const repos = [makeRepo({ id: 1, trajectory: 'escalating' })];
+    const result = getAttentionQueue(repos);
+    const keys = Object.keys(result[0]).sort();
+    expect(keys).toEqual(['attentionLevel', 'attentionScore', 'name', 'reasons', 'repoId', 'trajectory']);
+  });
+
+  // ── Determinism ───────────────────────────────────────────────────────────────
+
+  it('sort is deterministic regardless of input array order', () => {
+    const repos = [
+      makeRepo({ id: 1, fullName: 'o/volatile',      volatilityLevel: 'high' }),
+      makeRepo({ id: 2, fullName: 'o/ci-failing',    ciStatus: 'failing' }),
+      makeStructural({ id: 3, fullName: 'o/structural-a', score: 35 }),
+      makeStructural({ id: 4, fullName: 'o/structural-b', score: null }),
+      makeRepo({ id: 5, fullName: 'o/persistent',    persistentRisk: true }),
+    ];
+    const reversed = [...repos].reverse();
+    const shuffled = [repos[2], repos[0], repos[4], repos[1], repos[3]];
+
+    const r1 = getAttentionQueue(repos).map(i => i.repoId);
+    const r2 = getAttentionQueue(reversed).map(i => i.repoId);
+    const r3 = getAttentionQueue(shuffled).map(i => i.repoId);
+
+    expect(r1).toEqual(r2);
+    expect(r1).toEqual(r3);
+  });
+
+  it('name tiebreaker sorts alphabetically ASC when all other fields are equal', () => {
+    const base = { score: null, ciStatus: 'failing', releaseStatus: 'unknown', contributorStatus: 'unknown' };
+    const repoA = makeRepo({ id: 1, fullName: 'o/alpha',   ...base });
+    const repoB = makeRepo({ id: 2, fullName: 'o/beta',    ...base });
+    const repoC = makeRepo({ id: 3, fullName: 'o/charlie', ...base });
+    const result = getAttentionQueue([repoC, repoA, repoB]);
+    expect(result.map(i => i.repoId)).toEqual([1, 2, 3]);
+  });
+
+  it('id tiebreaker is used as last resort when name is also equal', () => {
+    const base = { fullName: 'o/same', score: null, ciStatus: 'failing', releaseStatus: 'unknown', contributorStatus: 'unknown' };
+    const r1 = makeRepo({ id: 3, ...base });
+    const r2 = makeRepo({ id: 1, ...base });
+    const r3 = makeRepo({ id: 2, ...base });
+    const result = getAttentionQueue([r1, r2, r3]);
+    expect(result.map(i => i.repoId)).toEqual([1, 2, 3]);
+  });
+});
