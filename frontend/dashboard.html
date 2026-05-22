@@ -1793,33 +1793,63 @@
     // Prefix matching (startsWith) handles dynamic strings like
     // "High risk score (72)" and "Elevated risk score (55)".
 
+    // ── Behavioral signals (strong color in table) ─────────────────────────────
+    // ── Structural / context signals (rendered muted in table) ────────────────
+    // Order within each group determines chip label — prefix match (startsWith).
     var REASON_TAGS = [
-      ['CI pipeline is failing',       'CI Failing',          'severity-critical'],
-      ['Repository appears abandoned', 'Abandoned',           'severity-critical'],
-      ['Repository appears dormant',   'Dormant',             'severity-high'],
-      ['Critical risk score',          'Critical Risk',       'severity-critical'],
-      ['No recent commits',             'No Commits',          'severity-medium'],
-      ['High bus-factor risk',         'Bus Factor',          'severity-high'],
-      ['Stale release cadence',        'Release Stale',       'severity-high'],
-      ['Low contributor activity',     'Low Activity',        'severity-medium'],
-      ['No releases found',            'No Releases',         'severity-medium'],
-      ['Elevated risk score',          'Elevated Risk',       'severity-medium'],
-      ['Monitored risk score',         'Monitor Risk',        'severity-low'],
-      ['CI status unknown',            'CI Unknown',          'severity-neutral'],
-      ['Release status unknown',       'Release Unknown',     'severity-neutral'],
-      ['Contributor status unknown',   'Contributor Unknown', 'severity-neutral'],
-      ['No metrics available yet',     'No Metrics',          'severity-neutral'],
+      // Behavioral — critical
+      ['CI pipeline is failing',                   'CI Failing',       'severity-critical'],
+      ['Repository appears abandoned',             'Abandoned',        'severity-critical'],
+      ['Critical risk score',                      'Critical Risk',    'severity-critical'],
+      ['Critical forecast level',                  'Forecast Crit',    'severity-critical'],
+      ['Escalation level is critical',             'Esc Critical',     'severity-critical'],
+      ['PR health critical',                       'PR Critical',      'severity-critical'],
+      // Behavioral — high
+      ['Repository appears dormant',               'Dormant',          'severity-high'    ],
+      ['Escalating operational trajectory',        'Escalating',       'severity-high'    ],
+      ['Deteriorating operational trajectory',     'Deteriorating',    'severity-high'    ],
+      ['Persistent operational risk',              'Persistent Risk',  'severity-high'    ],
+      ['Escalation level is high',                 'Esc High',         'severity-high'    ],
+      ['PR health at-risk',                        'PR Risk',          'severity-high'    ],
+      ['Elevated risk score',                      'Elevated Risk',    'severity-high'    ],
+      // Behavioral — medium
+      ['Volatile operational trajectory',          'Volatile',         'severity-medium'  ],
+      ['High forecast level',                      'Forecast High',    'severity-medium'  ],
+      ['Operational volatility elevated',          'Op Volatile',      'severity-medium'  ],
+      ['Repeated unresolved CI instability',       'CI Repeat',        'severity-medium'  ],
+      ['PR health monitored',                      'PR Monitor',       'severity-medium'  ],
+      // Structural / context — displayed muted in table rows
+      ['Monitored risk score',                     'Monitor Risk',     'severity-low'     ],
+      ['No recent commits',                        'No Commits',       'severity-medium'  ],
+      ['High bus-factor risk',                     'Bus Factor',       'severity-high'    ],
+      ['Stale release cadence',                    'Release Stale',    'severity-high'    ],
+      ['Low contributor activity',                 'Low Activity',     'severity-medium'  ],
+      ['No releases found',                        'No Releases',      'severity-medium'  ],
+      // Telemetry gaps — neutral
+      ['CI status unknown',                        'CI Unknown',       'severity-neutral' ],
+      ['Release status unknown',                   'Release Unknown',  'severity-neutral' ],
+      ['Contributor status unknown',               'Contributor ?',    'severity-neutral' ],
+      ['No metrics available yet',                 'No Metrics',       'severity-neutral' ],
     ];
 
-    function reasonTagsHtml(reasons) {
+    // behavioralCount: how many entries at the START of `reasons` are behavioral.
+    // Entries at index >= behavioralCount are structural/context and are rendered
+    // with severity-neutral (muted) styling regardless of their base severity class.
+    function reasonTagsHtml(reasons, behavioralCount) {
+      if (behavioralCount === undefined) behavioralCount = reasons ? reasons.length : 0;
       if (!reasons || !reasons.length) {
         return '<div class="tbl-reasons"><span style="color:var(--text-muted);">—</span></div>';
       }
 
-      var tags = reasons.map(function(reason) {
+      var tags = reasons.map(function(reason, idx) {
+        var isStructural = idx >= behavioralCount;
         for (var i = 0; i < REASON_TAGS.length; i++) {
           if (reason.indexOf(REASON_TAGS[i][0]) === 0) {
-            return { label: REASON_TAGS[i][1], cls: REASON_TAGS[i][2], full: reason };
+            return {
+              label: REASON_TAGS[i][1],
+              cls:   isStructural ? 'severity-neutral' : REASON_TAGS[i][2],
+              full:  reason,
+            };
           }
         }
         var truncated = reason.length > 14 ? reason.slice(0, 12) + '…' : reason;
@@ -1900,10 +1930,45 @@
       return 20; // unmapped reasons land in mid-priority tier
     }
 
-    // Builds table-only reason tag HTML with attention-level-aware filtering and sorting.
-    //   ALL levels    → reasons sorted by REASON_PRIORITY_MAP (operational first, placeholders last)
-    //   LOW / HEALTHY → structural maturity tags also filtered out first;
-    //                   renders "No active issues" if nothing operational remains
+    // Behavioral reason prefixes — active instability or degradation signals.
+    // Structural signals (bus factor, no releases, no commits, telemetry gaps) are
+    // NOT in this list and will be rendered muted in table rows.
+    var BEHAVIORAL_REASON_PREFIXES = [
+      'CI pipeline is failing',
+      'Repository appears abandoned',
+      'Repository appears dormant',
+      'Escalating operational trajectory',
+      'Deteriorating operational trajectory',
+      'Volatile operational trajectory',
+      'Critical forecast level',
+      'High forecast level',
+      'Persistent operational risk',
+      'Escalation level is critical',
+      'Escalation level is high',
+      'Operational volatility elevated',
+      'Repeated unresolved CI instability',
+      'PR health critical',
+      'PR health at-risk',
+      'PR health monitored',
+    ];
+
+    function isBehavioralReason(reason) {
+      for (var i = 0; i < BEHAVIORAL_REASON_PREFIXES.length; i++) {
+        if (reason.indexOf(BEHAVIORAL_REASON_PREFIXES[i]) === 0) return true;
+      }
+      return false;
+    }
+
+    // Builds table-only reason tag HTML with behavioral-first display priority.
+    //
+    // Visual rules:
+    //   - Behavioral signals (CI failing, trajectories, volatility, PR health, …)
+    //     render with their full severity color and appear FIRST.
+    //   - Structural / context signals (no commits, bus factor, no releases,
+    //     telemetry gaps) render muted (severity-neutral) and appear AFTER behavioral.
+    //   - Max 2 chips visible; remainder shown as "+N" overflow.
+    //   - LOW / HEALTHY rows: structural maturity tags suppressed; if nothing
+    //     behavioral remains either, renders "No active issues".
     function buildTableReasonTags(aq) {
       var reasons = (aq && aq.reasons) ? aq.reasons : [];
       var level   = (aq && aq.attentionLevel) ? aq.attentionLevel : 'unknown';
@@ -1917,11 +1982,18 @@
         }
       }
 
-      var sorted = working.slice().sort(function(a, b) {
-        return _reasonPriority(a) - _reasonPriority(b);
-      });
+      // Partition into behavioral (strong color) and structural (muted)
+      var behavioral = working.filter(isBehavioralReason);
+      var structural = working.filter(function(r) { return !isBehavioralReason(r); });
 
-      return reasonTagsHtml(sorted);
+      // Sort each group independently by display priority
+      behavioral.sort(function(a, b) { return _reasonPriority(a) - _reasonPriority(b); });
+      structural.sort(function(a, b) { return _reasonPriority(a) - _reasonPriority(b); });
+
+      // Behavioral reasons always precede structural reasons
+      var sorted = behavioral.concat(structural);
+
+      return reasonTagsHtml(sorted, behavioral.length);
     }
 
     function card(label, value, cls) {
