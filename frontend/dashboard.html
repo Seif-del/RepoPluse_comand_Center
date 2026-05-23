@@ -723,6 +723,33 @@
       cursor: default;
     }
 
+    /* ── Predictive trend chip ────────────────────────────────────────────── */
+    /* Pill shape (border-radius 9px) visually separates it from the square    */
+    /* reason-tag badges. Same severity color tokens; different role: WHERE    */
+    /* the repo is heading, not WHAT is wrong.                                 */
+    .trend-chip {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.61rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      padding: 1px 5px;
+      border-radius: 9px;
+      border-width: 1px;
+      border-style: solid;
+      line-height: 1;
+      white-space: nowrap;
+      flex-shrink: 0;
+      cursor: default;
+    }
+
+    .trend-chip.severity-critical { background: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); }
+    .trend-chip.severity-high     { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     color: var(--sev-high-text);     }
+    .trend-chip.severity-medium   { background: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .trend-chip.severity-low      { background: var(--sev-low-bg);      border-color: var(--sev-low-border);      color: var(--sev-low-text);      }
+    .trend-chip.severity-healthy  { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .trend-chip.severity-neutral  { background: var(--sev-neutral-bg);  border-color: var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
+
     .tbl-id {
       font-family: var(--font-mono);
       font-size: 0.72rem;
@@ -1835,10 +1862,15 @@
     // behavioralCount: how many entries at the START of `reasons` are behavioral.
     // Entries at index >= behavioralCount are structural/context and are rendered
     // with severity-neutral (muted) styling regardless of their base severity class.
-    function reasonTagsHtml(reasons, behavioralCount) {
+    // prefixHtml: optional HTML string prepended inside the .tbl-reasons div
+    //             (used to inject a predictive trend chip before reason tags).
+    function reasonTagsHtml(reasons, behavioralCount, prefixHtml) {
       if (behavioralCount === undefined) behavioralCount = reasons ? reasons.length : 0;
+      prefixHtml = prefixHtml || '';
       if (!reasons || !reasons.length) {
-        return '<div class="tbl-reasons"><span style="color:var(--text-muted);">—</span></div>';
+        return '<div class="tbl-reasons">'
+          + (prefixHtml || '<span style="color:var(--text-muted);">—</span>')
+          + '</div>';
       }
 
       var tags = reasons.map(function(reason, idx) {
@@ -1860,6 +1892,7 @@
       var overflow = tags.length - 2;
 
       var html = '<div class="tbl-reasons">'
+        + prefixHtml
         + visible.map(function(t) {
             return '<span class="reason-tag ' + t.cls + '" title="' + esc(t.full) + '">'
               + esc(t.label) + '</span>';
@@ -1959,6 +1992,88 @@
       return false;
     }
 
+    // ── Predictive trend derivation ───────────────────────────────────────────
+    // Derives the single highest-priority predictive trend for a repository row.
+    // Returns { label, cls } or null (no chip) for structural-only / healthy rows.
+    //
+    // Priority order:
+    //   1. Escalating trajectory  → severity-critical
+    //   2. Deteriorating          → severity-high
+    //   3. Critical/High forecast → severity-critical / severity-high
+    //   4. High volatility        → severity-medium
+    //   5. Persistent risk        → severity-medium
+    //   6. PR critical/at-risk    → severity-critical / severity-high
+    //   7. Improving (recovering) → severity-healthy
+    //   8. Stable (medium+ repos with no above signals) → severity-neutral
+    //   9. null — low/healthy structural-only rows get no chip
+    function derivePredictiveTrend(repo, aq) {
+      var traj    = (aq && aq.trajectory)     || (repo && repo.trajectory)     || null;
+      var level   = (aq && aq.attentionLevel) || null;
+      var reasons = (aq && aq.reasons)        || [];
+
+      function hasReason(prefix) {
+        for (var i = 0; i < reasons.length; i++) {
+          if (reasons[i].indexOf(prefix) === 0) return true;
+        }
+        return false;
+      }
+
+      // 1. Escalating
+      if (traj === 'escalating' || hasReason('Escalating operational trajectory'))
+        return { label: 'Escalating', cls: 'severity-critical' };
+
+      // 2. Deteriorating
+      if (traj === 'deteriorating' || hasReason('Deteriorating operational trajectory'))
+        return { label: 'Deteriorating', cls: 'severity-high' };
+
+      // 3. Forecast level (structured field → reason fallback)
+      var fc = (repo && repo.forecastLevel) || null;
+      if (!fc) {
+        if (hasReason('Critical forecast level'))    fc = 'critical';
+        else if (hasReason('High forecast level'))   fc = 'high';
+      }
+      if (fc === 'critical') return { label: 'Forecast Crit', cls: 'severity-critical' };
+      if (fc === 'high')     return { label: 'Forecast High', cls: 'severity-high' };
+
+      // 4. Volatility (structured field → reason fallback)
+      var vol = (repo && repo.volatilityLevel) || null;
+      if (!vol && (hasReason('Operational volatility elevated') || hasReason('Volatile operational trajectory')))
+        vol = 'high';
+      if (vol === 'high' || vol === 'critical') return { label: 'Volatile', cls: 'severity-medium' };
+
+      // 5. Persistent risk
+      if ((repo && repo.persistentRisk) || hasReason('Persistent operational risk'))
+        return { label: 'Persistent', cls: 'severity-medium' };
+
+      // 6. PR health risk (structured field → reason fallback)
+      var pr = (repo && repo.prHealthStatus) || null;
+      if (!pr) {
+        if (hasReason('PR health critical'))         pr = 'critical';
+        else if (hasReason('PR health at-risk'))     pr = 'at-risk';
+      }
+      if (pr === 'critical') return { label: 'PR Risk', cls: 'severity-critical' };
+      if (pr === 'at-risk')  return { label: 'PR Risk', cls: 'severity-high' };
+
+      // 7. Improving (recovering trajectory)
+      if (traj === 'recovering' || traj === 'improving')
+        return { label: 'Improving', cls: 'severity-healthy' };
+
+      // 8. Stable — only for repos with active attention above low/healthy
+      if (level && level !== 'healthy' && level !== 'low')
+        return { label: 'Stable', cls: 'severity-neutral' };
+
+      // 9. No chip for low/healthy structural-only rows
+      return null;
+    }
+
+    // Renders a compact pill-shaped trend chip HTML string, or '' when trend is null.
+    function trendChipHtml(trend) {
+      if (!trend) return '';
+      return '<span class="trend-chip ' + trend.cls
+        + '" title="Predictive trend: ' + esc(trend.label) + '">'
+        + esc(trend.label) + '</span>';
+    }
+
     // Builds table-only reason tag HTML with behavioral-first display priority.
     //
     // Visual rules:
@@ -1969,7 +2084,10 @@
     //   - Max 2 chips visible; remainder shown as "+N" overflow.
     //   - LOW / HEALTHY rows: structural maturity tags suppressed; if nothing
     //     behavioral remains either, renders "No active issues".
-    function buildTableReasonTags(aq) {
+    //   - prefixHtml: optional HTML injected at the start of the reasons cell
+    //     (used to prepend the predictive trend chip before reason tags).
+    function buildTableReasonTags(aq, prefixHtml) {
+      prefixHtml = prefixHtml || '';
       var reasons = (aq && aq.reasons) ? aq.reasons : [];
       var level   = (aq && aq.attentionLevel) ? aq.attentionLevel : 'unknown';
 
@@ -1978,7 +2096,9 @@
       if (level === 'low' || level === 'healthy') {
         working = reasons.filter(function(r) { return !TABLE_SUPPRESS_LOW.has(r); });
         if (!working.length) {
-          return '<div class="tbl-reasons"><span style="color:var(--text-muted);font-size:0.72rem;">No active issues</span></div>';
+          return '<div class="tbl-reasons">'
+            + prefixHtml
+            + '<span style="color:var(--text-muted);font-size:0.72rem;">No active issues</span></div>';
         }
       }
 
@@ -1993,7 +2113,7 @@
       // Behavioral reasons always precede structural reasons
       var sorted = behavioral.concat(structural);
 
-      return reasonTagsHtml(sorted, behavioral.length);
+      return reasonTagsHtml(sorted, behavioral.length, prefixHtml);
     }
 
     function card(label, value, cls) {
@@ -3633,12 +3753,15 @@
 
         var heatCls = HEAT_CLS[aqLevel] || OP_HEAT_CLS[opState.cls] || 'row-heat-unknown';
 
+        var trend   = derivePredictiveTrend(r, aq);
+        var chipHtml = trendChipHtml(trend);
+
         return '<tr data-id="' + esc(String(r.id)) + '" class="' + heatCls + '">'
           + '<td><span class="tbl-id">#' + esc(String(r.id)) + '</span></td>'
           + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
           + '<td><span class="status-pill ' + opState.cls + '">' + esc(opState.text) + '</span></td>'
           + '<td>' + aqHtml + '</td>'
-          + '<td>' + buildTableReasonTags(aq) + '</td>'
+          + '<td>' + buildTableReasonTags(aq, chipHtml) + '</td>'
           + '</tr>';
       }).join('');
 
