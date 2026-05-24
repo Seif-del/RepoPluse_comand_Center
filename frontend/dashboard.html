@@ -1664,6 +1664,15 @@
       </div>
     </div>
 
+    <!-- Behavioral Stability panel -->
+    <div class="section" id="section-bsi">
+      <div class="section-header">
+        <span class="section-title">Behavioral Stability</span>
+        <div class="section-divider"></div>
+      </div>
+      <div id="bsi-panel"></div>
+    </div>
+
     <!-- Observability Maturity panel -->
     <div class="section" id="section-telemetry-coverage">
       <div class="section-header">
@@ -4057,6 +4066,115 @@
         .catch(function() {});
     }
 
+    // ── Behavioral Stability ─────────────────────────────────────────────────
+
+    var _BSI_STABILITY_SEV = {
+      stable:   'severity-healthy',
+      watch:    'severity-medium',
+      volatile: 'severity-high',
+      unstable: 'severity-critical',
+      unknown:  'severity-unknown',
+    };
+
+    function _bsiStabilityBadge(level) {
+      var cls   = _BSI_STABILITY_SEV[level] || _BSI_STABILITY_SEV.unknown;
+      var label = level === 'stable'   ? 'STABLE'
+                : level === 'watch'    ? 'WATCH'
+                : level === 'volatile' ? 'VOLATILE'
+                : level === 'unstable' ? 'UNSTABLE'
+                : 'UNKNOWN';
+      return '<span class="pf-badge ' + cls + '">' + esc(label) + '</span>';
+    }
+
+    function buildBehavioralStabilityHtml(data) {
+      var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:8px 0;">'
+                + 'Behavioral stability unavailable until repositories are synced.</p>';
+      if (!data) return EMPTY;
+
+      var score      = typeof data.indexScore === 'number' ? data.indexScore : 0;
+      var stability  = data.stabilityLevel  || 'unknown';
+      var confidence = data.confidenceLevel || 'low';
+      var counts     = data.counts || {};
+      var drivers    = Array.isArray(data.drivers) ? data.drivers : [];
+
+      if (stability === 'unknown') return EMPTY;
+
+      var html = '<div class="panel">';
+
+      html += '<div class="panel-head">'
+            + '<h2>Behavioral Stability Index</h2>'
+            + _bsiStabilityBadge(stability)
+            + '<span class="confidence-badge conf-' + esc(confidence) + '">'
+            + esc(confidence.toUpperCase() + ' CONFIDENCE') + '</span>'
+            + '<span class="panel-count">' + esc(String(score)) + '/100</span>'
+            + '</div>';
+
+      html += '<div class="panel-body" style="padding:14px 20px 16px;">';
+
+      html += '<p class="pf-summary">' + esc(data.summary || '') + '</p>';
+
+      var countDefs = [
+        { value: counts.escalatingRepos    || 0, label: 'Escalating'   },
+        { value: counts.deterioratingRepos || 0, label: 'Deteriorating' },
+        { value: counts.volatileRepos      || 0, label: 'Volatile'     },
+        { value: counts.prRiskRepos        || 0, label: 'PR Risk'      },
+        { value: counts.ciFailingRepos     || 0, label: 'CI Failing'   },
+      ];
+      html += '<div class="pf-counts">';
+      countDefs.forEach(function(item) {
+        html += '<div class="pf-count-item">'
+              + '<span class="pf-count-value">' + esc(String(item.value)) + '</span>'
+              + '<span class="pf-count-label">' + esc(item.label) + '</span>'
+              + '</div>';
+      });
+      html += '</div>';
+
+      var topDrivers = drivers.slice(0, 3);
+      if (!topDrivers.length) {
+        html += '<p style="font-size:0.79rem;color:var(--text-muted);font-style:italic;'
+              + 'margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">'
+              + 'No behavioral instability drivers detected.</p>';
+      } else {
+        html += '<ul class="pf-signals">';
+        topDrivers.forEach(function(d) {
+          var isPositive = d.direction === 'positive';
+          var dColor     = isPositive ? 'color:var(--sev-healthy-text);' : '';
+          var impactAbs  = Math.abs(d.impact);
+          var impactHtml = isPositive
+            ? ' <span style="font-size:0.72rem;color:var(--sev-healthy-text);">(+' + String(impactAbs) + '&nbsp;pts)</span>'
+            : ' <span style="font-size:0.72rem;color:var(--text-muted);">(&minus;' + String(impactAbs) + '&nbsp;pts)</span>';
+          html += '<li class="pf-signal" style="' + dColor + '">'
+                + esc(d.description) + impactHtml
+                + '</li>';
+        });
+        html += '</ul>';
+      }
+
+      html += '</div></div>';
+      return html;
+    }
+
+    function loadBehavioralStability() {
+      var container = document.getElementById('bsi-panel');
+      if (!container) return;
+      fetch('/api/portfolio/behavioral-stability', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) {
+            console.warn('[BehavioralStability] unexpected HTTP status:', r.status);
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          container.innerHTML = buildBehavioralStabilityHtml(d);
+        })
+        .catch(function(err) {
+          console.warn('[BehavioralStability] failed to load:', err);
+        });
+    }
+
     // ── Telemetry Coverage (Observability Maturity) ──────────────────────────
 
     function _matBadge(level) {
@@ -4186,6 +4304,7 @@
 
     function refresh() {
       loadSummary();
+      loadBehavioralStability();
       loadTelemetryCoverage();
       loadRepos();
       loadAttentionQueue();
