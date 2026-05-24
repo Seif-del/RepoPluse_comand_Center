@@ -11,6 +11,8 @@ jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) 
 jest.mock('../../../../execution/risk/detectOperationalAnomalies');
 jest.mock('../../../../execution/risk/clusterOperationalAnomalies');
 jest.mock('../../../../execution/risk/buildTelemetryCoverageSummary');
+jest.mock('../../../../execution/risk/buildBehavioralStabilityIndex');
+jest.mock('../../../../execution/risk/scorePullRequestHealth');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -23,6 +25,8 @@ const { getOperationalChanges }      = require('../../../../execution/risk/getOp
 const { detectOperationalAnomalies }  = require('../../../../execution/risk/detectOperationalAnomalies');
 const { clusterOperationalAnomalies }        = require('../../../../execution/risk/clusterOperationalAnomalies');
 const { buildTelemetryCoverageSummary }      = require('../../../../execution/risk/buildTelemetryCoverageSummary');
+const { buildBehavioralStabilityIndex }      = require('../../../../execution/risk/buildBehavioralStabilityIndex');
+const { scorePullRequestHealth }             = require('../../../../execution/risk/scorePullRequestHealth');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -46,7 +50,8 @@ const getHistoryHandler        = extractHandler(router, 'GET', '/history');
 const getChangesHandler           = extractHandler(router, 'GET', '/changes');
 const getAnomaliesHandler         = extractHandler(router, 'GET', '/anomalies');
 const getAnomalyClustersHandler      = extractHandler(router, 'GET', '/anomaly-clusters');
-const getTelemetryCoverageHandler    = extractHandler(router, 'GET', '/telemetry-coverage');
+const getTelemetryCoverageHandler       = extractHandler(router, 'GET', '/telemetry-coverage');
+const getBehavioralStabilityHandler     = extractHandler(router, 'GET', '/behavioral-stability');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -1109,5 +1114,270 @@ describe('portfolioRoutes GET /telemetry-coverage', () => {
     await getTelemetryCoverageHandler(req, res, next);
     expect(next).toHaveBeenCalledWith(expect.any(Error));
     expect(res.json).not.toHaveBeenCalled();
+  });
+});
+
+// ── GET /behavioral-stability ─────────────────────────────────────────────────
+
+const MOCK_PR_HEALTH = { label: 'healthy', score: 0, reasons: [], signals: [], confidenceLevel: 'high' };
+
+const MOCK_BSI_RESULT = {
+  indexScore:      85,
+  stabilityLevel:  'stable',
+  confidenceLevel: 'medium',
+  summary:         'Portfolio behavioral signals are stable across 2 repositories.',
+  drivers:         [],
+  counts: { totalRepos: 2, escalatingRepos: 0, deterioratingRepos: 0,
+            volatileRepos: 0, persistentRiskRepos: 0, prRiskRepos: 0,
+            ciFailingRepos: 0, abandonedRepos: 0, improvingRepos: 0 },
+};
+
+// Full DB row with all optional fields populated for rich-input tests.
+const FULL_REPO_ROW = {
+  repoId: 1, fullName: 'org/repo1',
+  ciStatus: 'passing', contributorStatus: 'healthy',
+  label: 'at-risk', trend: 'worsening',
+  recentLabels: ['at-risk', 'at-risk', 'at-risk'],
+  openPrCount: 2, mergedPrCount30d: 5, stalePrCount: 1,
+  avgMergeLatencyHours: 48, failedCheckPrCount: 0,
+  avgPrSize: 150, throughput30d: 1.5, abandonedPrCount: 0,
+  oldestOpenPrAgeDays: 8, prTelemetryStatus: 'active',
+};
+
+describe('portfolioRoutes GET /behavioral-stability', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    buildBehavioralStabilityIndex.mockReturnValue(MOCK_BSI_RESULT);
+    scorePullRequestHealth.mockReturnValue(MOCK_PR_HEALTH);
+  });
+
+  it('returns direct buildBehavioralStabilityIndex output (no wrapper object)', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_BSI_RESULT);
+  });
+
+  it('calls buildBehavioralStabilityIndex with the normalized repositories array', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([FULL_REPO_ROW]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    expect(buildBehavioralStabilityIndex).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id:            FULL_REPO_ROW.repoId,
+          name:          FULL_REPO_ROW.fullName,
+          trajectory:    'deteriorating',
+          persistentRisk: true,
+        }),
+      ]),
+      {},
+      []
+    );
+  });
+
+  it('SQL includes r.user_id = $1 for user scoping', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL includes r.is_active = true for active repo filter', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL joins repo_metrics for ci_status and contributor_status', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('repo_metrics');
+    expect(sql).toContain('ci_status');
+    expect(sql).toContain('contributor_status');
+  });
+
+  it('SQL joins risk_scores for label and trend', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('risk_scores');
+    expect(sql).toMatch(/\blabel\b/);
+    expect(sql).toMatch(/\btrend\b/);
+  });
+
+  it('SQL joins repo_pr_metrics for PR telemetry fields', async () => {
+    const db = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('repo_pr_metrics');
+    expect(sql).toContain('open_pr_count');
+    expect(sql).toContain('pr_telemetry_status');
+  });
+
+  it('calls scorePullRequestHealth for each repo row', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([FULL_REPO_ROW, FULL_REPO_ROW]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes correct PR telemetry fields to scorePullRequestHealth', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([FULL_REPO_ROW]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openPrCount:          2,
+        mergedPrCount30d:     5,
+        stalePrCount:         1,
+        avgMergeLatencyHours: 48,
+        prTelemetryStatus:    'active',
+      })
+    );
+  });
+
+  it('prHealthStatus on normalized repo comes from scorePullRequestHealth label', async () => {
+    scorePullRequestHealth.mockReturnValue({ label: 'at-risk', score: 60, reasons: [], signals: [], confidenceLevel: 'medium' });
+    const req = makeReq({ app: { locals: { db: makeDb([FULL_REPO_ROW]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const arg = buildBehavioralStabilityIndex.mock.calls[0][0][0];
+    expect(arg.prHealthStatus).toBe('at-risk');
+  });
+
+  it('empty DB result returns buildBehavioralStabilityIndex output for empty input', async () => {
+    buildBehavioralStabilityIndex.mockReturnValue({
+      indexScore: 0, stabilityLevel: 'unknown', confidenceLevel: 'low',
+      summary: 'No repositories available for behavioral stability assessment.',
+      drivers: [], counts: { totalRepos: 0, escalatingRepos: 0 },
+    });
+    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    expect(buildBehavioralStabilityIndex).toHaveBeenCalledWith([], {}, []);
+    expect(res.json.mock.calls[0][0].stabilityLevel).toBe('unknown');
+  });
+
+  it('null ci_status and null label do not crash normalization', async () => {
+    const sparseRow = {
+      repoId: 5, fullName: null,
+      ciStatus: null, contributorStatus: null,
+      label: null, trend: null,
+      recentLabels: null,
+      openPrCount: null, mergedPrCount30d: null, stalePrCount: null,
+      avgMergeLatencyHours: null, failedCheckPrCount: null,
+      avgPrSize: null, throughput30d: null, abandonedPrCount: null,
+      oldestOpenPrAgeDays: null, prTelemetryStatus: null,
+    };
+    const req = makeReq({ app: { locals: { db: makeDb([sparseRow]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const arg = buildBehavioralStabilityIndex.mock.calls[0][0][0];
+    expect(arg.trajectory).toBe('unknown');
+    expect(arg.ciStatus).toBe('unknown');
+    expect(arg.persistentRisk).toBe(false);
+    expect(arg.ci_failing).toBe(false);
+    expect(arg.contributor_abandoned).toBe(false);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('DB error is forwarded to next and res.json is not called', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('ci_failing is true only when ciStatus equals failing', async () => {
+    const rows = [
+      { ...FULL_REPO_ROW, repoId: 1, ciStatus: 'failing'  },
+      { ...FULL_REPO_ROW, repoId: 2, ciStatus: 'passing'  },
+      { ...FULL_REPO_ROW, repoId: 3, ciStatus: null       },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const normalized = buildBehavioralStabilityIndex.mock.calls[0][0];
+    expect(normalized[0].ci_failing).toBe(true);
+    expect(normalized[1].ci_failing).toBe(false);
+    expect(normalized[2].ci_failing).toBe(false);
+  });
+
+  it('contributor_abandoned is true only when contributorStatus equals abandoned', async () => {
+    const rows = [
+      { ...FULL_REPO_ROW, repoId: 1, contributorStatus: 'abandoned' },
+      { ...FULL_REPO_ROW, repoId: 2, contributorStatus: 'healthy'   },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const normalized = buildBehavioralStabilityIndex.mock.calls[0][0];
+    expect(normalized[0].contributor_abandoned).toBe(true);
+    expect(normalized[1].contributor_abandoned).toBe(false);
+  });
+
+  it('trajectory derived correctly for all label/trend combinations', async () => {
+    const rows = [
+      { ...FULL_REPO_ROW, repoId: 1, label: 'critical', trend: 'worsening' },
+      { ...FULL_REPO_ROW, repoId: 2, label: 'at-risk',  trend: 'worsening' },
+      { ...FULL_REPO_ROW, repoId: 3, label: 'healthy',  trend: 'improving' },
+      { ...FULL_REPO_ROW, repoId: 4, label: 'healthy',  trend: 'stable'    },
+      { ...FULL_REPO_ROW, repoId: 5, label: null,        trend: null        },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const normalized = buildBehavioralStabilityIndex.mock.calls[0][0];
+    expect(normalized[0].trajectory).toBe('escalating');
+    expect(normalized[1].trajectory).toBe('deteriorating');
+    expect(normalized[2].trajectory).toBe('recovering');
+    expect(normalized[3].trajectory).toBe('stable');
+    expect(normalized[4].trajectory).toBe('unknown');
+  });
+
+  it('persistentRisk derived from recentLabels (3 consecutive at-risk/critical)', async () => {
+    const rows = [
+      { ...FULL_REPO_ROW, repoId: 1, recentLabels: ['at-risk', 'critical', 'at-risk'] },
+      { ...FULL_REPO_ROW, repoId: 2, recentLabels: ['at-risk', 'healthy',  'at-risk'] },
+      { ...FULL_REPO_ROW, repoId: 3, recentLabels: ['at-risk', 'critical'] },
+    ];
+    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const normalized = buildBehavioralStabilityIndex.mock.calls[0][0];
+    expect(normalized[0].persistentRisk).toBe(true);
+    expect(normalized[1].persistentRisk).toBe(false);
+    expect(normalized[2].persistentRisk).toBe(false);
+  });
+
+  it('prTelemetryStatus defaults to unknown when null in row', async () => {
+    const req = makeReq({ app: { locals: { db: makeDb([{ ...FULL_REPO_ROW, prTelemetryStatus: null }]) } } });
+    const res = makeRes();
+    await getBehavioralStabilityHandler(req, res, next);
+    const call = scorePullRequestHealth.mock.calls[0][0];
+    expect(call.prTelemetryStatus).toBe('unknown');
+  });
+
+  it('route is authenticated: authenticate middleware applied at router level', () => {
+    const routerMiddleware = router.stack.find(function(layer) {
+      return !layer.route && typeof layer.handle === 'function';
+    });
+    expect(routerMiddleware).toBeDefined();
   });
 });

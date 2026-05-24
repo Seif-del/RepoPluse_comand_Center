@@ -10,6 +10,8 @@ const { getOperationalChanges }      = require('../../execution/risk/getOperatio
 const { detectOperationalAnomalies }  = require('../../execution/risk/detectOperationalAnomalies');
 const { clusterOperationalAnomalies }        = require('../../execution/risk/clusterOperationalAnomalies');
 const { buildTelemetryCoverageSummary }      = require('../../execution/risk/buildTelemetryCoverageSummary');
+const { buildBehavioralStabilityIndex }      = require('../../execution/risk/buildBehavioralStabilityIndex');
+const { scorePullRequestHealth }             = require('../../execution/risk/scorePullRequestHealth');
 
 const router = express.Router();
 
@@ -543,6 +545,124 @@ router.get('/telemetry-coverage', async (req, res, next) => {
     });
 
     res.json(buildTelemetryCoverageSummary(repos));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/behavioral-stability
+// Scores behavioral stability across all active repos scoped to the
+// authenticated user. Queries the latest repo_metrics, risk_scores, and
+// repo_pr_metrics for each repo; maps PR telemetry through
+// scorePullRequestHealth; then feeds normalized repo objects to
+// buildBehavioralStabilityIndex. Returns the helper output directly.
+router.get('/behavioral-stability', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id                              AS "repoId",
+         r.github_full_name                AS "fullName",
+         rm.ci_status                      AS "ciStatus",
+         rm.contributor_status             AS "contributorStatus",
+         rs.label,
+         rs.trend,
+         ARRAY(
+           SELECT label
+           FROM   risk_scores rsi
+           WHERE  rsi.repo_id = r.id
+           ORDER  BY rsi.snapshot_at DESC
+           LIMIT  3
+         ) AS "recentLabels",
+         rpm.open_pr_count                 AS "openPrCount",
+         rpm.merged_pr_count_30d           AS "mergedPrCount30d",
+         rpm.stale_pr_count                AS "stalePrCount",
+         rpm.avg_merge_latency_hours       AS "avgMergeLatencyHours",
+         rpm.failed_check_pr_count         AS "failedCheckPrCount",
+         rpm.avg_pr_size                   AS "avgPrSize",
+         rpm.throughput_30d                AS "throughput30d",
+         rpm.abandoned_pr_count            AS "abandonedPrCount",
+         rpm.oldest_open_pr_age_days       AS "oldestOpenPrAgeDays",
+         rpm.pr_telemetry_status           AS "prTelemetryStatus"
+       FROM repositories r
+       LEFT JOIN LATERAL (
+         SELECT ci_status, contributor_status
+         FROM   repo_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rm ON true
+       LEFT JOIN LATERAL (
+         SELECT label, trend
+         FROM   risk_scores
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rs ON true
+       LEFT JOIN LATERAL (
+         SELECT open_pr_count, merged_pr_count_30d, stale_pr_count,
+                avg_merge_latency_hours, failed_check_pr_count, avg_pr_size,
+                throughput_30d, abandoned_pr_count, oldest_open_pr_age_days,
+                pr_telemetry_status
+         FROM   repo_pr_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rpm ON true
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    var repos = result.rows.map(function(r) {
+      var label        = r.label  || '';
+      var trend        = r.trend  || 'unknown';
+      var recentLabels = Array.isArray(r.recentLabels) ? r.recentLabels : [];
+
+      var trajectory;
+      if (!r.label || !r.trend) {
+        trajectory = 'unknown';
+      } else if (label === 'critical' && trend === 'worsening') {
+        trajectory = 'escalating';
+      } else if (label === 'at-risk' && trend === 'worsening') {
+        trajectory = 'deteriorating';
+      } else if (trend === 'improving') {
+        trajectory = 'recovering';
+      } else {
+        trajectory = 'stable';
+      }
+
+      var persistentRisk = recentLabels.length >= 3 &&
+        recentLabels.slice(0, 3).every(function(l) {
+          return l === 'at-risk' || l === 'critical';
+        });
+
+      var prHealth = scorePullRequestHealth({
+        openPrCount:          r.openPrCount         != null ? Number(r.openPrCount)         : null,
+        mergedPrCount30d:     r.mergedPrCount30d     != null ? Number(r.mergedPrCount30d)    : null,
+        stalePrCount:         r.stalePrCount         != null ? Number(r.stalePrCount)        : null,
+        avgMergeLatencyHours: r.avgMergeLatencyHours != null ? Number(r.avgMergeLatencyHours): null,
+        failedCheckPrCount:   r.failedCheckPrCount   != null ? Number(r.failedCheckPrCount)  : null,
+        avgPrSize:            r.avgPrSize            != null ? Number(r.avgPrSize)           : null,
+        throughput30d:        r.throughput30d        != null ? Number(r.throughput30d)       : null,
+        abandonedPrCount:     r.abandonedPrCount     != null ? Number(r.abandonedPrCount)    : null,
+        oldestOpenPrAgeDays:  r.oldestOpenPrAgeDays  != null ? Number(r.oldestOpenPrAgeDays) : null,
+        prTelemetryStatus:    r.prTelemetryStatus    || 'unknown',
+      });
+
+      return {
+        id:                    r.repoId,
+        name:                  r.fullName           || String(r.repoId),
+        ciStatus:              r.ciStatus           || 'unknown',
+        contributorStatus:     r.contributorStatus  || 'unknown',
+        trajectory:            trajectory,
+        volatilityLevel:       'low',
+        persistentRisk:        persistentRisk,
+        prHealthStatus:        prHealth.label,
+        ci_failing:            r.ciStatus           === 'failing',
+        contributor_abandoned: r.contributorStatus  === 'abandoned',
+      };
+    });
+
+    res.json(buildBehavioralStabilityIndex(repos, {}, []));
   } catch (err) {
     next(err);
   }
