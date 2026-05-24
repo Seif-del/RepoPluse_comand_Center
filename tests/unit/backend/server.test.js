@@ -1,5 +1,20 @@
 'use strict';
 
+// ── OAuth environment isolation ───────────────────────────────────────────────
+// config/default.js reads GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET /
+// GITHUB_CALLBACK_URL at require-time. If a developer's local .env has real
+// values, app.locals.config.github.clientId is truthy and GET /auth/github
+// issues a 302 redirect to GitHub OAuth instead of throwing
+// INVALID_OAUTH_CONFIG (500). Deleting before the server require guarantees
+// deterministic 500 behaviour regardless of the host environment.
+// Saved values are restored in afterAll so sibling test files are unaffected.
+const _savedClientId     = process.env.GITHUB_CLIENT_ID;
+const _savedClientSecret = process.env.GITHUB_CLIENT_SECRET;
+const _savedCallbackUrl  = process.env.GITHUB_CALLBACK_URL;
+delete process.env.GITHUB_CLIENT_ID;
+delete process.env.GITHUB_CLIENT_SECRET;
+delete process.env.GITHUB_CALLBACK_URL;
+
 const http = require('http');
 const app  = require('../../../backend/server');
 
@@ -23,7 +38,13 @@ beforeAll((done) => {
 
 afterAll((done) => {
   consoleSpy.mockRestore();
-  server.close(done);
+  server.close(() => {
+    // Restore OAuth env vars so later test files are not affected.
+    if (_savedClientId     !== undefined) process.env.GITHUB_CLIENT_ID     = _savedClientId;
+    if (_savedClientSecret !== undefined) process.env.GITHUB_CLIENT_SECRET = _savedClientSecret;
+    if (_savedCallbackUrl  !== undefined) process.env.GITHUB_CALLBACK_URL  = _savedCallbackUrl;
+    done();
+  });
 });
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
