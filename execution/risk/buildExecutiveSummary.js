@@ -324,9 +324,9 @@ function _rankConcernsSalience(concerns) {
 function _themeText(key, count) {
   var noun = count === 1 ? 'repository' : 'repositories';
   switch (key) {
-    case 'ci_failing':             return 'CI instability affecting ' + count + ' ' + noun;
+    case 'ci_failing':             return 'CI instability persisting in ' + count + ' ' + noun;
     case 'contributor_abandoned':  return count + ' ' + noun + (count === 1 ? ' shows' : ' show') + ' signs of abandonment';
-    case 'escalating':             return 'Escalating instability across ' + count + ' ' + noun;
+    case 'escalating':             return 'Escalating operational trajectories detected in ' + count + ' ' + noun;
     case 'persistent_risk':        return 'Persistent risk unresolved in ' + count + ' ' + noun;
     case 'no_commits':             return 'Commit inactivity affecting ' + count + ' ' + noun;
     case 'volatile':               return 'Operational volatility affecting ' + count + ' ' + noun;
@@ -335,7 +335,7 @@ function _themeText(key, count) {
     case 'release_stale':          return 'Release cadence declining across ' + count + ' ' + noun;
     case 'contributor_low':        return 'Low contributor activity in ' + count + ' ' + noun;
     case 'release_none':           return 'No releases found in ' + count + ' ' + noun;
-    case 'pr_risk':                return 'PR health concerns across ' + count + ' ' + noun;
+    case 'pr_risk':                return 'PR health degradation across ' + count + ' ' + noun;
     case 'repeated_ci':            return 'Repeated CI instability in ' + count + ' ' + noun;
     case 'forecast_signal':        return 'Elevated forecast signals across ' + count + ' ' + noun;
     case 'telemetry_gaps':         return 'Telemetry gaps limiting visibility across ' + count + ' ' + noun;
@@ -348,9 +348,9 @@ function _themeText(key, count) {
 // addressing structural maturity (releases, contributor concentration).
 function _recommendation(key) {
   switch (key) {
-    case 'ci_failing':             return 'Stabilize failing CI pipelines';
+    case 'ci_failing':             return 'Investigate recurring CI instability before additional degradation';
     case 'contributor_abandoned':  return 'Review and reassign abandoned repositories';
-    case 'escalating':             return 'Investigate escalating repositories';
+    case 'escalating':             return 'Stabilize repositories with escalating operational trajectories';
     case 'persistent_risk':        return 'Address unresolved persistent risk patterns';
     case 'no_commits':             return 'Restore commit activity in inactive repositories';
     case 'volatile':               return 'Reduce operational volatility across the portfolio';
@@ -359,7 +359,7 @@ function _recommendation(key) {
     case 'release_stale':          return 'Improve release cadence consistency';
     case 'contributor_low':        return 'Expand contributor ownership coverage';
     case 'release_none':           return 'Establish release cadence for stagnant repositories';
-    case 'pr_risk':                return 'Review and resolve PR health degradation';
+    case 'pr_risk':                return 'Review and resolve PR health degradation in at-risk repositories';
     case 'repeated_ci':            return 'Address repeated CI instability at the root cause';
     case 'forecast_signal':        return 'Investigate elevated forecast signals before they materialize';
     case 'telemetry_gaps':         return 'Improve telemetry coverage by completing repository sync';
@@ -367,13 +367,51 @@ function _recommendation(key) {
   }
 }
 
-// ── Derive executive severity from portfolio risk + attention map ──────────────
-function _deriveSeverity(portfolioRiskLevel, attentionMap) {
+// ── Derive executive severity from portfolio risk + behavioral concern counts ──
+//
+// Behavioral escalation rules (promotion only — never demote):
+//   Critical: 2+ escalating repos OR (1 escalating + CI failing + persistent risk)
+//   High min:  any escalating, 2+ deteriorating, CI failing + persistent risk combo
+//   Medium min: 3+ volatile repos, 2+ PR-risk repos
+//
+// Healthy promotion: when sev is still 'low' after escalation, check whether
+// any repo has elevated attention — if none, return 'healthy'.
+function _deriveSeverity(portfolioRiskLevel, attentionMap, concerns) {
   var sev = RISK_TO_SEV[portfolioRiskLevel];
   if (!sev) return 'low';
 
-  // When portfolio risk is low, check whether any repo has elevated attention.
-  // If not, the portfolio is fully healthy — promote to 'healthy'.
+  var cn = (concerns && typeof concerns === 'object') ? concerns : {};
+  var escalatingCount    = cn.escalating       || 0;
+  var deterioratingCount = cn.deteriorating    || 0;
+  var volatileCount      = cn.volatile         || 0;
+  var persistentRiskCount = cn.persistent_risk || 0;
+  var prRiskCount        = cn.pr_risk          || 0;
+  var ciFailingCount     = cn.ci_failing        || 0;
+
+  var SEV_ORDER = { healthy: 0, low: 1, medium: 2, high: 3, critical: 4 };
+  function promoteSev(current, minimum) {
+    return SEV_ORDER[minimum] > SEV_ORDER[current] ? minimum : current;
+  }
+
+  // Critical escalation: 2+ escalating OR escalating + CI failing + persistent risk
+  if (escalatingCount >= 2
+      || (escalatingCount >= 1 && ciFailingCount >= 1 && persistentRiskCount >= 1)) {
+    sev = promoteSev(sev, 'critical');
+  }
+
+  // High minimum: any escalating, 2+ deteriorating, or CI+persistent combo
+  if (escalatingCount >= 1
+      || deterioratingCount >= 2
+      || (ciFailingCount >= 1 && persistentRiskCount >= 1)) {
+    sev = promoteSev(sev, 'high');
+  }
+
+  // Medium minimum: 3+ volatile or 2+ PR-risk
+  if (volatileCount >= 3 || prRiskCount >= 2) {
+    sev = promoteSev(sev, 'medium');
+  }
+
+  // Healthy check: only when sev is still 'low' after all behavioral escalation
   if (sev === 'low') {
     var am   = attentionMap && typeof attentionMap === 'object' ? attentionMap : {};
     var keys = Object.keys(am);
@@ -429,34 +467,48 @@ function _derivePortfolioConfidence(trajectory, repos, concerns) {
 
 // ── Context-aware headline derivation ────────────────────────────────────────
 // For non-stable trajectories the HEADLINE_MAP entry is authoritative.
-// For stable trajectories, widespread inactivity or telemetry incompleteness
-// overrides "Operationally stable" with a more honest description.
-//
-// Inactivity override:  ≥ 2 repos with no_commits AND ≥ 50% of portfolio
-// Telemetry override:   ≥ 2 repos with telemetry_gaps AND ≥ 50% of portfolio
-// Isolated instability: inactivity dominant but at least one escalating repo
-function _deriveHeadline(trajectory, concerns, totalRepos) {
+// For stable trajectories, checks in priority order:
+//   1. Inactivity dominance: ≥ 2 repos no_commits AND ≥ 50% of portfolio
+//   2. Telemetry dominance:  ≥ 2 repos telemetry_gaps AND ≥ 50% of portfolio
+//   3. Behavioral severity:  CRITICAL→accelerating, HIGH→escalation/deterioration/risk,
+//                            MEDIUM+volatile→volatility patterns
+//   4. Fallback: HEADLINE_MAP
+function _deriveHeadline(trajectory, concerns, totalRepos, severity) {
   if (trajectory !== 'stable') {
     return HEADLINE_MAP[trajectory] || 'Operational state undetermined';
   }
   var cn    = (concerns && typeof concerns === 'object') ? concerns : {};
   var total = totalRepos > 0 ? totalRepos : 1;
+  var sev   = severity || 'low';
 
-  var noCommitRatio   = cn.no_commits    / total;
-  var telemetryRatio  = cn.telemetry_gaps / total;
+  var noCommitRatio  = (cn.no_commits    || 0) / total;
+  var telemetryRatio = (cn.telemetry_gaps || 0) / total;
 
-  if (cn.no_commits >= 2 && noCommitRatio >= 0.5) {
-    if (cn.ci_failing > 0 || cn.contributor_abandoned > 0) {
+  if ((cn.no_commits || 0) >= 2 && noCommitRatio >= 0.5) {
+    if ((cn.ci_failing || 0) > 0 || (cn.contributor_abandoned || 0) > 0) {
       return 'Portfolio activity remains subdued with isolated critical instability';
     }
-    if (cn.escalating > 0) {
+    if ((cn.escalating || 0) > 0) {
       return 'Portfolio activity remains subdued with isolated operational instability';
     }
     return 'Limited operational activity detected across the portfolio';
   }
 
-  if (cn.telemetry_gaps >= 2 && telemetryRatio >= 0.5) {
+  if ((cn.telemetry_gaps || 0) >= 2 && telemetryRatio >= 0.5) {
     return 'Operational visibility reduced by incomplete telemetry';
+  }
+
+  // Behavioral severity escalation headlines
+  if (sev === 'critical') {
+    return 'Operational instability accelerating';
+  }
+  if (sev === 'high') {
+    if ((cn.escalating || 0) > 0)    return 'Escalation risks require intervention';
+    if ((cn.deteriorating || 0) > 0) return 'Operational deterioration detected';
+    return 'Behavioral risk signals increasing';
+  }
+  if (sev === 'medium' && (cn.volatile || 0) > 0) {
+    return 'Volatility patterns emerging';
   }
 
   return HEADLINE_MAP[trajectory] || 'Operational state undetermined';
@@ -635,10 +687,10 @@ function buildExecutiveSummary({ portfolioForecast, repos, attentionMap } = {}) 
   var confidence = _derivePortfolioConfidence(trajectory, rr, concerns);
 
   // ── Severity ──────────────────────────────────────────────────────────────
-  var severity = _deriveSeverity(pf.portfolioRiskLevel, am);
+  var severity = _deriveSeverity(pf.portfolioRiskLevel, am, concerns);
 
   // ── Headline (context-aware: inactivity/telemetry overrides for stable) ──
-  var headline = _deriveHeadline(trajectory, concerns, rr.length);
+  var headline = _deriveHeadline(trajectory, concerns, rr.length, severity);
 
   // ── Summary (confidence-aware) ────────────────────────────────────────────
   var summary = _buildSummary(trajectory, counts, rankedKeys.slice(0, 2), concerns, confidence);

@@ -2251,3 +2251,289 @@ describe('buildExecutiveSummary — behavioral instability integration', () => {
     expect(result.themes.some(t => /repeat|ci instability/i.test(t))).toBe(true);
   });
 });
+
+// ── Behavioral severity model ─────────────────────────────────────────────────
+//
+// Validates the concern-count-driven severity escalation rules and the
+// behavioral headline overrides for stable-trajectory portfolios.
+
+describe('buildExecutiveSummary — behavioral severity model', () => {
+  function makeAMItem(repoId, level, score, reasons) {
+    return { repoId, attentionLevel: level, attentionScore: score, reasons };
+  }
+
+  // ── Severity escalation rules ────────────────────────────────────────────
+
+  it('1 escalating repo promotes severity to minimum HIGH from low portfolioRiskLevel', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' }),
+        makeRepo({ id: 2, repoId: 2 }),
+        makeRepo({ id: 3, repoId: 3 }),
+      ],
+      attentionMap: {},
+    });
+    expect(['high', 'critical']).toContain(result.severity);
+  });
+
+  it('2+ deteriorating repos promotes severity to minimum HIGH from low portfolioRiskLevel', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'deteriorating' }),
+        makeRepo({ id: 2, repoId: 2, trajectory: 'deteriorating' }),
+        makeRepo({ id: 3, repoId: 3 }),
+      ],
+      attentionMap: {},
+    });
+    expect(['high', 'critical']).toContain(result.severity);
+  });
+
+  it('CI failing + persistent risk combo promotes severity to minimum HIGH', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, ciStatus: 'failing', persistentRisk: true }),
+        makeRepo({ id: 2, repoId: 2 }),
+      ],
+      attentionMap: {},
+    });
+    expect(['high', 'critical']).toContain(result.severity);
+  });
+
+  it('2+ PR-risk repos promotes severity to minimum MEDIUM from low portfolioRiskLevel', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 65, ['PR health at-risk']),
+      makeAMItem(2, 'high', 63, ['PR health at-risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 })],
+      attentionMap: am,
+    });
+    expect(['medium', 'high', 'critical']).toContain(result.severity);
+  });
+
+  it('3+ volatile repos promotes severity to minimum MEDIUM from low portfolioRiskLevel', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'medium', 40, ['Operational volatility elevated']),
+      makeAMItem(2, 'medium', 38, ['Operational volatility elevated']),
+      makeAMItem(3, 'medium', 36, ['Volatile operational trajectory']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 }), makeRepo({ id: 3, repoId: 3 })],
+      attentionMap: am,
+    });
+    expect(['medium', 'high', 'critical']).toContain(result.severity);
+  });
+
+  it('2+ escalating repos escalates severity to CRITICAL regardless of portfolioRiskLevel', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'escalating', portfolioRiskLevel: 'high' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' }),
+        makeRepo({ id: 2, repoId: 2, trajectory: 'escalating' }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.severity).toBe('critical');
+  });
+
+  it('escalating + CI failing + persistent risk escalates severity to CRITICAL', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'escalating', portfolioRiskLevel: 'medium' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' }),
+        makeRepo({ id: 2, repoId: 2, ciStatus: 'failing' }),
+        makeRepo({ id: 3, repoId: 3, persistentRisk: true }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.severity).toBe('critical');
+  });
+
+  it('behavioral escalation only promotes, never demotes: high stays high when volatile < 3', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'medium', 38, ['Operational volatility elevated']),
+      makeAMItem(2, 'medium', 36, ['Operational volatility elevated']),
+      makeAMItem(3, 'medium', 34, ['Volatile operational trajectory']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos: [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 }), makeRepo({ id: 3, repoId: 3 })],
+      attentionMap: am,
+    });
+    expect(result.severity).toBe('high');
+  });
+
+  // ── Behavioral headline overrides (stable trajectory only) ───────────────
+
+  it('stable+critical severity → headline is "Operational instability accelerating"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' }),
+        makeRepo({ id: 2, repoId: 2, trajectory: 'escalating' }),
+        makeRepo({ id: 3, repoId: 3 }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.severity).toBe('critical');
+    expect(result.headline).toBe('Operational instability accelerating');
+  });
+
+  it('stable+high severity with escalating repos → headline is "Escalation risks require intervention"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' }),
+        makeRepo({ id: 2, repoId: 2 }),
+        makeRepo({ id: 3, repoId: 3 }),
+      ],
+      attentionMap: {},
+    });
+    expect(['high', 'critical']).toContain(result.severity);
+    expect(result.headline).toBe('Escalation risks require intervention');
+  });
+
+  it('stable+high severity with deteriorating repos (no escalating) → headline is "Operational deterioration detected"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'deteriorating' }),
+        makeRepo({ id: 2, repoId: 2, trajectory: 'deteriorating' }),
+        makeRepo({ id: 3, repoId: 3 }),
+      ],
+      attentionMap: {},
+    });
+    expect(['high', 'critical']).toContain(result.severity);
+    expect(result.headline).toBe('Operational deterioration detected');
+  });
+
+  it('stable+high severity with no escalating/deteriorating → headline is "Behavioral risk signals increasing"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, ciStatus: 'failing', persistentRisk: true }),
+        makeRepo({ id: 2, repoId: 2 }),
+      ],
+      attentionMap: {},
+    });
+    expect(['high', 'critical']).toContain(result.severity);
+    expect(result.headline).toBe('Behavioral risk signals increasing');
+  });
+
+  it('stable+medium severity with volatile repos → headline is "Volatility patterns emerging"', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'medium', 40, ['Operational volatility elevated']),
+      makeAMItem(2, 'medium', 38, ['Operational volatility elevated']),
+      makeAMItem(3, 'medium', 36, ['Volatile operational trajectory']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [makeRepo({ id: 1, repoId: 1 }), makeRepo({ id: 2, repoId: 2 }), makeRepo({ id: 3, repoId: 3 })],
+      attentionMap: am,
+    });
+    expect(result.headline).toBe('Volatility patterns emerging');
+  });
+
+  it('behavioral headline does not fire when inactivity dominance check fires first', () => {
+    // 3/5 repos inactive (60% ≥ 50%) — inactivity check takes priority over behavioral
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'low' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, noRecentCommits: true }),
+        makeRepo({ id: 2, repoId: 2, noRecentCommits: true }),
+        makeRepo({ id: 3, repoId: 3, noRecentCommits: true }),
+        makeRepo({ id: 4, repoId: 4, trajectory: 'escalating' }),
+        makeRepo({ id: 5, repoId: 5 }),
+      ],
+      attentionMap: {},
+    });
+    expect(result.headline).toContain('subdued');
+    expect(result.headline).not.toBe('Escalation risks require intervention');
+  });
+
+  // ── Updated theme and recommendation text ────────────────────────────────
+
+  it('escalating theme text includes "trajectories"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'escalating', portfolioRiskLevel: 'critical' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' }),
+        makeRepo({ id: 2, repoId: 2, trajectory: 'escalating' }),
+      ],
+      attentionMap: {},
+    });
+    const escalatingTheme = result.themes.find(t => t.toLowerCase().includes('escalat'));
+    expect(escalatingTheme).toBeDefined();
+    expect(escalatingTheme.toLowerCase()).toContain('trajectories');
+  });
+
+  it('ci_failing theme text includes "persisting"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'deteriorating', portfolioRiskLevel: 'high' }),
+      repos: [
+        makeRepo({ id: 1, repoId: 1, ciStatus: 'failing' }),
+        makeRepo({ id: 2, repoId: 2, ciStatus: 'failing' }),
+      ],
+      attentionMap: {},
+    });
+    const ciTheme = result.themes.find(t => t.toLowerCase().includes('ci instabilit'));
+    expect(ciTheme).toBeDefined();
+    expect(ciTheme.toLowerCase()).toContain('persisting');
+  });
+
+  it('pr_risk theme text includes "degradation"', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 70, ['PR health at-risk']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos: [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap: am,
+    });
+    const prTheme = result.themes.find(t => t.toLowerCase().includes('pr health'));
+    expect(prTheme).toBeDefined();
+    expect(prTheme.toLowerCase()).toContain('degradation');
+  });
+
+  it('escalating recommendation includes "stabilize" and "trajectories"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'escalating', portfolioRiskLevel: 'critical' }),
+      repos: [makeRepo({ id: 1, repoId: 1, trajectory: 'escalating' })],
+      attentionMap: {},
+    });
+    const rec = result.recommendations.find(r => r.toLowerCase().includes('escalat'));
+    expect(rec).toBeDefined();
+    expect(rec.toLowerCase()).toContain('stabilize');
+    expect(rec.toLowerCase()).toContain('trajectories');
+  });
+
+  it('ci_failing recommendation includes "recurring"', () => {
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'deteriorating', portfolioRiskLevel: 'high' }),
+      repos: [makeRepo({ id: 1, repoId: 1, ciStatus: 'failing' })],
+      attentionMap: {},
+    });
+    const rec = result.recommendations.find(r => r.toLowerCase().includes('ci'));
+    expect(rec).toBeDefined();
+    expect(rec.toLowerCase()).toContain('recurring');
+  });
+
+  it('pr_risk recommendation includes "at-risk repositories"', () => {
+    const am = makeAttentionMap([
+      makeAMItem(1, 'high', 70, ['PR health critical']),
+    ]);
+    const result = buildExecutiveSummary({
+      portfolioForecast: makePortfolioForecast({ portfolioTrajectory: 'stable', portfolioRiskLevel: 'high' }),
+      repos: [makeRepo({ id: 1, repoId: 1 })],
+      attentionMap: am,
+    });
+    const rec = result.recommendations.find(r => r.toLowerCase().includes('pr health'));
+    expect(rec).toBeDefined();
+    expect(rec.toLowerCase()).toContain('at-risk');
+  });
+});
