@@ -445,22 +445,28 @@ describe('scoreRepo — operational rule: release_stale (+10)', () => {
   });
 });
 
-describe('scoreRepo — operational rule: release_none (+8)', () => {
-  it('adds 8 points when releaseStatus is none', () => {
-    expect(scoreRepo({ ...healthy(), releaseStatus: 'none' }).score).toBe(8);
+describe('scoreRepo — structural rule: release_none (+0 — demoted maturity signal)', () => {
+  it('adds 0 points when releaseStatus is none (fully demoted — maturity context, not operational risk)', () => {
+    expect(scoreRepo({ ...healthy(), releaseStatus: 'none' }).score).toBe(0);
   });
 
-  it('release_none alone stays healthy (8 < 30)', () => {
+  it('release_none alone stays healthy (0 < 30)', () => {
     expect(scoreRepo({ ...healthy(), releaseStatus: 'none' }).label).toBe('healthy');
+  });
+
+  it('release_none factor string still appears for display context despite 0 score impact', () => {
+    const { score, factors } = scoreRepo({ ...healthy(), releaseStatus: 'none' });
+    expect(score).toBe(0);
+    expect(factors.some(f => f.toLowerCase().includes('no releases'))).toBe(true);
   });
 });
 
-describe('scoreRepo — operational rule: contributor_bus_factor (+10)', () => {
-  it('adds 10 points when contributorStatus is bus_factor_risk', () => {
-    expect(scoreRepo({ ...healthy(), contributorStatus: 'bus_factor_risk' }).score).toBe(10);
+describe('scoreRepo — structural rule: contributor_bus_factor (+5 — low impact only)', () => {
+  it('adds 5 points when contributorStatus is bus_factor_risk', () => {
+    expect(scoreRepo({ ...healthy(), contributorStatus: 'bus_factor_risk' }).score).toBe(5);
   });
 
-  it('bus_factor alone stays healthy (10 < 30)', () => {
+  it('bus_factor alone stays healthy (5 < 30)', () => {
     expect(scoreRepo({ ...healthy(), contributorStatus: 'bus_factor_risk' }).label).toBe('healthy');
   });
 });
@@ -538,9 +544,9 @@ describe('scoreRepo — unified label thresholds', () => {
   });
 
   it('labels score >= 75 as critical', () => {
-    // ci_failing(50) + contributor_bus_factor(10) + release_stale(10) + stale_push(6) = 76 → critical
+    // ci_failing(50) + release_stale(10) + stale_push(6) + stale_prs(6) + contributor_bus_factor(5) = 77 → critical
     const result = scoreRepo({
-      ...healthy(), daysSincePush: 20, ciStatus: 'failing', releaseStatus: 'stale',
+      ...healthy(), daysSincePush: 20, stalePrs: 3, ciStatus: 'failing', releaseStatus: 'stale',
       contributorStatus: 'bus_factor_risk',
     });
     expect(result.score).toBeGreaterThanOrEqual(75);
@@ -572,12 +578,12 @@ describe('scoreRepo — unified label thresholds', () => {
   });
 
   it('exact boundary: 75 → critical (not at-risk)', () => {
-    // ci_failing(50) + contributor_bus_factor(10) + release_stale(10) + stale_push(6) = 76 ≥ 75
+    // ci_failing(50) + release_stale(10) + stale_push(6) + stale_prs(6) + elevated_open_prs(3) = 75
     const result = scoreRepo({
-      ...healthy(), daysSincePush: 20, ciStatus: 'failing', releaseStatus: 'stale',
-      contributorStatus: 'bus_factor_risk',
+      ...healthy(), openPrs: 11, stalePrs: 3, daysSincePush: 15,
+      ciStatus: 'failing', releaseStatus: 'stale',
     });
-    expect(result.score).toBeGreaterThanOrEqual(75);
+    expect(result.score).toBe(75);
     expect(result.label).toBe('critical');
   });
 });
@@ -603,12 +609,12 @@ describe('scoreRepo — no-data / unknown repo semantics', () => {
     expect(result.label).toBe('monitor');
   });
 
-  it('common structural combo (bus_factor + release_none + no_commits) stays below monitor', () => {
-    // contributor_bus_factor(10) + release_none(8) + no_commits(8) = 26 → healthy (< 30)
+  it('common structural combo (bus_factor + release_none + no_commits) stays well below monitor', () => {
+    // contributor_bus_factor(5) + release_none(0) + no_commits(8) = 13 → healthy (< 30)
     const result = scoreRepo({
       ...healthy(), commits7d: 0, contributorStatus: 'bus_factor_risk', releaseStatus: 'none',
     });
-    expect(result.score).toBe(26);
+    expect(result.score).toBe(13);
     expect(result.label).toBe('healthy');
   });
 
@@ -692,6 +698,85 @@ describe('scoreRepo — OPERATIONAL_FACTOR_STRINGS', () => {
     expect(OPERATIONAL_FACTOR_STRINGS.has('No commits in the last 7 days')).toBe(false);
     expect(OPERATIONAL_FACTOR_STRINGS.has('No releases in the last 90 days')).toBe(false);
     expect(OPERATIONAL_FACTOR_STRINGS.has('High bus-factor risk: one contributor dominates')).toBe(false);
+  });
+});
+
+// ── Operational vs structural demarcation ────────────────────────────────────
+// Verifies the rebalanced model: structural/maturity signals cannot drive at-risk;
+// only active operational failures (CI failing, confirmed abandonment) do so.
+
+describe('scoreRepo — operational vs structural demarcation', () => {
+  it('spec combination (no releases + bus factor + no commits + unknown CI) stays healthy', () => {
+    // The canonical structural-only worst case from the scoring spec.
+    // no_commits_7d(8) + contributor_bus_factor(5) + release_none(0) = 13 → healthy
+    const result = scoreRepo({
+      ...healthy(), commits7d: 0,
+      releaseStatus: 'none',
+      contributorStatus: 'bus_factor_risk',
+      ciStatus: 'unknown',
+    });
+    expect(result.score).toBe(13);
+    expect(result.label).toBe('healthy');
+    expect(result.label).not.toBe('at-risk');
+    expect(result.label).not.toBe('critical');
+  });
+
+  it('no releases alone adds 0 points to operational score (maturity signal only)', () => {
+    expect(scoreRepo({ ...healthy(), releaseStatus: 'none' }).score).toBe(0);
+  });
+
+  it('CI unknown alone adds 0 points (unmeasured is not failing)', () => {
+    expect(scoreRepo({ ...healthy(), ciStatus: 'unknown' }).score).toBe(0);
+  });
+
+  it('release unknown alone adds 0 points (unmeasured is not stale)', () => {
+    expect(scoreRepo({ ...healthy(), releaseStatus: 'unknown' }).score).toBe(0);
+  });
+
+  it('bus factor alone adds 5 points — low impact, stays healthy', () => {
+    const result = scoreRepo({ ...healthy(), contributorStatus: 'bus_factor_risk' });
+    expect(result.score).toBe(5);
+    expect(result.label).toBe('healthy');
+  });
+
+  it('no commits alone adds 8 points — low impact, stays healthy', () => {
+    const result = scoreRepo({ ...healthy(), commits7d: 0 });
+    expect(result.score).toBe(8);
+    expect(result.label).toBe('healthy');
+  });
+
+  it('CI failing alone raises score to at-risk (50 pts)', () => {
+    const result = scoreRepo({ ...healthy(), ciStatus: 'failing' });
+    expect(result.score).toBe(50);
+    expect(result.label).toBe('at-risk');
+  });
+
+  it('confirmed abandoned + zero commits + CI failing → critical (operational escalation)', () => {
+    const result = scoreRepo({
+      ...healthy(), commits7d: 0, ciStatus: 'failing', contributorStatus: 'abandoned',
+    });
+    expect(result.score).toBe(100);
+    expect(result.label).toBe('critical');
+  });
+
+  it('no single structural signal can reach at-risk on its own', () => {
+    const structuralInputs = [
+      { ...healthy(), commits7d: 0 },
+      { ...healthy(), releaseStatus: 'none' },
+      { ...healthy(), releaseStatus: 'stale' },
+      { ...healthy(), contributorStatus: 'bus_factor_risk' },
+      { ...healthy(), contributorStatus: 'low_activity' },
+      { ...healthy(), openPrs: 11 },
+      { ...healthy(), stalePrs: 3 },
+      { ...healthy(), openIssues: 21 },
+      { ...healthy(), daysSincePush: 15 },
+    ];
+    structuralInputs.forEach(function(inputs) {
+      const result = scoreRepo(inputs);
+      expect(result.score).toBeLessThan(50);
+      expect(result.label).not.toBe('at-risk');
+      expect(result.label).not.toBe('critical');
+    });
   });
 });
 

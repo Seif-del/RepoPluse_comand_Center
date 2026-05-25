@@ -3,10 +3,21 @@
 // Scoring rules — each rule returns a risk delta (0..100 total after capping).
 // Rules are evaluated independently and summed. Factors array explains each hit.
 //
-// Unified Operational Risk Model:
-//   Structural rules (activity signals) contribute baseline concern only.
-//   Operational rules (CI, release, contributor) dominate severity.
-//   Target bands: healthy 0–24, monitor 25–49, at-risk 50–74, critical 75–100.
+// Operational Risk Model (rebalanced):
+//   Active operational signals (CI failing, confirmed abandonment) dominate severity.
+//   Structural/maturity signals (no releases, bus factor, low activity) provide
+//   display context only — they cannot alone push a repo into at-risk.
+//   Target bands: healthy 0–29, monitor 30–49, at-risk 50–74, critical 75–100.
+//
+//   Demoted maturity signals:
+//   - release_none:          0 pts  (no releases = project maturity, not operational risk)
+//   - ciStatus unknown:      0 pts  (unmeasured is not failing)
+//   - releaseStatus unknown: 0 pts  (unmeasured is not stale)
+//
+//   Low-impact structural signals (factor string still appears for display context):
+//   - contributor_bus_factor: 5 pts (structural concern, never drives at-risk alone)
+//   - contributor_low:        5 pts (structural concern, never drives at-risk alone)
+//   - no_commits_7d:          8 pts (activity gap, stays well below monitor alone)
 
 const RULES = [
   // ── Structural activity signals (baseline, max ~28 combined) ─────────────────
@@ -109,15 +120,18 @@ const RULES = [
   },
   {
     id:       'release_none',
+    // 0 pts — no releases is a project maturity signal, not active operational risk.
+    // Rule fires so the factor string still appears for display context.
     test:     ({ releaseStatus })                  => releaseStatus === 'none',
-    points:   8,
+    points:   0,
     factor:   'No releases found for this repository',
     category: 'structural',
   },
   {
     id:       'contributor_bus_factor',
+    // 5 pts — structural concern only; cannot alone drive a repo into at-risk.
     test:     ({ contributorStatus })              => contributorStatus === 'bus_factor_risk',
-    points:   10,
+    points:   5,
     factor:   'High bus-factor risk: one contributor dominates',
     category: 'structural',
   },
@@ -133,7 +147,8 @@ const RULES = [
 // Unified operational severity thresholds.
 // healthy 0–29, monitor 30–49, at-risk 50–74, critical 75–100.
 // Pure structural-activity signals (commits/PRs/issues) max at 28 → always healthy.
-// Only release/contributor structural signals combined can reach monitor (30+).
+// Release-stale (10 pts) combined with activity signals can reach monitor (≥30).
+// Release-none is 0 pts — maturity context only, not operational risk.
 // Active operational instability (CI failing, abandoned) reaches at-risk (50+) or critical (75+).
 const LABEL_THRESHOLDS = [
   { min: 75, label: 'critical' },
