@@ -17,6 +17,7 @@ const { getOperationalConfidence }  = require('../../execution/risk/getOperation
 const { scorePullRequestHealth }         = require('../../execution/risk/scorePullRequestHealth');
 const { detectEngineeringVolatility }    = require('../../execution/risk/detectEngineeringVolatility');
 const { scoreRepositoryMaturity }        = require('../../execution/risk/scoreRepositoryMaturity');
+const { getRepositoryMaturityTrend }     = require('../../execution/risk/getRepositoryMaturityTrend');
 
 const router = express.Router();
 
@@ -623,6 +624,116 @@ router.get('/:id/maturity', async (req, res, next) => {
     };
 
     res.json(scoreRepositoryMaturity(telemetry));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/maturity-trend
+// Returns maturity trend analytics across the last 10 historical repo_metrics snapshots.
+// Three parallel queries:
+//   (1) repositories LEFT JOIN repo_metrics — existence/ownership/active check + metrics history,
+//       newest-first LIMIT 10. Zero rows → 404. One row with null snapshotAt → no metrics yet.
+//   (2) Latest repo_pr_metrics row — v1: single PR telemetry status applied to all snapshots
+//       (per-snapshot PR telemetry join is deferred to a future version).
+//   (3) risk_scores COUNT — total snapshot depth passed uniformly to each scoreRepositoryMaturity call.
+// Each metrics row is scored with scoreRepositoryMaturity; the array of scored snapshots is
+// passed to getRepositoryMaturityTrend. Response includes the trend result plus a history array.
+router.get('/:id/maturity-trend', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [historyResult, prResult, countResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT
+           r.last_synced_at         AS "repoSyncedAt",
+           m.snapshot_at            AS "snapshotAt",
+           m.ci_status              AS "ciStatus",
+           m.commits_7d             AS "commits7d",
+           m.last_push_at           AS "lastPushAt",
+           m.release_status         AS "releaseStatus",
+           m.contributor_status     AS "contributorStatus"
+         FROM repositories r
+         LEFT JOIN repo_metrics m ON m.repo_id = r.id
+         WHERE r.id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY m.snapshot_at DESC NULLS LAST
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT pm.pr_telemetry_status AS "prTelemetryStatus"
+         FROM repo_pr_metrics pm
+         JOIN repositories r ON r.id = pm.repo_id
+         WHERE pm.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY pm.snapshot_at DESC
+         LIMIT 1`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT COUNT(rs.id)::int AS "snapshotCount"
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2 AND r.is_active = true`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    if (historyResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    const pr            = prResult.rows[0]   || null;
+    const cnt           = countResult.rows[0] || {};
+    const prStatus      = pr ? (pr.prTelemetryStatus || 'unknown') : 'unknown';
+    const snapshotCount = cnt.snapshotCount != null ? Number(cnt.snapshotCount) : 0;
+
+    // Repo exists but no metrics yet — return unknown trend with empty history.
+    if (historyResult.rows[0].snapshotAt == null) {
+      const emptyTrend = getRepositoryMaturityTrend([]);
+      return res.json({ ...emptyTrend, history: [] });
+    }
+
+    // Build a scored maturity snapshot for each metrics row.
+    const snapshots = historyResult.rows.map(function(row) {
+      let hasRecentCommit = null;
+      if (row.lastPushAt != null) {
+        const days = (Date.now() - new Date(row.lastPushAt).getTime()) / (1000 * 60 * 60 * 24);
+        hasRecentCommit = Number.isFinite(days) ? days < 30 : null;
+      }
+
+      const telemetry = {
+        ciStatus:                  row.ciStatus         || 'unknown',
+        releaseStatus:             row.releaseStatus     || 'unknown',
+        contributorStatus:         row.contributorStatus || 'unknown',
+        commits7d:                 row.commits7d         != null ? Number(row.commits7d) : null,
+        hasRecentCommit,
+        prTelemetryStatus:         prStatus,
+        dependencyTelemetryStatus: 'unknown',
+        lastSyncedAt:              row.snapshotAt        || null,
+        snapshotCount,
+      };
+
+      const scored = scoreRepositoryMaturity(telemetry);
+      return { ...scored, snapshotAt: row.snapshotAt || null };
+    });
+
+    const trendResult = getRepositoryMaturityTrend(snapshots);
+
+    res.json({
+      ...trendResult,
+      history: snapshots.map(function(s) {
+        return {
+          snapshotAt:      s.snapshotAt,
+          maturityScore:   s.maturityScore,
+          maturityLevel:   s.maturityLevel,
+          confidenceLevel: s.confidenceLevel,
+          dimensions:      s.dimensions,
+        };
+      }),
+    });
   } catch (err) {
     next(err);
   }
