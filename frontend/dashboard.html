@@ -1572,6 +1572,67 @@
     .pr-health-reasons li:first-child {
       border-top: none;
     }
+
+    /* ── Repository Maturity panel ────────────────────────────────────────── */
+    .rms-panel {
+      margin-top: 6px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+    .rms-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .rms-score {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .rms-score-max {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+    .rms-dims {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .rms-dim {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.73rem;
+      color: var(--text-secondary);
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .rms-dim:last-child { border-bottom: none; }
+    .rms-dim-val {
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 0.69rem;
+    }
+    .rms-dim-max { color: var(--text-muted); font-weight: 400; }
+    .rms-sublabel {
+      font-size: 0.64rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 10px 0 4px;
+    }
+
     .ev-panel {
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -3292,6 +3353,121 @@
       return html;
     }
 
+    // ── Repository Maturity panel ─────────────────────────────────────────────
+    // Renders the scoreRepositoryMaturity result as a compact inline panel.
+    // Returns a fallback string for unknown/null data — never crashes the view.
+
+    var _RMS_DIMS = [
+      { key: 'ciMaturity',          name: 'CI / CD',     max: 20 },
+      { key: 'releaseMaturity',     name: 'Release',      max: 20 },
+      { key: 'contributorMaturity', name: 'Contributors', max: 20 },
+      { key: 'activityMaturity',    name: 'Activity',     max: 20 },
+      { key: 'prWorkflowMaturity',  name: 'PR Workflow',  max: 10 },
+      { key: 'telemetryMaturity',   name: 'Telemetry',    max: 10 },
+    ];
+
+    function buildRepositoryMaturityHtml(data) {
+      var FALLBACK = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                  + 'Repository maturity unavailable until telemetry is synced.</p>';
+
+      if (!data || data.maturityLevel === 'unknown') return FALLBACK;
+
+      var score      = typeof data.maturityScore === 'number' ? data.maturityScore : 0;
+      var level      = data.maturityLevel   || 'unknown';
+      var confidence = data.confidenceLevel || 'low';
+      var dims       = data.dimensions      || {};
+      var gaps       = Array.isArray(data.gaps)            ? data.gaps            : [];
+      var recs       = Array.isArray(data.recommendations) ? data.recommendations : [];
+
+      // Semantic color mapping — amber for developing, orange for immature.
+      // Avoid red (severity-critical) which belongs exclusively to operational risk.
+      var levelCls = level === 'mature'     ? 'severity-healthy'
+                   : level === 'developing' ? 'severity-medium'
+                   : level === 'immature'   ? 'severity-high'
+                   : 'severity-unknown';
+
+      var levelLabel = level === 'mature'     ? 'MATURE'
+                     : level === 'developing' ? 'DEVELOPING'
+                     : level === 'immature'   ? 'IMMATURE'
+                     : 'UNKNOWN';
+
+      var html = '<div class="rms-panel">';
+
+      html += '<div class="rms-header">'
+            + '<span class="rms-score">' + esc(String(score)) + '<span class="rms-score-max"> / 100</span></span>'
+            + '<span class="pf-badge ' + levelCls + '">' + esc(levelLabel) + '</span>'
+            + '<span class="confidence-badge conf-' + esc(confidence) + '">'
+            +   esc(confidence.toUpperCase() + ' CONFIDENCE')
+            + '</span>'
+            + '</div>';
+
+      html += '<div class="rms-dims">';
+      _RMS_DIMS.forEach(function(d) {
+        var val = typeof dims[d.key] === 'number' ? dims[d.key] : 0;
+        html += '<div class="rms-dim">'
+              + '<span>' + esc(d.name) + '</span>'
+              + '<span class="rms-dim-val">' + esc(String(val))
+              +   '<span class="rms-dim-max"> / ' + esc(String(d.max)) + '</span>'
+              + '</span>'
+              + '</div>';
+      });
+      html += '</div>';
+
+      var topGaps = gaps.slice(0, 3);
+      if (topGaps.length > 0) {
+        html += '<div class="rms-sublabel">Maturity Gaps</div>'
+              + '<ul class="pf-signals">';
+        topGaps.forEach(function(g) {
+          html += '<li class="pf-signal">' + esc(g) + '</li>';
+        });
+        html += '</ul>';
+      }
+
+      var topRecs = recs.slice(0, 3);
+      if (topRecs.length > 0) {
+        html += '<div class="rms-sublabel" style="margin-top:10px;">Recommendations</div>'
+              + '<ul class="pf-signals">';
+        topRecs.forEach(function(r) {
+          html += '<li class="pf-signal">' + esc(r) + '</li>';
+        });
+        html += '</ul>';
+      }
+
+      if (topGaps.length === 0 && topRecs.length === 0) {
+        html += '<p style="font-size:0.8rem;color:var(--sev-healthy-text);margin-top:8px;">&#10003; No maturity gaps detected.</p>';
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function loadRepoMaturity(repoId) {
+      var container = document.getElementById('repo-maturity-content');
+      if (!container) return;
+      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/maturity', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) {
+            console.warn('[RepoMaturity] unexpected HTTP status:', r.status);
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          var fallback = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                       + 'Repository maturity unavailable until telemetry is synced.</p>';
+          if (container) container.innerHTML = d ? buildRepositoryMaturityHtml(d) : fallback;
+        })
+        .catch(function(err) {
+          console.warn('[RepoMaturity] failed to load:', err);
+          if (container) {
+            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                                + 'Repository maturity unavailable until telemetry is synced.</p>';
+          }
+        });
+    }
+
     function buildPrHealthHtml(data) {
       var label   = data.label   || 'unknown';
       var score   = typeof data.score === 'number' ? data.score : null;
@@ -3666,6 +3842,8 @@
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="risk">'
         +   buildExplanationHtml(exp)
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Repository Maturity</div>'
+        +   '<div id="repo-maturity-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Pull Request Health</div>'
         +   '<div id="repo-pr-health-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         +   '<div id="repo-ev-risk-note"></div>'
@@ -3696,6 +3874,7 @@
       loadRepoEscalation(repo.id);
       loadRepoForecast(repo.id);
       loadRepoConfidence(repo.id);
+      loadRepoMaturity(repo.id);
       loadRepoPrHealth(repo.id);
       loadRepoEngineeringVolatility(repo.id);
     }
