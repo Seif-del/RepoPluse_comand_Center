@@ -1632,6 +1632,34 @@
       color: var(--text-muted);
       margin: 10px 0 4px;
     }
+    .rms-trend-panel {
+      margin-top: 8px;
+      padding: 8px 12px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+    .rms-trend-header {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+    }
+    .rms-trend-delta {
+      font-size: 0.72rem; font-weight: 700; font-family: var(--font-mono); color: var(--text-secondary);
+    }
+    .rms-trend-delta.positive { color: var(--sev-healthy-text); }
+    .rms-trend-delta.negative { color: var(--sev-high-text); }
+    .rms-sparkline { display: block; width: 100%; height: 40px; margin: 4px 0; }
+    .rms-gap-row {
+      display: flex; align-items: flex-start; gap: 6px;
+      font-size: 0.71rem; color: var(--text-secondary); padding: 2px 0;
+    }
+    .rms-gap-icon {
+      flex-shrink: 0; font-size: 0.59rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px;
+      border-radius: 3px; line-height: 1.6; white-space: nowrap;
+    }
+    .rms-gap-icon.gap-recurring { background: var(--sev-high-bg);    color: var(--sev-high-text);    }
+    .rms-gap-icon.gap-emerging  { background: var(--sev-medium-bg);  color: var(--sev-medium-text);  }
+    .rms-gap-icon.gap-resolved  { background: var(--sev-healthy-bg); color: var(--sev-healthy-text); }
 
     .ev-panel {
       background: var(--card-bg);
@@ -3468,6 +3496,157 @@
         });
     }
 
+    function _buildMaturitySparklineSvg(scores) {
+      // scores: array of maturityScore numbers, newest-first from API.
+      // Reverse so left=oldest, right=newest for natural left-to-right reading.
+      var pts = scores.slice().reverse();
+      if (pts.length < 2) return '';
+      var W = 200; var H = 40;
+      var PL = 4; var PR = 4; var PT = 3; var PB = 3;
+      var innerW = W - PL - PR; var innerH = H - PT - PB;
+      var n = pts.length;
+      function xP(i) { return PL + (n === 1 ? innerW / 2 : i * (innerW / (n - 1))); }
+      function yP(v)  { return PT + innerH - (Math.max(0, Math.min(100, v)) / 100) * innerH; }
+      var parts = [];
+      parts.push('<defs>'
+        + '<linearGradient id="mspkGrad" x1="0" y1="0" x2="0" y2="1">'
+        + '<stop offset="0%"   stop-color="var(--blue)" stop-opacity="0.15"/>'
+        + '<stop offset="100%" stop-color="var(--blue)" stop-opacity="0.01"/>'
+        + '</linearGradient></defs>');
+      var aD = 'M ' + xP(0) + ' ' + yP(pts[0]);
+      for (var ai = 1; ai < n; ai++) aD += ' L ' + xP(ai) + ' ' + yP(pts[ai]);
+      aD += ' L ' + xP(n - 1) + ' ' + (PT + innerH) + ' L ' + xP(0) + ' ' + (PT + innerH) + ' Z';
+      parts.push('<path fill="url(#mspkGrad)" stroke="none" d="' + aD + '"/>');
+      var lD = 'M ' + xP(0) + ' ' + yP(pts[0]);
+      for (var li = 1; li < n; li++) lD += ' L ' + xP(li) + ' ' + yP(pts[li]);
+      parts.push('<path fill="none" stroke="var(--blue)" stroke-width="1.5" '
+        + 'stroke-linejoin="round" stroke-linecap="round" d="' + lD + '"/>');
+      var lastVal = pts[n - 1];
+      parts.push('<circle cx="' + xP(n - 1) + '" cy="' + yP(lastVal) + '" r="2.5"'
+        + ' fill="var(--blue)" stroke="var(--surface-2)" stroke-width="1.5">'
+        + '<title>Latest maturity score: ' + lastVal + '</title></circle>');
+      return '<svg class="rms-sparkline" viewBox="0 0 ' + W + ' ' + H + '"'
+        + ' preserveAspectRatio="none" aria-label="Maturity score trend sparkline">'
+        + parts.join('') + '</svg>';
+    }
+
+    function buildRepositoryMaturityTrendHtml(data) {
+      var FALLBACK = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                  + 'Maturity trend unavailable until more snapshots are collected.</p>';
+      if (!data) return FALLBACK;
+      var history = Array.isArray(data.history) ? data.history : [];
+      if (history.length < 2 || data.trend === 'unknown') return FALLBACK;
+
+      var trend      = data.trend             || 'unknown';
+      var delta      = data.delta             != null ? data.delta : null;
+      var confidence = data.confidenceLevel   || 'low';
+      var summary    = data.summary           || '';
+      var recurring  = Array.isArray(data.recurringGaps) ? data.recurringGaps : [];
+      var resolved   = Array.isArray(data.resolvedGaps)  ? data.resolvedGaps  : [];
+      var emerging   = Array.isArray(data.emergingGaps)  ? data.emergingGaps  : [];
+
+      var trendCls = trend === 'improving' ? 'severity-healthy'
+                   : trend === 'declining' ? 'severity-high'
+                   : trend === 'stable'    ? 'severity-neutral'
+                   : 'severity-unknown';
+
+      var deltaHtml = '';
+      if (delta !== null) {
+        var sign     = delta >= 0 ? '+' : '';
+        var deltaCls = delta >= 10 ? 'positive' : delta <= -10 ? 'negative' : 'neutral';
+        deltaHtml = '<span class="rms-trend-delta ' + esc(deltaCls) + '">'
+                  + esc(sign + String(delta)) + ' pts</span>';
+      }
+
+      var html = '<div class="rms-trend-panel">';
+      html += '<div class="rms-trend-header">'
+            + '<span class="pf-badge ' + esc(trendCls) + '">' + esc(trend.toUpperCase()) + '</span>'
+            + deltaHtml
+            + '<span class="confidence-badge conf-' + esc(confidence) + '">'
+            +   esc(confidence.toUpperCase() + ' CONFIDENCE')
+            + '</span>'
+            + '</div>';
+
+      if (summary) {
+        html += '<p style="font-size:0.75rem;color:var(--text-secondary);margin:0 0 4px;">'
+              + esc(summary) + '</p>';
+      }
+
+      var scores = history.map(function(h) {
+        return typeof h.maturityScore === 'number' ? h.maturityScore : 0;
+      });
+      html += _buildMaturitySparklineSvg(scores);
+
+      var oldest = data.oldestScore != null ? data.oldestScore : null;
+      var latest = data.latestScore != null ? data.latestScore : null;
+      if (oldest !== null && latest !== null) {
+        html += '<p style="font-size:0.68rem;color:var(--text-muted);margin:0 0 8px;'
+              + 'font-family:var(--font-mono);">'
+              + esc(String(oldest)) + ' &rarr; ' + esc(String(latest)) + '</p>';
+      }
+
+      var hasGaps = recurring.length > 0 || resolved.length > 0 || emerging.length > 0;
+      if (!hasGaps) {
+        html += '<p style="font-size:0.75rem;color:var(--sev-healthy-text);">'
+              + '&#10003; No recurring maturity gaps detected.</p>';
+      } else {
+        if (recurring.length > 0) {
+          html += '<div class="rms-sublabel">Recurring Gaps</div>';
+          recurring.slice(0, 3).forEach(function(g) {
+            html += '<div class="rms-gap-row">'
+                  + '<span class="rms-gap-icon gap-recurring">recurring</span>'
+                  + '<span>' + esc(g) + '</span></div>';
+          });
+        }
+        if (emerging.length > 0) {
+          html += '<div class="rms-sublabel" style="margin-top:8px;">New Gaps</div>';
+          emerging.slice(0, 3).forEach(function(g) {
+            html += '<div class="rms-gap-row">'
+                  + '<span class="rms-gap-icon gap-emerging">new</span>'
+                  + '<span>' + esc(g) + '</span></div>';
+          });
+        }
+        if (resolved.length > 0) {
+          html += '<div class="rms-sublabel" style="margin-top:8px;">Resolved</div>';
+          resolved.slice(0, 3).forEach(function(g) {
+            html += '<div class="rms-gap-row">'
+                  + '<span class="rms-gap-icon gap-resolved">fixed</span>'
+                  + '<span>' + esc(g) + '</span></div>';
+          });
+        }
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function loadRepoMaturityTrend(repoId) {
+      var container = document.getElementById('repo-maturity-trend-content');
+      if (!container) return;
+      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/maturity-trend', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) {
+            console.warn('[RepoMaturityTrend] unexpected HTTP status:', r.status);
+            return null;
+          }
+          return r.json();
+        })
+        .then(function(d) {
+          var fallback = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                       + 'Maturity trend unavailable until more snapshots are collected.</p>';
+          if (container) container.innerHTML = d ? buildRepositoryMaturityTrendHtml(d) : fallback;
+        })
+        .catch(function(err) {
+          console.warn('[RepoMaturityTrend] failed to load:', err);
+          if (container) {
+            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                                + 'Maturity trend unavailable until more snapshots are collected.</p>';
+          }
+        });
+    }
+
     function buildPrHealthHtml(data) {
       var label   = data.label   || 'unknown';
       var score   = typeof data.score === 'number' ? data.score : null;
@@ -3844,6 +4023,8 @@
         +   buildExplanationHtml(exp)
         +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Repository Maturity</div>'
         +   '<div id="repo-maturity-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:12px;">Maturity Trend</div>'
+        +   '<div id="repo-maturity-trend-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Pull Request Health</div>'
         +   '<div id="repo-pr-health-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         +   '<div id="repo-ev-risk-note"></div>'
@@ -3875,6 +4056,7 @@
       loadRepoForecast(repo.id);
       loadRepoConfidence(repo.id);
       loadRepoMaturity(repo.id);
+      loadRepoMaturityTrend(repo.id);
       loadRepoPrHealth(repo.id);
       loadRepoEngineeringVolatility(repo.id);
     }
