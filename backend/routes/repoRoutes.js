@@ -16,6 +16,7 @@ const { getOperationalForecast }   = require('../../execution/risk/getOperationa
 const { getOperationalConfidence }  = require('../../execution/risk/getOperationalConfidence');
 const { scorePullRequestHealth }         = require('../../execution/risk/scorePullRequestHealth');
 const { detectEngineeringVolatility }    = require('../../execution/risk/detectEngineeringVolatility');
+const { scoreRepositoryMaturity }        = require('../../execution/risk/scoreRepositoryMaturity');
 
 const router = express.Router();
 
@@ -534,6 +535,94 @@ router.get('/:id/engineering-volatility', async (req, res, next) => {
       prHealthHistory,
       anomalyHistory: [],
     }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/maturity
+// Returns the engineering maturity score for a single repository.
+// Three parallel queries: (1) repositories + latest repo_metrics via LATERAL JOIN,
+// which doubles as the repo-existence/ownership/active check; (2) latest
+// repo_pr_metrics row for PR workflow telemetry; (3) risk_scores COUNT for
+// snapshot depth. All missing telemetry normalises to 'unknown' — no 404 for
+// absent metrics. Returns 404 only when the repo is missing, inactive, or not
+// owned by the authenticated user.
+router.get('/:id/maturity', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const [metricsResult, prResult, countResult] = await Promise.all([
+      req.app.locals.db.query(
+        `SELECT
+           r.last_synced_at     AS "lastSyncedAt",
+           m.ci_status          AS "ciStatus",
+           m.commits_7d         AS "commits7d",
+           m.last_push_at       AS "lastPushAt",
+           m.release_status     AS "releaseStatus",
+           m.contributor_status AS "contributorStatus"
+         FROM repositories r
+         LEFT JOIN LATERAL (
+           SELECT ci_status, commits_7d, last_push_at, release_status, contributor_status
+           FROM repo_metrics
+           WHERE repo_id = r.id
+           ORDER BY snapshot_at DESC
+           LIMIT 1
+         ) m ON true
+         WHERE r.id = $1 AND r.user_id = $2 AND r.is_active = true`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT pm.pr_telemetry_status AS "prTelemetryStatus"
+         FROM repo_pr_metrics pm
+         JOIN repositories r ON r.id = pm.repo_id
+         WHERE pm.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY pm.snapshot_at DESC
+         LIMIT 1`,
+        [repoId, req.user.userId]
+      ),
+      req.app.locals.db.query(
+        `SELECT COUNT(rs.id)::int AS "snapshotCount"
+         FROM risk_scores rs
+         JOIN repositories r ON r.id = rs.repo_id
+         WHERE rs.repo_id = $1 AND r.user_id = $2 AND r.is_active = true`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    if (metricsResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    const m   = metricsResult.rows[0];
+    const pr  = prResult.rows[0]   || null;
+    const cnt = countResult.rows[0] || {};
+
+    // Derive hasRecentCommit from last_push_at (any push within 30 days → true).
+    // last_push_at is the most reliable proxy since has_recent_commit is not a
+    // separate DB column.
+    let hasRecentCommit = null;
+    if (m.lastPushAt != null) {
+      const days = (Date.now() - new Date(m.lastPushAt).getTime()) / (1000 * 60 * 60 * 24);
+      hasRecentCommit = Number.isFinite(days) ? days < 30 : null;
+    }
+
+    const telemetry = {
+      ciStatus:                  m.ciStatus         || 'unknown',
+      releaseStatus:             m.releaseStatus     || 'unknown',
+      contributorStatus:         m.contributorStatus || 'unknown',
+      commits7d:                 m.commits7d         != null ? Number(m.commits7d)         : null,
+      hasRecentCommit,
+      prTelemetryStatus:         pr ? (pr.prTelemetryStatus || 'unknown') : 'unknown',
+      dependencyTelemetryStatus: 'unknown',
+      lastSyncedAt:              m.lastSyncedAt      || null,
+      snapshotCount:             cnt.snapshotCount   != null ? Number(cnt.snapshotCount) : 0,
+    };
+
+    res.json(scoreRepositoryMaturity(telemetry));
   } catch (err) {
     next(err);
   }

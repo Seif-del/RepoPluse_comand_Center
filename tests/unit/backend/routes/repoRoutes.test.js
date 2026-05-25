@@ -14,6 +14,7 @@ jest.mock('../../../../execution/risk/getEscalationSignals');
 jest.mock('../../../../execution/risk/getOperationalForecast');
 jest.mock('../../../../execution/risk/scorePullRequestHealth');
 jest.mock('../../../../execution/risk/detectEngineeringVolatility');
+jest.mock('../../../../execution/risk/scoreRepositoryMaturity');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -32,6 +33,7 @@ const { getEscalationSignals }    = require('../../../../execution/risk/getEscal
 const { getOperationalForecast }  = require('../../../../execution/risk/getOperationalForecast');
 const { scorePullRequestHealth }        = require('../../../../execution/risk/scorePullRequestHealth');
 const { detectEngineeringVolatility }   = require('../../../../execution/risk/detectEngineeringVolatility');
+const { scoreRepositoryMaturity }       = require('../../../../execution/risk/scoreRepositoryMaturity');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -59,6 +61,7 @@ const getEscalationHandler   = extractHandler(router, 'GET',  '/:id/escalation')
 const getForecastHandler     = extractHandler(router, 'GET',  '/:id/forecast');
 const getPrHealthHandler                = extractHandler(router, 'GET',  '/:id/pr-health');
 const getEngineeringVolatilityHandler   = extractHandler(router, 'GET',  '/:id/engineering-volatility');
+const getMaturityHandler                = extractHandler(router, 'GET',  '/:id/maturity');
 const postRegisterHandler               = extractHandler(router, 'POST', '/register');
 const postSyncHandler                   = extractHandler(router, 'POST', '/sync');
 
@@ -1278,5 +1281,239 @@ describe('repoRoutes GET /:id/engineering-volatility', () => {
     for (const [, params] of db.query.mock.calls) {
       expect(params).toContain(42);
     }
+  });
+});
+
+// ── GET /:id/maturity ─────────────────────────────────────────────────────────
+
+describe('repoRoutes GET /:id/maturity', () => {
+  const MOCK_MATURITY = {
+    maturityScore:   72,
+    maturityLevel:   'developing',
+    dimensions: {
+      ciMaturity:          20,
+      releaseMaturity:     10,
+      contributorMaturity: 20,
+      activityMaturity:    10,
+      prWorkflowMaturity:  6,
+      telemetryMaturity:   6,
+    },
+    gaps:            ['No releases in the last 90 days'],
+    recommendations: ['Review release cadence — no tagged release in over 90 days'],
+    confidenceLevel: 'high',
+  };
+
+  const MOCK_METRICS_ROW = {
+    lastSyncedAt:      '2026-05-20T12:00:00.000Z',
+    ciStatus:          'passing',
+    commits7d:         5,
+    lastPushAt:        '2026-05-24T10:00:00.000Z',
+    releaseStatus:     'stale',
+    contributorStatus: 'healthy',
+  };
+
+  const MOCK_PR_ROW    = { prTelemetryStatus: 'active' };
+  const MOCK_COUNT_ROW = { snapshotCount: 8 };
+
+  beforeEach(() => {
+    scoreRepositoryMaturity.mockReturnValue(MOCK_MATURITY);
+  });
+
+  // Dispatches all three queries based on SQL content:
+  //   - FROM repo_pr_metrics  → PR row
+  //   - FROM risk_scores      → count row
+  //   - default               → main repo+metrics query (FROM repositories r LEFT JOIN LATERAL)
+  function makeMaturityDb({
+    metricsRows = [MOCK_METRICS_ROW],
+    prRows      = [MOCK_PR_ROW],
+    countRows   = [MOCK_COUNT_ROW],
+  } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM repo_pr_metrics')) return { rows: prRows };
+        if (sql.includes('FROM risk_scores'))     return { rows: countRows };
+        return { rows: metricsRows };
+      }),
+    };
+  }
+
+  it('returns 200 with the scoreRepositoryMaturity result on success', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_MATURITY);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'abc' } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns 404 when repo is not found, inactive, or not owned by user', async () => {
+    const db  = makeMaturityDb({ metricsRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('main SQL query scopes to r.user_id', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    const mainCall = db.query.mock.calls.find(c => c[0].includes('last_synced_at'));
+    expect(mainCall[0]).toMatch(/r\.user_id/);
+    expect(mainCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('main SQL query filters r.is_active = true', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    const mainCall = db.query.mock.calls.find(c => c[0].includes('last_synced_at'));
+    expect(mainCall[0]).toContain('is_active');
+  });
+
+  it('main SQL query loads latest repo_metrics (snapshot_at DESC, LIMIT 1)', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    const mainCall = db.query.mock.calls.find(c => c[0].includes('last_synced_at'));
+    expect(mainCall[0]).toContain('snapshot_at DESC');
+    expect(mainCall[0]).toContain('LIMIT 1');
+  });
+
+  it('PR query loads latest repo_pr_metrics (snapshot_at DESC, LIMIT 1)', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    const prCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_pr_metrics'));
+    expect(prCall[0]).toContain('snapshot_at DESC');
+    expect(prCall[0]).toContain('LIMIT 1');
+  });
+
+  it('risk_scores count query is used for snapshotCount', async () => {
+    const db  = makeMaturityDb({ countRows: [{ snapshotCount: 12 }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    const countCall = db.query.mock.calls.find(c => c[0].includes('FROM risk_scores'));
+    expect(countCall[0]).toMatch(/COUNT/i);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshotCount: 12 })
+    );
+  });
+
+  it('null ciStatus in metrics row normalises to "unknown"', async () => {
+    const db  = makeMaturityDb({ metricsRows: [{ ...MOCK_METRICS_ROW, ciStatus: null }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ ciStatus: 'unknown' })
+    );
+  });
+
+  it('null releaseStatus and contributorStatus normalise to "unknown"', async () => {
+    const db  = makeMaturityDb({
+      metricsRows: [{ ...MOCK_METRICS_ROW, releaseStatus: null, contributorStatus: null }],
+    });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ releaseStatus: 'unknown', contributorStatus: 'unknown' })
+    );
+  });
+
+  it('null commits7d remains null (not coerced to 0)', async () => {
+    const db  = makeMaturityDb({ metricsRows: [{ ...MOCK_METRICS_ROW, commits7d: null }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ commits7d: null })
+    );
+  });
+
+  it('prTelemetryStatus defaults to "unknown" when no repo_pr_metrics row exists', async () => {
+    const db  = makeMaturityDb({ prRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ prTelemetryStatus: 'unknown' })
+    );
+  });
+
+  it('snapshotCount defaults to 0 when risk_scores count query returns empty', async () => {
+    const db  = makeMaturityDb({ countRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshotCount: 0 })
+    );
+  });
+
+  it('scoreRepositoryMaturity called with fully normalised telemetry from all three queries', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ciStatus:                  MOCK_METRICS_ROW.ciStatus,
+        releaseStatus:             MOCK_METRICS_ROW.releaseStatus,
+        contributorStatus:         MOCK_METRICS_ROW.contributorStatus,
+        commits7d:                 MOCK_METRICS_ROW.commits7d,
+        prTelemetryStatus:         MOCK_PR_ROW.prTelemetryStatus,
+        dependencyTelemetryStatus: 'unknown',
+        snapshotCount:             MOCK_COUNT_ROW.snapshotCount,
+        lastSyncedAt:              MOCK_METRICS_ROW.lastSyncedAt,
+      })
+    );
+  });
+
+  it('all three queries include the parsed repoId in their params', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '42' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    for (const [, params] of db.query.mock.calls) {
+      expect(params).toContain(42);
+    }
+  });
+
+  it('forwards DB error to next', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('response shape has maturityScore, maturityLevel, dimensions, gaps, recommendations, confidenceLevel', async () => {
+    const db  = makeMaturityDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getMaturityHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('maturityScore');
+    expect(body).toHaveProperty('maturityLevel');
+    expect(body).toHaveProperty('dimensions');
+    expect(body).toHaveProperty('gaps');
+    expect(body).toHaveProperty('recommendations');
+    expect(body).toHaveProperty('confidenceLevel');
   });
 });
