@@ -693,6 +693,11 @@
       max-width: 320px;
     }
 
+    .tbl-trend {
+      white-space: nowrap;
+      min-width: 80px;
+    }
+
     .reason-tag {
       display: inline-flex;
       align-items: center;
@@ -1871,15 +1876,10 @@
     // behavioralCount: how many entries at the START of `reasons` are behavioral.
     // Entries at index >= behavioralCount are structural/context and are rendered
     // with severity-neutral (muted) styling regardless of their base severity class.
-    // prefixHtml: optional HTML string prepended inside the .tbl-reasons div
-    //             (used to inject a predictive trend chip before reason tags).
-    function reasonTagsHtml(reasons, behavioralCount, prefixHtml) {
+    function reasonTagsHtml(reasons, behavioralCount) {
       if (behavioralCount === undefined) behavioralCount = reasons ? reasons.length : 0;
-      prefixHtml = prefixHtml || '';
       if (!reasons || !reasons.length) {
-        return '<div class="tbl-reasons">'
-          + (prefixHtml || '<span style="color:var(--text-muted);">—</span>')
-          + '</div>';
+        return '<div class="tbl-reasons"><span style="color:var(--text-muted);">—</span></div>';
       }
 
       var tags = reasons.map(function(reason, idx) {
@@ -1901,7 +1901,6 @@
       var overflow = tags.length - 2;
 
       var html = '<div class="tbl-reasons">'
-        + prefixHtml
         + visible.map(function(t) {
             return '<span class="reason-tag ' + t.cls + '" title="' + esc(t.full) + '">'
               + esc(t.label) + '</span>';
@@ -2093,10 +2092,8 @@
     //   - Max 2 chips visible; remainder shown as "+N" overflow.
     //   - LOW / HEALTHY rows: structural maturity tags suppressed; if nothing
     //     behavioral remains either, renders "No active issues".
-    //   - prefixHtml: optional HTML injected at the start of the reasons cell
-    //     (used to prepend the predictive trend chip before reason tags).
-    function buildTableReasonTags(aq, prefixHtml) {
-      prefixHtml = prefixHtml || '';
+    //   - Predictive trend chips are NOT included here; they live in their own column.
+    function buildTableReasonTags(aq) {
       var reasons = (aq && aq.reasons) ? aq.reasons : [];
       var level   = (aq && aq.attentionLevel) ? aq.attentionLevel : 'unknown';
 
@@ -2106,7 +2103,6 @@
         working = reasons.filter(function(r) { return !TABLE_SUPPRESS_LOW.has(r); });
         if (!working.length) {
           return '<div class="tbl-reasons">'
-            + prefixHtml
             + '<span style="color:var(--text-muted);font-size:0.72rem;">No active issues</span></div>';
         }
       }
@@ -2122,7 +2118,7 @@
       // Behavioral reasons always precede structural reasons
       var sorted = behavioral.concat(structural);
 
-      return reasonTagsHtml(sorted, behavioral.length, prefixHtml);
+      return reasonTagsHtml(sorted, behavioral.length);
     }
 
     function card(label, value, cls) {
@@ -3762,7 +3758,7 @@
 
         var heatCls = HEAT_CLS[aqLevel] || OP_HEAT_CLS[opState.cls] || 'row-heat-unknown';
 
-        var trend   = derivePredictiveTrend(r, aq);
+        var trend    = derivePredictiveTrend(r, aq);
         var chipHtml = trendChipHtml(trend);
 
         return '<tr data-id="' + esc(String(r.id)) + '" class="' + heatCls + '">'
@@ -3770,13 +3766,14 @@
           + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
           + '<td><span class="status-pill ' + opState.cls + '">' + esc(opState.text) + '</span></td>'
           + '<td>' + aqHtml + '</td>'
-          + '<td>' + buildTableReasonTags(aq, chipHtml) + '</td>'
+          + '<td class="tbl-trend">' + chipHtml + '</td>'
+          + '<td>' + buildTableReasonTags(aq) + '</td>'
           + '</tr>';
       }).join('');
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>ID</th><th>Repo</th><th>Label</th><th>Attention</th><th>Reasons</th></tr></thead>'
+        + '<thead><tr><th>ID</th><th>Repo</th><th>Label</th><th>Attention</th><th>Trend</th><th>Reasons</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 
