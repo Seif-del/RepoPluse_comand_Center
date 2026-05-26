@@ -1818,9 +1818,14 @@ describe('repoRoutes GET /:id/architecture', () => {
     };
   }
 
+  const MOCK_FETCH_RESULT = {
+    files: MOCK_FILES,
+    debug: { branch: 'main', fetchedTreeCount: 1, eligibleFileCount: 1, fetchedFileCount: 1, skippedFileCount: 0 },
+  };
+
   beforeEach(() => {
     decrypt.mockReturnValue('raw_token');
-    fetchRepositoryFiles.mockResolvedValue(MOCK_FILES);
+    fetchRepositoryFiles.mockResolvedValue(MOCK_FETCH_RESULT);
     buildRepositoryArchitectureSnapshot.mockReturnValue(MOCK_SNAPSHOT);
   });
 
@@ -1887,20 +1892,22 @@ describe('repoRoutes GET /:id/architecture', () => {
     );
   });
 
-  it('returns unknown snapshot with _warning when fetchFn is null', async () => {
+  it('falls back to globalThis.fetch when app.locals.fetchFn is not set (production path)', async () => {
+    // server.js never sets app.locals.fetchFn; the route must fall through to
+    // globalThis.fetch (available in Node 18+) so real requests are not rejected.
     const db  = makeArchitectureDb();
-    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: null } } });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
     const res = makeRes();
     await getArchitectureHandler(req, res, next);
+    // Route should proceed to fetch files — no warning, snapshot built with files
     expect(res.status).not.toHaveBeenCalled();
-    const body = res.json.mock.calls[0][0];
-    expect(body).toHaveProperty('_warning');
+    expect(fetchRepositoryFiles).toHaveBeenCalled();
     expect(buildRepositoryArchitectureSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ files: [] })
+      expect.objectContaining({ files: MOCK_FILES })
     );
   });
 
-  it('calls fetchRepositoryFiles with accessToken, fullName, branch, and fetchFn', async () => {
+  it('calls fetchRepositoryFiles with accessToken, fullName, and fetchFn (branch auto-detected inside helper)', async () => {
     const db      = makeArchitectureDb();
     const fetchFn = jest.fn();
     const req     = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn } } });
@@ -1910,9 +1917,12 @@ describe('repoRoutes GET /:id/architecture', () => {
       expect.objectContaining({
         accessToken: 'raw_token',
         fullName:    MOCK_REPO_ROW.fullName,
-        branch:      'main',
         fetchFn,
       })
+    );
+    // branch is intentionally NOT passed — fetchRepositoryFiles auto-detects via /repos/{fullName}
+    expect(fetchRepositoryFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({ branch: expect.anything() })
     );
   });
 
@@ -1926,7 +1936,7 @@ describe('repoRoutes GET /:id/architecture', () => {
     );
   });
 
-  it('calls buildRepositoryArchitectureSnapshot with repoId, repoName, and defaultBranch', async () => {
+  it('calls buildRepositoryArchitectureSnapshot with repoId, repoName, and defaultBranch from debug', async () => {
     const db  = makeArchitectureDb();
     const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
     const res = makeRes();
@@ -1935,9 +1945,25 @@ describe('repoRoutes GET /:id/architecture', () => {
       expect.objectContaining({
         repoId:        7,
         repoName:      MOCK_REPO_ROW.fullName,
-        defaultBranch: 'main',
+        defaultBranch: 'main', // comes from MOCK_FETCH_RESULT.debug.branch
       })
     );
+  });
+
+  it('returns _warning with diagnostic message when tree has eligible files but all blob fetches fail', async () => {
+    fetchRepositoryFiles.mockResolvedValue({
+      files: [],
+      debug: { branch: 'main', fetchedTreeCount: 50, eligibleFileCount: 12, fetchedFileCount: 0, skippedFileCount: 12 },
+    });
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('_warning');
+    expect(body._warning).toMatch(/eligible/i);
+    expect(body._warning).toMatch(/fail/i);
   });
 
   it('returns 502 when fetchRepositoryFiles throws TREE_FETCH_FAILED', async () => {

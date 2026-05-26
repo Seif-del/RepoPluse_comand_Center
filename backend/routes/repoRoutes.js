@@ -770,8 +770,8 @@ router.get('/:id/architecture', async (req, res, next) => {
       return res.status(404).json({ error: 'Repository not found' });
     }
 
-    const repo          = repoResult.rows[0];
-    const defaultBranch = 'main';
+    const repo        = repoResult.rows[0];
+    let defaultBranch = 'main'; // fallback for early-exit snapshots; overwritten after branch auto-detect
 
     function _unknownSnapshot(warning) {
       const snap = buildRepositoryArchitectureSnapshot({
@@ -803,25 +803,46 @@ router.get('/:id/architecture', async (req, res, next) => {
       appConfig.tokenEncryptionKey
     );
 
-    const fetchFn = typeof req.app.locals.fetchFn === 'function'
-      ? req.app.locals.fetchFn
-      : null;
+    const fetchFn = req.app.locals.fetchFn ||
+      (typeof globalThis.fetch === 'function' ? globalThis.fetch : null);
 
-    if (fetchFn === null) {
+    if (typeof fetchFn !== 'function') {
       return res.json(_unknownSnapshot('No fetch implementation available'));
     }
 
     // ── Stage 3: fetch repository files from GitHub ───────────────────────────
     let files;
+    let fetchDebug;
     try {
-      files = await fetchRepositoryFiles({
+      const result = await fetchRepositoryFiles({
         accessToken,
-        fullName:  repo.fullName,
-        branch:    defaultBranch,
+        fullName: repo.fullName,
         fetchFn,
+        // branch omitted — fetchRepositoryFiles auto-detects via /repos/{fullName}
       });
+      files         = result.files;
+      fetchDebug    = result.debug;
+      defaultBranch = result.debug.branch;
     } catch (err) {
       return res.status(502).json({ error: 'Failed to fetch repository file tree from GitHub' });
+    }
+
+    // If the tree had eligible files but every content fetch failed, surface a diagnostic.
+    if (files.length === 0 && fetchDebug.eligibleFileCount > 0) {
+      return res.json(Object.assign(
+        {},
+        buildRepositoryArchitectureSnapshot({
+          repoId,
+          repoName:      repo.fullName,
+          defaultBranch,
+          snapshotAt:    new Date().toISOString(),
+          files:         [],
+        }),
+        {
+          _warning: 'Found ' + fetchDebug.eligibleFileCount + ' eligible files in the tree but all' +
+            ' content fetches failed — GitHub API may be rate-limited or the token lacks repo scope',
+        }
+      ));
     }
 
     // ── Stage 4: run architecture analysis pipeline ───────────────────────────

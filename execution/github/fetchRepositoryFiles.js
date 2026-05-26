@@ -3,8 +3,13 @@
 // fetchRepositoryFiles
 // Fetches all text source files from a GitHub repository using the Git Trees API.
 //
-// Input:  { accessToken, fullName, branch, fetchFn }
-// Output: Array<{ path, content, sizeBytes, language, lastModified: null }>
+// Input:  { accessToken, fullName, branch?, fetchFn }
+// Output: { files: Array<{ path, content, sizeBytes, language, lastModified }>,
+//           debug: { branch, fetchedTreeCount, eligibleFileCount, fetchedFileCount, skippedFileCount } }
+//
+// Branch handling:
+//   - If branch is omitted (or blank), fetches /repos/{fullName} to get default_branch.
+//   - Falls back to 'main' only when GitHub metadata returns no valid branch name.
 //
 // Safety constraints:
 //   - Skips secret file patterns (.env, .pem, .key, credentials, secrets)
@@ -13,7 +18,7 @@
 //   - Caps per-file content at 200 KB (decoded)
 //   - Resilient to individual blob failures (Promise.allSettled)
 //   - Never executes code or writes to disk
-//   - Never includes access token in returned objects
+//   - Never includes access token in returned objects or thrown errors
 
 const GITHUB_API          = 'https://api.github.com';
 const MAX_FILES           = 300;
@@ -81,21 +86,26 @@ function _githubHeaders(accessToken) {
  * @param {object}   params
  * @param {string}   params.accessToken - Raw GitHub OAuth access token
  * @param {string}   params.fullName    - "owner/repo"
- * @param {string}   [params.branch]   - Branch name (defaults to 'main')
+ * @param {string}   [params.branch]   - Branch name; if omitted, auto-detected via repo metadata
  * @param {Function} params.fetchFn    - Fetch implementation (injected for testability)
- * @returns {Promise<Array<{path, content, sizeBytes, language, lastModified}>>}
+ * @returns {Promise<{
+ *   files: Array<{path, content, sizeBytes, language, lastModified}>,
+ *   debug: { branch: string, fetchedTreeCount: number, eligibleFileCount: number,
+ *            fetchedFileCount: number, skippedFileCount: number }
+ * }>}
  * @throws {Error} code INVALID_ACCESS_TOKEN — accessToken not a non-empty string
  * @throws {Error} code INVALID_ARGUMENT     — fullName not a non-empty string
  * @throws {Error} code INVALID_FETCH_FN     — fetchFn not a function
+ * @throws {Error} code REPO_FETCH_FAILED    — GitHub returned non-OK for repo metadata (branch auto-detect)
  * @throws {Error} code TREE_FETCH_FAILED    — GitHub returned non-OK for the git tree
  */
 async function fetchRepositoryFiles(params) {
   const accessToken = (params && params.accessToken) || '';
   const fullName    = (params && params.fullName)    || '';
   const fetchFn     = (params && params.fetchFn)     || null;
-  const branch      = (params && typeof params.branch === 'string' && params.branch.trim())
+  const branchParam = (params && typeof params.branch === 'string' && params.branch.trim())
     ? params.branch.trim()
-    : 'main';
+    : null;
 
   if (typeof accessToken !== 'string' || !accessToken.trim()) {
     const err = new Error('accessToken must be a non-empty string');
@@ -114,6 +124,22 @@ async function fetchRepositoryFiles(params) {
   }
 
   const headers = _githubHeaders(accessToken);
+
+  // ── Stage 0: resolve branch ───────────────────────────────────────────────────
+  let branch = branchParam;
+  if (!branch) {
+    const repoRes = await fetchFn(GITHUB_API + '/repos/' + fullName, { headers });
+    if (!repoRes.ok) {
+      const err = new Error('Failed to fetch repository metadata for ' + fullName);
+      err.code   = 'REPO_FETCH_FAILED';
+      err.status = repoRes.status;
+      throw err;
+    }
+    const repoMeta = await repoRes.json();
+    branch = (typeof repoMeta.default_branch === 'string' && repoMeta.default_branch.trim())
+      ? repoMeta.default_branch.trim()
+      : 'main';
+  }
 
   // ── Stage 1: fetch recursive git tree ────────────────────────────────────────
   const treeRes = await fetchFn(
@@ -165,9 +191,20 @@ async function fetchRepositoryFiles(params) {
   );
 
   // ── Stage 4: collect fulfilled non-null files ─────────────────────────────────
-  return settlements
+  const files = settlements
     .filter(function(r) { return r.status === 'fulfilled' && r.value !== null; })
     .map(function(r) { return r.value; });
+
+  return {
+    files,
+    debug: {
+      branch,
+      fetchedTreeCount:  tree.length,
+      eligibleFileCount: eligible.length,
+      fetchedFileCount:  files.length,
+      skippedFileCount:  eligible.length - files.length,
+    },
+  };
 }
 
 module.exports = { fetchRepositoryFiles };
