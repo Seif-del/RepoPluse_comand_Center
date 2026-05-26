@@ -47,6 +47,12 @@ function makeContentEntry(textContent) {
   return { content: b64(textContent) + '\n', encoding: 'base64' };
 }
 
+// Suppress console.warn emitted by GitHub-failure code paths throughout this file.
+// Warning content is verified explicitly in the 'diagnostic logging' describe block.
+let _warnSpy;
+beforeEach(() => { _warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+afterEach(() => { _warnSpy.mockRestore(); });
+
 // ── Input validation ──────────────────────────────────────────────────────────
 
 describe('fetchRepositoryFiles — input validation', () => {
@@ -369,5 +375,74 @@ describe('fetchRepositoryFiles — token safety', () => {
       await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, fetchFn });
     } catch (e) { thrown = e; }
     expect(thrown.message).not.toContain(VALID_TOKEN);
+  });
+});
+
+// ── Diagnostic logging ────────────────────────────────────────────────────────
+
+describe('fetchRepositoryFiles — diagnostic logging', () => {
+  let warnSpy;
+  beforeEach(() => { warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { warnSpy.mockRestore(); });
+
+  it('warns [architecture] github metadata fetch failed on REPO_FETCH_FAILED', async () => {
+    const fetchFn = makeFetchFn({ repoOk: false });
+    await expect(
+      fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, fetchFn })
+    ).rejects.toMatchObject({ code: 'REPO_FETCH_FAILED' });
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[architecture] github metadata fetch failed',
+      expect.objectContaining({ repo: VALID_FULLNAME, status: 403 })
+    );
+  });
+
+  it('warns [architecture] github tree fetch failed on TREE_FETCH_FAILED', async () => {
+    const fetchFn = makeFetchFn({ treeOk: false });
+    await expect(
+      fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn })
+    ).rejects.toMatchObject({ code: 'TREE_FETCH_FAILED' });
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[architecture] github tree fetch failed',
+      expect.objectContaining({ repo: VALID_FULLNAME, branch: 'main', status: 404 })
+    );
+  });
+
+  it('includes GitHub message field in warning when present in response body', async () => {
+    const fetchFn = jest.fn(async (url) => {
+      if (url.includes('/git/trees/')) {
+        return { ok: false, status: 403, json: async () => ({ message: 'API rate limit exceeded for url' }) };
+      }
+      return { ok: true, json: async () => ({ default_branch: 'main' }) };
+    });
+    await expect(
+      fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn })
+    ).rejects.toMatchObject({ code: 'TREE_FETCH_FAILED' });
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[architecture] github tree fetch failed',
+      expect.objectContaining({ message: 'API rate limit exceeded for url' })
+    );
+  });
+
+  it('warns [architecture] github blob fetch failed for each failed blob', async () => {
+    const fetchFn = makeFetchFn({
+      tree: [makeBlob('good.js', 'a'), makeBlob('bad.js', 'b')],
+      contents: { 'good.js': makeContentEntry('ok') },
+    });
+    await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[architecture] github blob fetch failed',
+      expect.objectContaining({ repo: VALID_FULLNAME, path: 'bad.js', status: 404 })
+    );
+  });
+
+  it('does not log access token in any warning', async () => {
+    const fetchFn = makeFetchFn({ treeOk: false });
+    await expect(
+      fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn })
+    ).rejects.toMatchObject({ code: 'TREE_FETCH_FAILED' });
+    const allLogged = warnSpy.mock.calls.flat()
+      .map(c => (typeof c === 'object' ? JSON.stringify(c) : String(c)))
+      .join(' ');
+    expect(allLogged).not.toContain(VALID_TOKEN);
   });
 });

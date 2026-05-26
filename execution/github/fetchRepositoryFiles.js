@@ -130,6 +130,11 @@ async function fetchRepositoryFiles(params) {
   if (!branch) {
     const repoRes = await fetchFn(GITHUB_API + '/repos/' + fullName, { headers });
     if (!repoRes.ok) {
+      let ghMessage;
+      try { const body = await repoRes.json(); if (typeof body.message === 'string') ghMessage = body.message; } catch (_) {}
+      const logEntry = { repo: fullName, status: repoRes.status };
+      if (ghMessage) logEntry.message = ghMessage;
+      console.warn('[architecture] github metadata fetch failed', logEntry);
       const err = new Error('Failed to fetch repository metadata for ' + fullName);
       err.code   = 'REPO_FETCH_FAILED';
       err.status = repoRes.status;
@@ -148,6 +153,11 @@ async function fetchRepositoryFiles(params) {
   );
 
   if (!treeRes.ok) {
+    let ghMessage;
+    try { const body = await treeRes.json(); if (typeof body.message === 'string') ghMessage = body.message; } catch (_) {}
+    const logEntry = { repo: fullName, branch, status: treeRes.status };
+    if (ghMessage) logEntry.message = ghMessage;
+    console.warn('[architecture] github tree fetch failed', logEntry);
     const err = new Error('Failed to fetch git tree for ' + fullName + '@' + branch);
     err.code   = 'TREE_FETCH_FAILED';
     err.status = treeRes.status;
@@ -171,7 +181,10 @@ async function fetchRepositoryFiles(params) {
         GITHUB_API + '/repos/' + fullName + '/contents/' + item.path + '?ref=' + branch,
         { headers }
       );
-      if (!contentRes.ok) return null;
+      if (!contentRes.ok) {
+        console.warn('[architecture] github blob fetch failed', { repo: fullName, branch, path: item.path, status: contentRes.status });
+        return null;
+      }
 
       const data = await contentRes.json();
       if (!data.content || data.encoding !== 'base64') return null;
