@@ -12,6 +12,8 @@ const { clusterOperationalAnomalies }        = require('../../execution/risk/clu
 const { buildTelemetryCoverageSummary }      = require('../../execution/risk/buildTelemetryCoverageSummary');
 const { buildBehavioralStabilityIndex }      = require('../../execution/risk/buildBehavioralStabilityIndex');
 const { scorePullRequestHealth }             = require('../../execution/risk/scorePullRequestHealth');
+const { scoreRepositoryMaturity }            = require('../../execution/risk/scoreRepositoryMaturity');
+const { buildPortfolioMaturityIndex }        = require('../../execution/risk/buildPortfolioMaturityIndex');
 
 const router = express.Router();
 
@@ -663,6 +665,96 @@ router.get('/behavioral-stability', async (req, res, next) => {
     });
 
     res.json(buildBehavioralStabilityIndex(repos, {}, []));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/maturity
+// Computes a portfolio-wide maturity index by loading the latest repo_metrics,
+// repo_pr_metrics, and risk_scores depth for every active repo, scoring each
+// with scoreRepositoryMaturity, then aggregating via buildPortfolioMaturityIndex.
+//
+// SQL strategy — single query with three LEFT JOIN LATERALs:
+//   (1) repo_metrics   → latest CI/release/contributor/commit/push telemetry
+//   (2) repo_pr_metrics → latest PR telemetry status
+//   (3) risk_scores    → total snapshot depth (COUNT) for confidence scoring
+//
+// v1 simplification: dependencyTelemetryStatus is always 'unknown'.
+// PR telemetry uses the single latest row for each repo.
+// snapshotCount is total risk_scores count per repo (not per-snapshot cumulative).
+router.get('/maturity', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id                            AS "repoId",
+         r.github_full_name              AS "fullName",
+         r.last_synced_at                AS "lastSyncedAt",
+         rm.ci_status                    AS "ciStatus",
+         rm.release_status               AS "releaseStatus",
+         rm.contributor_status           AS "contributorStatus",
+         rm.commits_7d                   AS "commits7d",
+         rm.last_push_at                 AS "lastPushAt",
+         pm.pr_telemetry_status          AS "prTelemetryStatus",
+         COALESCE(rs_cnt.snapshotCount, 0) AS "snapshotCount"
+       FROM repositories r
+       LEFT JOIN LATERAL (
+         SELECT ci_status, release_status, contributor_status, commits_7d, last_push_at
+         FROM   repo_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) rm ON true
+       LEFT JOIN LATERAL (
+         SELECT pr_telemetry_status
+         FROM   repo_pr_metrics
+         WHERE  repo_id = r.id
+         ORDER  BY snapshot_at DESC
+         LIMIT  1
+       ) pm ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(id)::int AS "snapshotCount"
+         FROM   risk_scores
+         WHERE  repo_id = r.id
+       ) rs_cnt ON true
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const repositories = result.rows.map(function(r) {
+      let hasRecentCommit = null;
+      if (r.lastPushAt != null) {
+        const days = (Date.now() - new Date(r.lastPushAt).getTime()) / (1000 * 60 * 60 * 24);
+        hasRecentCommit = Number.isFinite(days) ? days < 30 : null;
+      }
+
+      const telemetry = {
+        ciStatus:                  r.ciStatus         || 'unknown',
+        releaseStatus:             r.releaseStatus     || 'unknown',
+        contributorStatus:         r.contributorStatus || 'unknown',
+        commits7d:                 r.commits7d         != null ? Number(r.commits7d)         : null,
+        hasRecentCommit,
+        prTelemetryStatus:         r.prTelemetryStatus || 'unknown',
+        dependencyTelemetryStatus: 'unknown',
+        lastSyncedAt:              r.lastSyncedAt      || null,
+        snapshotCount:             r.snapshotCount     != null ? Number(r.snapshotCount)     : 0,
+      };
+
+      const scored = scoreRepositoryMaturity(telemetry);
+
+      return {
+        id:              r.repoId,
+        name:            r.fullName || String(r.repoId),
+        maturityScore:   scored.maturityScore,
+        maturityLevel:   scored.maturityLevel,
+        dimensions:      scored.dimensions,
+        gaps:            scored.gaps,
+        recommendations: scored.recommendations,
+        confidenceLevel: scored.confidenceLevel,
+      };
+    });
+
+    res.json(buildPortfolioMaturityIndex({ repositories }));
   } catch (err) {
     next(err);
   }

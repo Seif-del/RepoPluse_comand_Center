@@ -13,6 +13,8 @@ jest.mock('../../../../execution/risk/clusterOperationalAnomalies');
 jest.mock('../../../../execution/risk/buildTelemetryCoverageSummary');
 jest.mock('../../../../execution/risk/buildBehavioralStabilityIndex');
 jest.mock('../../../../execution/risk/scorePullRequestHealth');
+jest.mock('../../../../execution/risk/scoreRepositoryMaturity');
+jest.mock('../../../../execution/risk/buildPortfolioMaturityIndex');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +29,8 @@ const { clusterOperationalAnomalies }        = require('../../../../execution/ri
 const { buildTelemetryCoverageSummary }      = require('../../../../execution/risk/buildTelemetryCoverageSummary');
 const { buildBehavioralStabilityIndex }      = require('../../../../execution/risk/buildBehavioralStabilityIndex');
 const { scorePullRequestHealth }             = require('../../../../execution/risk/scorePullRequestHealth');
+const { scoreRepositoryMaturity }            = require('../../../../execution/risk/scoreRepositoryMaturity');
+const { buildPortfolioMaturityIndex }        = require('../../../../execution/risk/buildPortfolioMaturityIndex');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -52,6 +56,7 @@ const getAnomaliesHandler         = extractHandler(router, 'GET', '/anomalies');
 const getAnomalyClustersHandler      = extractHandler(router, 'GET', '/anomaly-clusters');
 const getTelemetryCoverageHandler       = extractHandler(router, 'GET', '/telemetry-coverage');
 const getBehavioralStabilityHandler     = extractHandler(router, 'GET', '/behavioral-stability');
+const getPortfolioMaturityHandler       = extractHandler(router, 'GET', '/maturity');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -1379,5 +1384,280 @@ describe('portfolioRoutes GET /behavioral-stability', () => {
       return !layer.route && typeof layer.handle === 'function';
     });
     expect(routerMiddleware).toBeDefined();
+  });
+});
+
+// ── GET /maturity ─────────────────────────────────────────────────────────────
+
+describe('portfolioRoutes GET /maturity', () => {
+  const MOCK_METRICS_ROW = {
+    repoId:           7,
+    fullName:         'org/repo-7',
+    lastSyncedAt:     '2026-05-20T12:00:00.000Z',
+    ciStatus:         'passing',
+    releaseStatus:    'stale',
+    contributorStatus:'healthy',
+    commits7d:        5,
+    lastPushAt:       '2026-05-24T09:00:00.000Z',
+    prTelemetryStatus:'active',
+    snapshotCount:    8,
+  };
+
+  const MOCK_MATURITY_SCORED = {
+    maturityScore:   65,
+    maturityLevel:   'developing',
+    confidenceLevel: 'high',
+    dimensions: {
+      ciMaturity: 20, releaseMaturity: 10, contributorMaturity: 20,
+      activityMaturity: 10, prWorkflowMaturity: 6, telemetryMaturity: 4,
+    },
+    gaps:            ['No releases in the last 90 days'],
+    recommendations: ['Review release cadence'],
+  };
+
+  const MOCK_INDEX = {
+    portfolioMaturityScore: 65,
+    maturityLevel:          'developing',
+    confidenceLevel:        'low',
+    summary:                'Portfolio engineering maturity is developing (score 65/100) across 1 repository.',
+    distribution:           { mature: 0, developing: 1, immature: 0, unknown: 0 },
+    dimensionAverages:      { ciMaturity: 20, releaseMaturity: 10, contributorMaturity: 20, activityMaturity: 10, prWorkflowMaturity: 6, telemetryMaturity: 4 },
+    commonGaps:             ['No releases in the last 90 days'],
+    benchmarkedRepositories:[{ id: 7, name: 'org/repo-7', maturityScore: 65, maturityLevel: 'developing', percentile: 100, rank: 1, relativePosition: 'leading', topGaps: ['No releases in the last 90 days'] }],
+    recommendations:        ['Review release cadence'],
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    scoreRepositoryMaturity.mockReturnValue(MOCK_MATURITY_SCORED);
+    buildPortfolioMaturityIndex.mockReturnValue(MOCK_INDEX);
+  });
+
+  it('returns the buildPortfolioMaturityIndex result on success', async () => {
+    const db  = makeDb([MOCK_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(res.json).toHaveBeenCalledWith(MOCK_INDEX);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('passes empty repositories array to buildPortfolioMaturityIndex when no active repos', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(buildPortfolioMaturityIndex).toHaveBeenCalledWith({ repositories: [] });
+  });
+
+  it('scoreRepositoryMaturity called once per repo row', async () => {
+    const rows = [MOCK_METRICS_ROW, { ...MOCK_METRICS_ROW, repoId: 8, fullName: 'org/repo-8' }];
+    const db   = makeDb(rows);
+    const req  = makeReq({ app: { locals: { db } } });
+    const res  = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledTimes(rows.length);
+  });
+
+  it('buildPortfolioMaturityIndex called with scored repository objects', async () => {
+    const db  = makeDb([MOCK_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(buildPortfolioMaturityIndex).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({
+          id:            MOCK_METRICS_ROW.repoId,
+          name:          MOCK_METRICS_ROW.fullName,
+          maturityScore: MOCK_MATURITY_SCORED.maturityScore,
+          maturityLevel: MOCK_MATURITY_SCORED.maturityLevel,
+        }),
+      ]),
+    });
+  });
+
+  it('SQL query scopes to r.user_id', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('user_id');
+    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL query filters to active repos only', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL uses LEFT JOIN LATERAL for repo_metrics with snapshot_at DESC LIMIT 1', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('repo_metrics');
+    expect(sql).toContain('snapshot_at DESC');
+    expect(sql).toContain('LIMIT  1');
+  });
+
+  it('SQL loads PR telemetry from repo_pr_metrics', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('repo_pr_metrics');
+    expect(sql).toContain('pr_telemetry_status');
+  });
+
+  it('SQL loads snapshot depth via risk_scores COUNT', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('risk_scores');
+    expect(sql).toMatch(/COUNT/i);
+  });
+
+  it('null ciStatus normalises to "unknown" before scoring', async () => {
+    const db  = makeDb([{ ...MOCK_METRICS_ROW, ciStatus: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ ciStatus: 'unknown' })
+    );
+  });
+
+  it('null releaseStatus and contributorStatus normalise to "unknown"', async () => {
+    const db  = makeDb([{ ...MOCK_METRICS_ROW, releaseStatus: null, contributorStatus: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ releaseStatus: 'unknown', contributorStatus: 'unknown' })
+    );
+  });
+
+  it('null commits7d remains null (not coerced)', async () => {
+    const db  = makeDb([{ ...MOCK_METRICS_ROW, commits7d: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ commits7d: null })
+    );
+  });
+
+  it('null prTelemetryStatus normalises to "unknown"', async () => {
+    const db  = makeDb([{ ...MOCK_METRICS_ROW, prTelemetryStatus: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ prTelemetryStatus: 'unknown' })
+    );
+  });
+
+  it('snapshotCount defaults to 0 when null', async () => {
+    const db  = makeDb([{ ...MOCK_METRICS_ROW, snapshotCount: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshotCount: 0 })
+    );
+  });
+
+  it('dependencyTelemetryStatus is always "unknown" (v1)', async () => {
+    const db  = makeDb([MOCK_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({ dependencyTelemetryStatus: 'unknown' })
+    );
+  });
+
+  it('repo with no metrics row (all null columns) is still included and scored', async () => {
+    const noMetricsRow = {
+      repoId: 9, fullName: 'org/empty', lastSyncedAt: null,
+      ciStatus: null, releaseStatus: null, contributorStatus: null,
+      commits7d: null, lastPushAt: null, prTelemetryStatus: null, snapshotCount: 0,
+    };
+    const db  = makeDb([noMetricsRow]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledTimes(1);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ciStatus: 'unknown', releaseStatus: 'unknown', contributorStatus: 'unknown',
+        commits7d: null, snapshotCount: 0,
+      })
+    );
+  });
+
+  it('fullName falls back to stringified repoId when null', async () => {
+    const db  = makeDb([{ ...MOCK_METRICS_ROW, fullName: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(buildPortfolioMaturityIndex).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({ name: String(MOCK_METRICS_ROW.repoId) }),
+      ]),
+    });
+  });
+
+  it('mixed portfolio: scoreRepositoryMaturity called for each row', async () => {
+    const rows = [
+      { ...MOCK_METRICS_ROW, repoId: 1, fullName: 'org/alpha', ciStatus: 'passing',  snapshotCount: 10 },
+      { ...MOCK_METRICS_ROW, repoId: 2, fullName: 'org/beta',  ciStatus: 'failing',  snapshotCount: 3  },
+      { ...MOCK_METRICS_ROW, repoId: 3, fullName: 'org/gamma', ciStatus: null,        snapshotCount: 0  },
+    ];
+    const db  = makeDb(rows);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledTimes(3);
+    expect(buildPortfolioMaturityIndex).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({ id: 1, name: 'org/alpha' }),
+        expect.objectContaining({ id: 2, name: 'org/beta'  }),
+        expect.objectContaining({ id: 3, name: 'org/gamma' }),
+      ]),
+    });
+  });
+
+  it('response shape matches buildPortfolioMaturityIndex output directly', async () => {
+    const db  = makeDb([MOCK_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('portfolioMaturityScore');
+    expect(body).toHaveProperty('maturityLevel');
+    expect(body).toHaveProperty('confidenceLevel');
+    expect(body).toHaveProperty('distribution');
+    expect(body).toHaveProperty('dimensionAverages');
+    expect(body).toHaveProperty('commonGaps');
+    expect(body).toHaveProperty('benchmarkedRepositories');
+    expect(body).toHaveProperty('recommendations');
+  });
+
+  it('forwards DB error to next', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
   });
 });
