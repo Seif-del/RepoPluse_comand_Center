@@ -18,6 +18,8 @@ const { scorePullRequestHealth }         = require('../../execution/risk/scorePu
 const { detectEngineeringVolatility }    = require('../../execution/risk/detectEngineeringVolatility');
 const { scoreRepositoryMaturity }        = require('../../execution/risk/scoreRepositoryMaturity');
 const { getRepositoryMaturityTrend }     = require('../../execution/risk/getRepositoryMaturityTrend');
+const { fetchRepositoryFiles }               = require('../../execution/github/fetchRepositoryFiles');
+const { buildRepositoryArchitectureSnapshot } = require('../../execution/architecture/buildRepositoryArchitectureSnapshot');
 
 const router = express.Router();
 
@@ -734,6 +736,104 @@ router.get('/:id/maturity-trend', async (req, res, next) => {
         };
       }),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/architecture
+// Returns a full Phase 1 Architecture Intelligence snapshot for a single repository.
+// Fetches all text source files from GitHub via the Git Trees API, then runs the
+// six-stage static analysis pipeline (buildRepositoryArchitectureSnapshot).
+// V1 constraints: GitHub API only, no local cloning, no code execution, no LLM.
+// Returns an "unknown" architecture snapshot (files=[]) with a _warning field when
+// no access token or fetch implementation is available — never returns 422/503.
+// Returns 502 when the GitHub file tree fetch fails.
+router.get('/:id/architecture', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const appConfig = req.app.locals.config;
+
+    // ── Stage 1: verify repo ownership and active status ─────────────────────
+    const repoResult = await req.app.locals.db.query(
+      `SELECT id, github_full_name AS "fullName"
+       FROM repositories
+       WHERE id = $1 AND user_id = $2 AND is_active = true`,
+      [repoId, req.user.userId]
+    );
+
+    if (repoResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    const repo          = repoResult.rows[0];
+    const defaultBranch = 'main';
+
+    function _unknownSnapshot(warning) {
+      const snap = buildRepositoryArchitectureSnapshot({
+        repoId,
+        repoName:      repo.fullName,
+        defaultBranch,
+        snapshotAt:    new Date().toISOString(),
+        files:         [],
+      });
+      return Object.assign({}, snap, { _warning: warning });
+    }
+
+    // ── Stage 2: load access token ────────────────────────────────────────────
+    if (!appConfig.tokenEncryptionKey) {
+      return res.json(_unknownSnapshot('Token encryption not configured'));
+    }
+
+    const tokenResult = await req.app.locals.db.query(
+      `SELECT access_token_enc FROM users WHERE id = $1 AND deleted_at IS NULL`,
+      [req.user.userId]
+    );
+
+    if (tokenResult.rows.length === 0 || !tokenResult.rows[0].access_token_enc) {
+      return res.json(_unknownSnapshot('No stored access token — user must re-login'));
+    }
+
+    const accessToken = decrypt(
+      tokenResult.rows[0].access_token_enc,
+      appConfig.tokenEncryptionKey
+    );
+
+    const fetchFn = typeof req.app.locals.fetchFn === 'function'
+      ? req.app.locals.fetchFn
+      : null;
+
+    if (fetchFn === null) {
+      return res.json(_unknownSnapshot('No fetch implementation available'));
+    }
+
+    // ── Stage 3: fetch repository files from GitHub ───────────────────────────
+    let files;
+    try {
+      files = await fetchRepositoryFiles({
+        accessToken,
+        fullName:  repo.fullName,
+        branch:    defaultBranch,
+        fetchFn,
+      });
+    } catch (err) {
+      return res.status(502).json({ error: 'Failed to fetch repository file tree from GitHub' });
+    }
+
+    // ── Stage 4: run architecture analysis pipeline ───────────────────────────
+    const snapshot = buildRepositoryArchitectureSnapshot({
+      repoId,
+      repoName:      repo.fullName,
+      defaultBranch,
+      snapshotAt:    new Date().toISOString(),
+      files,
+    });
+
+    res.json(snapshot);
   } catch (err) {
     next(err);
   }

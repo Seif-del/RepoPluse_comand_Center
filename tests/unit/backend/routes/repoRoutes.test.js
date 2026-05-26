@@ -16,6 +16,8 @@ jest.mock('../../../../execution/risk/scorePullRequestHealth');
 jest.mock('../../../../execution/risk/detectEngineeringVolatility');
 jest.mock('../../../../execution/risk/scoreRepositoryMaturity');
 jest.mock('../../../../execution/risk/getRepositoryMaturityTrend');
+jest.mock('../../../../execution/github/fetchRepositoryFiles');
+jest.mock('../../../../execution/architecture/buildRepositoryArchitectureSnapshot');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -36,6 +38,8 @@ const { scorePullRequestHealth }        = require('../../../../execution/risk/sc
 const { detectEngineeringVolatility }   = require('../../../../execution/risk/detectEngineeringVolatility');
 const { scoreRepositoryMaturity }       = require('../../../../execution/risk/scoreRepositoryMaturity');
 const { getRepositoryMaturityTrend }    = require('../../../../execution/risk/getRepositoryMaturityTrend');
+const { fetchRepositoryFiles }               = require('../../../../execution/github/fetchRepositoryFiles');
+const { buildRepositoryArchitectureSnapshot } = require('../../../../execution/architecture/buildRepositoryArchitectureSnapshot');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -65,6 +69,7 @@ const getPrHealthHandler                = extractHandler(router, 'GET',  '/:id/p
 const getEngineeringVolatilityHandler   = extractHandler(router, 'GET',  '/:id/engineering-volatility');
 const getMaturityHandler                = extractHandler(router, 'GET',  '/:id/maturity');
 const getMaturityTrendHandler           = extractHandler(router, 'GET',  '/:id/maturity-trend');
+const getArchitectureHandler            = extractHandler(router, 'GET',  '/:id/architecture');
 const postRegisterHandler               = extractHandler(router, 'POST', '/register');
 const postSyncHandler                   = extractHandler(router, 'POST', '/sync');
 
@@ -1767,6 +1772,224 @@ describe('repoRoutes GET /:id/maturity-trend', () => {
     const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
     const res = makeRes();
     await getMaturityTrendHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+});
+
+// ── GET /:id/architecture ─────────────────────────────────────────────────────
+
+describe('repoRoutes GET /:id/architecture', () => {
+  const MOCK_REPO_ROW = { id: 7, fullName: 'owner/repo' };
+
+  const MOCK_SNAPSHOT = {
+    repoId:                   7,
+    repoName:                 'owner/repo',
+    defaultBranch:            'main',
+    snapshotAt:               '2026-05-26T00:00:00.000Z',
+    architectureHealthScore:  80,
+    architectureHealthLevel:  'watch',
+    confidenceLevel:          'high',
+    summary:                  'Architecture structure is mostly coherent.',
+    inventory:                {},
+    dependencyGraph:          {},
+    routeApiStructure:        {},
+    apiLinkage:               {},
+    boundaryVerification:     {},
+    implementationCompleteness: {},
+    topFindings:              [],
+    recommendations:          [],
+    metrics:                  {},
+  };
+
+  const MOCK_FILES = [
+    { path: 'src/index.js', content: 'console.log("hi");', sizeBytes: 18, language: 'javascript', lastModified: null },
+  ];
+
+  // Two-query dispatch: repo ownership check, then token lookup
+  function makeArchitectureDb({
+    repoRows  = [MOCK_REPO_ROW],
+    tokenRows = [{ access_token_enc: 'enc_token' }],
+  } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('access_token_enc')) return { rows: tokenRows };
+        return { rows: repoRows };
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    decrypt.mockReturnValue('raw_token');
+    fetchRepositoryFiles.mockResolvedValue(MOCK_FILES);
+    buildRepositoryArchitectureSnapshot.mockReturnValue(MOCK_SNAPSHOT);
+  });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'abc' } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns 404 when repo is not found or not owned by user', async () => {
+    const db  = makeArchitectureDb({ repoRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('repo query includes repoId and userId as params', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '42' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('access_token_enc'));
+    expect(repoCall[1]).toContain(42);
+    expect(repoCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('repo query filters by is_active = true', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('access_token_enc'));
+    expect(repoCall[0]).toContain('is_active');
+  });
+
+  it('returns unknown snapshot with _warning when tokenEncryptionKey is absent', async () => {
+    const db     = makeArchitectureDb();
+    const config = {};
+    const req    = makeReq({ params: { id: '7' }, app: { locals: { db, config, fetchFn: jest.fn() } } });
+    const res    = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('_warning');
+    expect(buildRepositoryArchitectureSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ files: [] })
+    );
+  });
+
+  it('returns unknown snapshot with _warning when no access_token_enc in users row', async () => {
+    const db  = makeArchitectureDb({ tokenRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('_warning');
+    expect(buildRepositoryArchitectureSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ files: [] })
+    );
+  });
+
+  it('returns unknown snapshot with _warning when fetchFn is null', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: null } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('_warning');
+    expect(buildRepositoryArchitectureSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ files: [] })
+    );
+  });
+
+  it('calls fetchRepositoryFiles with accessToken, fullName, branch, and fetchFn', async () => {
+    const db      = makeArchitectureDb();
+    const fetchFn = jest.fn();
+    const req     = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn } } });
+    const res     = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(fetchRepositoryFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: 'raw_token',
+        fullName:    MOCK_REPO_ROW.fullName,
+        branch:      'main',
+        fetchFn,
+      })
+    );
+  });
+
+  it('passes files from fetchRepositoryFiles to buildRepositoryArchitectureSnapshot', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(buildRepositoryArchitectureSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ files: MOCK_FILES })
+    );
+  });
+
+  it('calls buildRepositoryArchitectureSnapshot with repoId, repoName, and defaultBranch', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(buildRepositoryArchitectureSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoId:        7,
+        repoName:      MOCK_REPO_ROW.fullName,
+        defaultBranch: 'main',
+      })
+    );
+  });
+
+  it('returns 502 when fetchRepositoryFiles throws TREE_FETCH_FAILED', async () => {
+    const fetchErr = new Error('tree fail');
+    fetchErr.code  = 'TREE_FETCH_FAILED';
+    fetchRepositoryFiles.mockRejectedValue(fetchErr);
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns 502 when fetchRepositoryFiles throws any other error', async () => {
+    fetchRepositoryFiles.mockRejectedValue(new Error('network error'));
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('response shape has architectureHealthScore, architectureHealthLevel, confidenceLevel, summary, metrics', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('architectureHealthScore');
+    expect(body).toHaveProperty('architectureHealthLevel');
+    expect(body).toHaveProperty('confidenceLevel');
+    expect(body).toHaveProperty('summary');
+    expect(body).toHaveProperty('metrics');
+  });
+
+  it('access token is not present in the response body', async () => {
+    const db  = makeArchitectureDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(JSON.stringify(body)).not.toContain('raw_token');
+    expect(JSON.stringify(body)).not.toContain('enc_token');
+  });
+
+  it('forwards DB error to next', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
     expect(next).toHaveBeenCalledWith(expect.any(Error));
   });
 });
