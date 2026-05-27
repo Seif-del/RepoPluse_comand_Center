@@ -15,6 +15,7 @@ jest.mock('../../../../execution/risk/buildBehavioralStabilityIndex');
 jest.mock('../../../../execution/risk/scorePullRequestHealth');
 jest.mock('../../../../execution/risk/scoreRepositoryMaturity');
 jest.mock('../../../../execution/risk/buildPortfolioMaturityIndex');
+jest.mock('../../../../execution/architecture/buildPortfolioArchitectureIntelligence');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ const { buildBehavioralStabilityIndex }      = require('../../../../execution/ri
 const { scorePullRequestHealth }             = require('../../../../execution/risk/scorePullRequestHealth');
 const { scoreRepositoryMaturity }            = require('../../../../execution/risk/scoreRepositoryMaturity');
 const { buildPortfolioMaturityIndex }        = require('../../../../execution/risk/buildPortfolioMaturityIndex');
+const { buildPortfolioArchitectureIntelligence } = require('../../../../execution/architecture/buildPortfolioArchitectureIntelligence');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -56,7 +58,8 @@ const getAnomaliesHandler         = extractHandler(router, 'GET', '/anomalies');
 const getAnomalyClustersHandler      = extractHandler(router, 'GET', '/anomaly-clusters');
 const getTelemetryCoverageHandler       = extractHandler(router, 'GET', '/telemetry-coverage');
 const getBehavioralStabilityHandler     = extractHandler(router, 'GET', '/behavioral-stability');
-const getPortfolioMaturityHandler       = extractHandler(router, 'GET', '/maturity');
+const getPortfolioMaturityHandler            = extractHandler(router, 'GET', '/maturity');
+const getPortfolioArchitectureHandler        = extractHandler(router, 'GET', '/architecture');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -1659,5 +1662,266 @@ describe('portfolioRoutes GET /maturity', () => {
     const res = makeRes();
     await getPortfolioMaturityHandler(req, res, next);
     expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+});
+
+// ── GET /architecture ─────────────────────────────────────────────────────────
+
+describe('portfolioRoutes GET /architecture', () => {
+  const MOCK_ARCH_SNAPSHOT = {
+    architectureHealthScore:    75,
+    architectureHealthLevel:    'watch',
+    confidenceLevel:            'high',
+    metrics:                    { totalFiles: 12 },
+    dependencyGraph:            { couplingMetrics: { totalEdges: 4, circularDependencyCount: 0 } },
+    apiLinkage:                 { coverage: { frontendCallCount: 3, backendRouteCount: 5 } },
+    boundaryVerification:       { violations: [] },
+    implementationCompleteness: { completenessScore: 80 },
+    topFindings:                [],
+    recommendations:            ['Add unit tests to core modules.'],
+  };
+
+  const MOCK_ARCH_ROW = {
+    repoId:     1,
+    repoName:   'org/repo-1',
+    snapshot:   MOCK_ARCH_SNAPSHOT,
+    snapshotAt: '2026-05-27T08:00:00.000Z',
+  };
+
+  const MOCK_NO_SNAP_ROW = {
+    repoId:     2,
+    repoName:   'org/repo-2',
+    snapshot:   null,
+    snapshotAt: null,
+  };
+
+  const MOCK_PORTFOLIO_ARCH_RESULT = {
+    portfolioArchitectureScore: 75,
+    architectureLevel:          'watch',
+    confidenceLevel:            'high',
+    summary:                    'Portfolio architecture has watch items.',
+    distribution:               { healthy: 0, watch: 1, weak: 0, risky: 0, unknown: 1 },
+    systemicBoundaryViolations: [],
+    portfolioCoupling:          { totalEdges: 4, couplingLevel: 'healthy' },
+    apiIntegrationHealth:       { integrationLevel: 'unknown' },
+    implementationIntegrity:    { integrityLevel: 'moderate' },
+    benchmarkedRepositories:    [
+      { repoId: 1, repoName: 'org/repo-1', architectureHealthScore: 75, architectureHealthLevel: 'watch', rank: 1, percentile: 100, relativePosition: 'leading' },
+    ],
+    topFindings:     [],
+    recommendations: ['Add unit tests to core modules.'],
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    buildPortfolioArchitectureIntelligence.mockReturnValue(MOCK_PORTFOLIO_ARCH_RESULT);
+  });
+
+  it('returns buildPortfolioArchitectureIntelligence result with _cache metadata', async () => {
+    const db  = makeDb([MOCK_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('portfolioArchitectureScore');
+    expect(body).toHaveProperty('architectureLevel');
+    expect(body).toHaveProperty('distribution');
+    expect(body).toHaveProperty('systemicBoundaryViolations');
+    expect(body).toHaveProperty('portfolioCoupling');
+    expect(body).toHaveProperty('apiIntegrationHealth');
+    expect(body).toHaveProperty('implementationIntegrity');
+    expect(body).toHaveProperty('benchmarkedRepositories');
+    expect(body).toHaveProperty('_cache');
+  });
+
+  it('calls buildPortfolioArchitectureIntelligence with normalised repo architecture objects', async () => {
+    const db  = makeDb([MOCK_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({
+          repoId:                  MOCK_ARCH_ROW.repoId,
+          repoName:                MOCK_ARCH_ROW.repoName,
+          architectureHealthScore: MOCK_ARCH_SNAPSHOT.architectureHealthScore,
+          architectureHealthLevel: MOCK_ARCH_SNAPSHOT.architectureHealthLevel,
+          confidenceLevel:         MOCK_ARCH_SNAPSHOT.confidenceLevel,
+        }),
+      ]),
+    });
+  });
+
+  it('SQL query scopes to r.user_id', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('user_id');
+    expect(params).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL query filters to active repos only (r.is_active = true)', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL query uses LEFT JOIN LATERAL on repo_architecture_snapshots ORDER BY snapshot_at DESC LIMIT 1', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('repo_architecture_snapshots');
+    expect(sql).toContain('snapshot_at DESC');
+    expect(sql).toContain('LIMIT 1');
+  });
+
+  it('repos without snapshots are included as unknown architecture items', async () => {
+    const db  = makeDb([MOCK_NO_SNAP_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({
+          repoId:                  MOCK_NO_SNAP_ROW.repoId,
+          repoName:                MOCK_NO_SNAP_ROW.repoName,
+          architectureHealthScore: 0,
+          architectureHealthLevel: 'unknown',
+          confidenceLevel:         'low',
+          topFindings:             [],
+          recommendations:         [],
+        }),
+      ]),
+    });
+  });
+
+  it('empty portfolio calls helper with empty repositories array', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({ repositories: [] });
+  });
+
+  it('malformed snapshot (non-object) treated as unknown architecture item', async () => {
+    const malformedRow = { repoId: 3, repoName: 'org/broken', snapshot: 'not-json', snapshotAt: null };
+    const db  = makeDb([malformedRow]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({
+          repoId:                  3,
+          architectureHealthScore: 0,
+          architectureHealthLevel: 'unknown',
+        }),
+      ]),
+    });
+  });
+
+  it('_cache metadata has correct source, repoCount, snapshotCount, missingSnapshotCount', async () => {
+    const db  = makeDb([MOCK_ARCH_ROW, MOCK_NO_SNAP_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toEqual({
+      source:               'repo_architecture_snapshots',
+      repoCount:            2,
+      snapshotCount:        1,
+      missingSnapshotCount: 1,
+    });
+  });
+
+  it('_cache has snapshotCount 0 and missingSnapshotCount equal to repoCount when no snapshots exist', async () => {
+    const db  = makeDb([MOCK_NO_SNAP_ROW, { ...MOCK_NO_SNAP_ROW, repoId: 5, repoName: 'org/repo-5' }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toEqual({
+      source:               'repo_architecture_snapshots',
+      repoCount:            2,
+      snapshotCount:        0,
+      missingSnapshotCount: 2,
+    });
+  });
+
+  it('benchmarkedRepositories from helper result are present in response', async () => {
+    const db  = makeDb([MOCK_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.benchmarkedRepositories).toEqual(MOCK_PORTFOLIO_ARCH_RESULT.benchmarkedRepositories);
+  });
+
+  it('response does not expose any token value', async () => {
+    const db  = makeDb([MOCK_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body.toLowerCase()).not.toContain('access_token');
+    expect(body.toLowerCase()).not.toContain('token_enc');
+  });
+
+  it('DB error is forwarded to next without crashing', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('only one DB query is made (no GitHub API call)', async () => {
+    const db  = makeDb([MOCK_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('mixed portfolio: repos with and without snapshots both passed to helper', async () => {
+    const rows = [
+      MOCK_ARCH_ROW,
+      MOCK_NO_SNAP_ROW,
+      { repoId: 3, repoName: 'org/repo-3', snapshot: { ...MOCK_ARCH_SNAPSHOT, architectureHealthScore: 50, architectureHealthLevel: 'weak' }, snapshotAt: '2026-05-26T00:00:00.000Z' },
+    ];
+    const db  = makeDb(rows);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({ repoId: 1, architectureHealthLevel: 'watch'   }),
+        expect.objectContaining({ repoId: 2, architectureHealthLevel: 'unknown' }),
+        expect.objectContaining({ repoId: 3, architectureHealthLevel: 'weak'    }),
+      ]),
+    });
+    const [call] = buildPortfolioArchitectureIntelligence.mock.calls;
+    expect(call[0].repositories).toHaveLength(3);
+  });
+
+  it('repoName falls back to stringified repoId when github_full_name is null', async () => {
+    const db  = makeDb([{ ...MOCK_ARCH_ROW, repoName: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioArchitectureHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({ repoName: String(MOCK_ARCH_ROW.repoId) }),
+      ]),
+    });
   });
 });

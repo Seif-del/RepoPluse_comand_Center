@@ -14,6 +14,7 @@ const { buildBehavioralStabilityIndex }      = require('../../execution/risk/bui
 const { scorePullRequestHealth }             = require('../../execution/risk/scorePullRequestHealth');
 const { scoreRepositoryMaturity }            = require('../../execution/risk/scoreRepositoryMaturity');
 const { buildPortfolioMaturityIndex }        = require('../../execution/risk/buildPortfolioMaturityIndex');
+const { buildPortfolioArchitectureIntelligence } = require('../../execution/architecture/buildPortfolioArchitectureIntelligence');
 
 const router = express.Router();
 
@@ -755,6 +756,99 @@ router.get('/maturity', async (req, res, next) => {
     });
 
     res.json(buildPortfolioMaturityIndex({ repositories }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/architecture
+// Returns portfolio-wide Architecture Intelligence by aggregating persisted
+// repo_architecture_snapshots for all active repos owned by the authenticated user.
+// Uses a LEFT JOIN LATERAL so repos without snapshots appear as unknown items —
+// no live GitHub traversal ever happens in this route.
+router.get('/architecture', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id               AS "repoId",
+         r.github_full_name AS "repoName",
+         arch.snapshot,
+         arch.snapshot_at   AS "snapshotAt"
+       FROM repositories r
+       LEFT JOIN LATERAL (
+         SELECT snapshot, snapshot_at
+         FROM repo_architecture_snapshots ras
+         WHERE ras.repo_id = r.id
+         ORDER BY ras.snapshot_at DESC
+         LIMIT 1
+       ) arch ON true
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    function _unknownArchRepo(repoId, repoName) {
+      return {
+        repoId,
+        repoName,
+        architectureHealthScore:    0,
+        architectureHealthLevel:    'unknown',
+        confidenceLevel:            'low',
+        metrics:                    {},
+        dependencyGraph:            {},
+        apiLinkage:                 {},
+        boundaryVerification:       {},
+        implementationCompleteness: {},
+        topFindings:                [],
+        recommendations:            [],
+      };
+    }
+
+    const repositories = result.rows.map(function(r) {
+      const repoId   = r.repoId;
+      const repoName = r.repoName || String(r.repoId);
+
+      // Defensively normalise the snapshot value from postgres.
+      let snap = r.snapshot;
+      try {
+        if (typeof snap === 'string') snap = JSON.parse(snap);
+      } catch (_) {
+        snap = null;
+      }
+
+      if (snap === null || snap === undefined || typeof snap !== 'object' || Array.isArray(snap)) {
+        return _unknownArchRepo(repoId, repoName);
+      }
+
+      return {
+        repoId,
+        repoName,
+        architectureHealthScore:    snap.architectureHealthScore    != null ? snap.architectureHealthScore    : 0,
+        architectureHealthLevel:    snap.architectureHealthLevel    || 'unknown',
+        confidenceLevel:            snap.confidenceLevel            || 'low',
+        metrics:                    snap.metrics                    || {},
+        dependencyGraph:            snap.dependencyGraph            || {},
+        apiLinkage:                 snap.apiLinkage                 || {},
+        boundaryVerification:       snap.boundaryVerification       || {},
+        implementationCompleteness: snap.implementationCompleteness || {},
+        topFindings:                Array.isArray(snap.topFindings)     ? snap.topFindings     : [],
+        recommendations:            Array.isArray(snap.recommendations) ? snap.recommendations : [],
+      };
+    });
+
+    const repoCount            = result.rows.length;
+    const snapshotCount        = result.rows.filter(function(r) { return r.snapshot != null; }).length;
+    const missingSnapshotCount = repoCount - snapshotCount;
+
+    const output = buildPortfolioArchitectureIntelligence({ repositories });
+
+    res.json(Object.assign({}, output, {
+      _cache: {
+        source:               'repo_architecture_snapshots',
+        repoCount,
+        snapshotCount,
+        missingSnapshotCount,
+      },
+    }));
   } catch (err) {
     next(err);
   }
