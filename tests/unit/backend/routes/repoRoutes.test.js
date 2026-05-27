@@ -1805,14 +1805,18 @@ describe('repoRoutes GET /:id/architecture', () => {
     { path: 'src/index.js', content: 'console.log("hi");', sizeBytes: 18, language: 'javascript', lastModified: null },
   ];
 
-  // Two-query dispatch: repo ownership check, then token lookup
+  // Three-query dispatch: repo ownership check + snapshot lookup (parallel), then token lookup.
+  // INSERT into repo_architecture_snapshots is also handled (returns empty rows).
   function makeArchitectureDb({
-    repoRows  = [MOCK_REPO_ROW],
-    tokenRows = [{ access_token_enc: 'enc_token' }],
+    repoRows     = [MOCK_REPO_ROW],
+    tokenRows    = [{ access_token_enc: 'enc_token' }],
+    snapshotRows = [],
   } = {}) {
     return {
       query: jest.fn(async (sql) => {
-        if (sql.includes('access_token_enc')) return { rows: tokenRows };
+        if (sql.includes('access_token_enc'))                    return { rows: tokenRows };
+        if (sql.includes('FROM repo_architecture_snapshots'))    return { rows: snapshotRows };
+        if (sql.includes('INSERT INTO repo_architecture_snapshots')) return { rows: [] };
         return { rows: repoRows };
       }),
     };
@@ -1825,6 +1829,7 @@ describe('repoRoutes GET /:id/architecture', () => {
 
   beforeEach(() => {
     decrypt.mockReturnValue('raw_token');
+    fetchRepositoryFiles.mockClear();
     fetchRepositoryFiles.mockResolvedValue(MOCK_FETCH_RESULT);
     buildRepositoryArchitectureSnapshot.mockReturnValue(MOCK_SNAPSHOT);
   });
@@ -2017,5 +2022,129 @@ describe('repoRoutes GET /:id/architecture', () => {
     const res = makeRes();
     await getArchitectureHandler(req, res, next);
     expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  // ── cache behaviour ───────────────────────────────────────────────────────
+
+  it('fresh cached snapshot returned without calling fetchRepositoryFiles', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString(); // 1 minute ago — fresh
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: MOCK_SNAPSHOT, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(fetchRepositoryFiles).not.toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('fresh cache response shape includes _cache with hit: true, snapshotAt, stale: false', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: MOCK_SNAPSHOT, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toEqual({ hit: true, snapshotAt, stale: false });
+    expect(body).toHaveProperty('architectureHealthScore');
+    expect(body).toHaveProperty('architectureHealthLevel');
+  });
+
+  it('stale cached snapshot (> 6 h old) triggers live refresh attempt', async () => {
+    const snapshotAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(); // 7 h ago
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: MOCK_SNAPSHOT, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(fetchRepositoryFiles).toHaveBeenCalled();
+  });
+
+  it('stale cached snapshot returned with _cache.stale when live refresh fails (GitHub error)', async () => {
+    const snapshotAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+    fetchRepositoryFiles.mockRejectedValue(new Error('GitHub rate limit exceeded'));
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: MOCK_SNAPSHOT, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toMatchObject({ hit: true, stale: true });
+    expect(typeof body._cache.warning).toBe('string');
+    expect(body._cache.warning.length).toBeGreaterThan(0);
+  });
+
+  it('no cached snapshot falls through to live analysis (fetchRepositoryFiles called)', async () => {
+    const db  = makeArchitectureDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(fetchRepositoryFiles).toHaveBeenCalled();
+  });
+
+  it('successful live analysis inserts snapshot when metrics.totalFiles > 0', async () => {
+    const snapshotWithFiles = { ...MOCK_SNAPSHOT, metrics: { totalFiles: 5 } };
+    buildRepositoryArchitectureSnapshot.mockReturnValue(snapshotWithFiles);
+    const db  = makeArchitectureDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const insertCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_architecture_snapshots'));
+    expect(insertCall).toBeDefined();
+    expect(insertCall[1][0]).toBe(7);           // repoId
+    expect(insertCall[1][1]).toEqual(snapshotWithFiles); // snapshot object
+    expect(insertCall[1][2]).toBe('github');    // source
+  });
+
+  it('unknown fallback snapshot (metrics.totalFiles = 0) is NOT inserted into cache', async () => {
+    // MOCK_SNAPSHOT has metrics: {} so totalFiles is undefined (not > 0)
+    buildRepositoryArchitectureSnapshot.mockReturnValue(MOCK_SNAPSHOT);
+    const db  = makeArchitectureDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const insertCall = db.query.mock.calls.find(c => c[0].includes('INSERT INTO repo_architecture_snapshots'));
+    expect(insertCall).toBeUndefined();
+  });
+
+  it('live success response includes _cache with hit: false, refreshed: true, stale: false', async () => {
+    const db  = makeArchitectureDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toEqual({ hit: false, refreshed: true, stale: false });
+  });
+
+  it('access token not present in fresh cache response body', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: MOCK_SNAPSHOT, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(JSON.stringify(body)).not.toContain('raw_token');
+    expect(JSON.stringify(body)).not.toContain('enc_token');
+  });
+
+  it('snapshot query is scoped to user_id and is_active = true', async () => {
+    const db  = makeArchitectureDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall[0]).toMatch(/r\.user_id/);
+    expect(snapCall[1]).toContain(MOCK_USER.userId);
+    expect(snapCall[0]).toContain('is_active');
+  });
+
+  it('inactive repo returns 404 even when snapshot exists', async () => {
+    // repoRows = [] means the repo check (is_active = true) found nothing
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const db  = makeArchitectureDb({
+      repoRows:     [],
+      snapshotRows: [{ snapshot: MOCK_SNAPSHOT, snapshotAt }],
+    });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(404);
   });
 });

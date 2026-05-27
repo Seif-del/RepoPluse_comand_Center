@@ -741,14 +741,15 @@ router.get('/:id/maturity-trend', async (req, res, next) => {
   }
 });
 
+const ARCH_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 // GET /api/repos/:id/architecture
-// Returns a full Phase 1 Architecture Intelligence snapshot for a single repository.
-// Fetches all text source files from GitHub via the Git Trees API, then runs the
-// six-stage static analysis pipeline (buildRepositoryArchitectureSnapshot).
-// V1 constraints: GitHub API only, no local cloning, no code execution, no LLM.
-// Returns an "unknown" architecture snapshot (files=[]) with a _warning field when
-// no access token or fetch implementation is available — never returns 422/503.
-// Returns 502 when the GitHub file tree fetch fails.
+// Returns a Phase 1 Architecture Intelligence snapshot for a single repository.
+// Serves a cached snapshot immediately when one exists and is fresh (< 6 h old).
+// Attempts a live GitHub refresh when the cache is stale or absent; on GitHub failure
+// with a stale cache, returns the stale snapshot rather than a 502.
+// Returns an "unknown" snapshot with _warning when no token is available and no cache exists.
+// Returns 502 only when GitHub fails and there is no cached fallback.
 router.get('/:id/architecture', async (req, res, next) => {
   try {
     const repoId = parseInt(req.params.id, 10);
@@ -757,21 +758,54 @@ router.get('/:id/architecture', async (req, res, next) => {
     }
 
     const appConfig = req.app.locals.config;
+    const db        = req.app.locals.db;
 
-    // ── Stage 1: verify repo ownership and active status ─────────────────────
-    const repoResult = await req.app.locals.db.query(
-      `SELECT id, github_full_name AS "fullName"
-       FROM repositories
-       WHERE id = $1 AND user_id = $2 AND is_active = true`,
-      [repoId, req.user.userId]
-    );
+    // ── Stage 1: verify repo ownership + load latest snapshot (parallel) ─────
+    const [repoResult, snapResult] = await Promise.all([
+      db.query(
+        `SELECT id, github_full_name AS "fullName"
+         FROM repositories
+         WHERE id = $1 AND user_id = $2 AND is_active = true`,
+        [repoId, req.user.userId]
+      ),
+      db.query(
+        `SELECT s.snapshot, s.snapshot_at AS "snapshotAt"
+         FROM repo_architecture_snapshots s
+         JOIN repositories r ON r.id = s.repo_id
+         WHERE s.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY s.snapshot_at DESC
+         LIMIT 1`,
+        [repoId, req.user.userId]
+      ),
+    ]);
 
     if (repoResult.rows.length === 0) {
       return res.status(404).json({ error: 'Repository not found' });
     }
 
     const repo        = repoResult.rows[0];
-    let defaultBranch = 'main'; // fallback for early-exit snapshots; overwritten after branch auto-detect
+    let defaultBranch = 'main';
+
+    // ── Stage 2: serve fresh cache immediately ────────────────────────────────
+    const cachedRow = snapResult.rows[0] || null;
+    if (cachedRow) {
+      const ageMs = Date.now() - new Date(cachedRow.snapshotAt).getTime();
+      if (ageMs < ARCH_CACHE_TTL_MS) {
+        return res.json({
+          ...cachedRow.snapshot,
+          _cache: { hit: true, snapshotAt: cachedRow.snapshotAt, stale: false },
+        });
+      }
+    }
+
+    const isStale = cachedRow !== null;
+
+    function _staleCacheResponse() {
+      return {
+        ...cachedRow.snapshot,
+        _cache: { hit: true, stale: true, warning: 'Using cached architecture snapshot because live refresh failed.' },
+      };
+    }
 
     function _unknownSnapshot(warning) {
       const snap = buildRepositoryArchitectureSnapshot({
@@ -784,17 +818,19 @@ router.get('/:id/architecture', async (req, res, next) => {
       return Object.assign({}, snap, { _warning: warning });
     }
 
-    // ── Stage 2: load access token ────────────────────────────────────────────
+    // ── Stage 3: load access token ────────────────────────────────────────────
     if (!appConfig.tokenEncryptionKey) {
+      if (isStale) return res.json(_staleCacheResponse());
       return res.json(_unknownSnapshot('Token encryption not configured'));
     }
 
-    const tokenResult = await req.app.locals.db.query(
+    const tokenResult = await db.query(
       `SELECT access_token_enc FROM users WHERE id = $1 AND deleted_at IS NULL`,
       [req.user.userId]
     );
 
     if (tokenResult.rows.length === 0 || !tokenResult.rows[0].access_token_enc) {
+      if (isStale) return res.json(_staleCacheResponse());
       return res.json(_unknownSnapshot('No stored access token — user must re-login'));
     }
 
@@ -807,10 +843,11 @@ router.get('/:id/architecture', async (req, res, next) => {
       (typeof globalThis.fetch === 'function' ? globalThis.fetch : null);
 
     if (typeof fetchFn !== 'function') {
+      if (isStale) return res.json(_staleCacheResponse());
       return res.json(_unknownSnapshot('No fetch implementation available'));
     }
 
-    // ── Stage 3: fetch repository files from GitHub ───────────────────────────
+    // ── Stage 4: fetch repository files from GitHub ───────────────────────────
     let files;
     let fetchDebug;
     try {
@@ -824,11 +861,13 @@ router.get('/:id/architecture', async (req, res, next) => {
       fetchDebug    = result.debug;
       defaultBranch = result.debug.branch;
     } catch (err) {
+      if (isStale) return res.json(_staleCacheResponse());
       return res.status(502).json({ error: 'Failed to fetch repository file tree from GitHub' });
     }
 
-    // If the tree had eligible files but every content fetch failed, surface a diagnostic.
+    // Tree had eligible files but every content fetch failed — treat as GitHub failure.
     if (files.length === 0 && fetchDebug.eligibleFileCount > 0) {
+      if (isStale) return res.json(_staleCacheResponse());
       return res.json(Object.assign(
         {},
         buildRepositoryArchitectureSnapshot({
@@ -845,7 +884,7 @@ router.get('/:id/architecture', async (req, res, next) => {
       ));
     }
 
-    // ── Stage 4: run architecture analysis pipeline ───────────────────────────
+    // ── Stage 5: run architecture analysis pipeline ───────────────────────────
     const snapshot = buildRepositoryArchitectureSnapshot({
       repoId,
       repoName:      repo.fullName,
@@ -854,7 +893,19 @@ router.get('/:id/architecture', async (req, res, next) => {
       files,
     });
 
-    res.json(snapshot);
+    // ── Stage 6: persist snapshot when it contains real files ────────────────
+    if (snapshot.metrics && snapshot.metrics.totalFiles > 0) {
+      await db.query(
+        `INSERT INTO repo_architecture_snapshots (repo_id, snapshot, source)
+         VALUES ($1, $2, $3)`,
+        [repoId, snapshot, 'github']
+      );
+    }
+
+    res.json({
+      ...snapshot,
+      _cache: { hit: false, refreshed: true, stale: false },
+    });
   } catch (err) {
     next(err);
   }
