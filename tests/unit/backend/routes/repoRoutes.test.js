@@ -18,6 +18,10 @@ jest.mock('../../../../execution/risk/scoreRepositoryMaturity');
 jest.mock('../../../../execution/risk/getRepositoryMaturityTrend');
 jest.mock('../../../../execution/github/fetchRepositoryFiles');
 jest.mock('../../../../execution/architecture/buildRepositoryArchitectureSnapshot');
+jest.mock('../../../../execution/architecture/buildArchitectureTrendTimeline');
+jest.mock('../../../../execution/architecture/detectArchitectureRegressions');
+jest.mock('../../../../execution/architecture/detectCouplingGrowthAlerts');
+jest.mock('../../../../execution/architecture/forecastStructuralDegradation');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -40,6 +44,10 @@ const { scoreRepositoryMaturity }       = require('../../../../execution/risk/sc
 const { getRepositoryMaturityTrend }    = require('../../../../execution/risk/getRepositoryMaturityTrend');
 const { fetchRepositoryFiles }               = require('../../../../execution/github/fetchRepositoryFiles');
 const { buildRepositoryArchitectureSnapshot } = require('../../../../execution/architecture/buildRepositoryArchitectureSnapshot');
+const { buildArchitectureTrendTimeline }       = require('../../../../execution/architecture/buildArchitectureTrendTimeline');
+const { detectArchitectureRegressions }        = require('../../../../execution/architecture/detectArchitectureRegressions');
+const { detectCouplingGrowthAlerts }           = require('../../../../execution/architecture/detectCouplingGrowthAlerts');
+const { forecastStructuralDegradation }        = require('../../../../execution/architecture/forecastStructuralDegradation');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -70,6 +78,7 @@ const getEngineeringVolatilityHandler   = extractHandler(router, 'GET',  '/:id/e
 const getMaturityHandler                = extractHandler(router, 'GET',  '/:id/maturity');
 const getMaturityTrendHandler           = extractHandler(router, 'GET',  '/:id/maturity-trend');
 const getArchitectureHandler            = extractHandler(router, 'GET',  '/:id/architecture');
+const getArchForecastHandler            = extractHandler(router, 'GET',  '/:id/architecture/forecast');
 const postRegisterHandler               = extractHandler(router, 'POST', '/register');
 const postSyncHandler                   = extractHandler(router, 'POST', '/sync');
 
@@ -2146,5 +2155,289 @@ describe('repoRoutes GET /:id/architecture', () => {
     const res = makeRes();
     await getArchitectureHandler(req, res, next);
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+});
+
+// ── GET /:id/architecture/forecast ────────────────────────────────────────────
+
+describe('repoRoutes GET /:id/architecture/forecast', () => {
+  const MOCK_AF_REPO = { id: 7, fullName: 'owner/repo' };
+
+  const MOCK_AF_SNAP_OBJ = {
+    repoId: 7, repoName: 'owner/repo',
+    architectureScore: 75, architectureLevel: 'healthy',
+    snapshotAt: '2026-05-01T00:00:00.000Z',
+  };
+
+  const MOCK_AF_SNAP_ROW = { snapshot: MOCK_AF_SNAP_OBJ, snapshotAt: '2026-05-01T00:00:00.000Z' };
+
+  const MOCK_TIMELINE_DATA = {
+    scoreTimeline: [], driftEvents: [], levelTransitions: [],
+    couplingTimeline: [], implementationTimeline: [], riskSignalTimeline: [],
+    summary: {}, recommendations: [],
+  };
+
+  const MOCK_REGRESSION_DATA    = { regressionLevel: 'none',  regressionScore: 0 };
+  const MOCK_COUPLING_ALERT_DATA = { alertLevel:      'none',  couplingGrowthScore: 0 };
+  const MOCK_FORECAST_DATA = {
+    forecastLevel:   'none',
+    degradationRisk: 0,
+    confidenceLevel: 'low',
+    summary:         'Architecture appears stable.',
+    trajectory:      { scoreTrend: 'stable', averageScoreDelta: 0, projectedScore: 75, projectedLevel: 'healthy', interventionUrgency: 'none' },
+    riskFactors:     [],
+    structuralProjection: { couplingForecast: 'stable', implementationHealthForecast: 'stable', boundaryIntegrityForecast: 'stable' },
+    recommendations: [],
+  };
+
+  // Dispatches on SQL content: snapshot query vs repo ownership query.
+  function makeAFDb({ repoRows = [MOCK_AF_REPO], snapshotRows = [MOCK_AF_SNAP_ROW] } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM repo_architecture_snapshots')) return { rows: snapshotRows };
+        return { rows: repoRows };
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    buildArchitectureTrendTimeline.mockReturnValue(MOCK_TIMELINE_DATA);
+    detectArchitectureRegressions.mockReturnValue(MOCK_REGRESSION_DATA);
+    detectCouplingGrowthAlerts.mockReturnValue(MOCK_COUPLING_ALERT_DATA);
+    forecastStructuralDegradation.mockReturnValue(MOCK_FORECAST_DATA);
+    fetchRepositoryFiles.mockClear();
+  });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'abc' } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns 404 when repo is not found, inactive, or not owned by user', async () => {
+    const db  = makeAFDb({ repoRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('repo ownership query scopes to r.user_id', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('repo_architecture_snapshots'));
+    expect(repoCall[0]).toMatch(/user_id/);
+    expect(repoCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('repo ownership query filters r.is_active = true', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('repo_architecture_snapshots'));
+    expect(repoCall[0]).toContain('is_active');
+  });
+
+  it('snapshot query loads from repo_architecture_snapshots', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall).toBeDefined();
+  });
+
+  it('snapshot query is ordered newest-first and limited to 10', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall[0]).toContain('snapshot_at DESC');
+    expect(snapCall[0]).toContain('LIMIT 10');
+  });
+
+  it('snapshot query scopes to r.user_id', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall[0]).toMatch(/r\.user_id/);
+    expect(snapCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('calls buildArchitectureTrendTimeline with parsed snapshot objects', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({ snapshots: [MOCK_AF_SNAP_OBJ] });
+  });
+
+  it('calls detectArchitectureRegressions with timelineData', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(detectArchitectureRegressions).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TIMELINE_DATA })
+    );
+  });
+
+  it('calls detectCouplingGrowthAlerts with timelineData', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(detectCouplingGrowthAlerts).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TIMELINE_DATA })
+    );
+  });
+
+  it('calls forecastStructuralDegradation with timelineData, regressionData, couplingAlertData, and horizonSnapshots', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(forecastStructuralDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timelineData:      MOCK_TIMELINE_DATA,
+        regressionData:    MOCK_REGRESSION_DATA,
+        couplingAlertData: MOCK_COUPLING_ALERT_DATA,
+        horizonSnapshots:  3,
+      })
+    );
+  });
+
+  it('horizon query param overrides the default', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, query: { horizon: '5' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(forecastStructuralDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({ horizonSnapshots: 5 })
+    );
+  });
+
+  it('default horizonSnapshots is 3 when query param absent', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(forecastStructuralDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({ horizonSnapshots: 3 })
+    );
+  });
+
+  it('fewer than 2 snapshots does not crash — route returns a forecast response', async () => {
+    forecastStructuralDegradation.mockReturnValueOnce({ ...MOCK_FORECAST_DATA, forecastLevel: 'unknown' });
+    const db  = makeAFDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('forecastLevel', 'unknown');
+  });
+
+  it('rows with null snapshot field are filtered out before passing to helpers', async () => {
+    const nullRow = { snapshot: null, snapshotAt: '2026-05-01T00:00:00.000Z' };
+    const db  = makeAFDb({ snapshotRows: [nullRow, MOCK_AF_SNAP_ROW] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({ snapshots: [MOCK_AF_SNAP_OBJ] });
+  });
+
+  it('rows with non-object snapshot field are filtered out before passing to helpers', async () => {
+    const strRow = { snapshot: 'bad-json', snapshotAt: '2026-05-01T00:00:00.000Z' };
+    const db  = makeAFDb({ snapshotRows: [strRow, MOCK_AF_SNAP_ROW] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({ snapshots: [MOCK_AF_SNAP_OBJ] });
+  });
+
+  it('forwards DB error to next', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('response shape includes forecast fields spread at the top level', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('forecastLevel');
+    expect(body).toHaveProperty('degradationRisk');
+    expect(body).toHaveProperty('confidenceLevel');
+    expect(body).toHaveProperty('trajectory');
+    expect(body).toHaveProperty('riskFactors');
+    expect(body).toHaveProperty('structuralProjection');
+    expect(body).toHaveProperty('recommendations');
+  });
+
+  it('response shape includes timelineData, regressionData, and couplingAlertData', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('timelineData');
+    expect(body).toHaveProperty('regressionData');
+    expect(body).toHaveProperty('couplingAlertData');
+  });
+
+  it('_meta contains repoId, repoName, snapshotCount, source, and horizonSnapshots', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta).toMatchObject({
+      repoId:           7,
+      repoName:         MOCK_AF_REPO.fullName,
+      snapshotCount:    1,
+      source:           'repo_architecture_snapshots',
+      horizonSnapshots: 3,
+    });
+  });
+
+  it('_meta.snapshotCount reflects number of valid snapshot rows', async () => {
+    const db  = makeAFDb({ snapshotRows: [MOCK_AF_SNAP_ROW, MOCK_AF_SNAP_ROW] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(res.json.mock.calls[0][0]._meta.snapshotCount).toBe(2);
+  });
+
+  it('fetchRepositoryFiles is never called — no live GitHub fetch', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    expect(fetchRepositoryFiles).not.toHaveBeenCalled();
+  });
+
+  it('response does not expose token strings', async () => {
+    const db  = makeAFDb();
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getArchForecastHandler(req, res, next);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body).not.toContain('access_token');
+    expect(body).not.toContain('enc_token');
   });
 });

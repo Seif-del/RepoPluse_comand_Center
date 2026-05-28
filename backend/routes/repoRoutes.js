@@ -19,7 +19,11 @@ const { detectEngineeringVolatility }    = require('../../execution/risk/detectE
 const { scoreRepositoryMaturity }        = require('../../execution/risk/scoreRepositoryMaturity');
 const { getRepositoryMaturityTrend }     = require('../../execution/risk/getRepositoryMaturityTrend');
 const { fetchRepositoryFiles }               = require('../../execution/github/fetchRepositoryFiles');
-const { buildRepositoryArchitectureSnapshot } = require('../../execution/architecture/buildRepositoryArchitectureSnapshot');
+const { buildRepositoryArchitectureSnapshot }  = require('../../execution/architecture/buildRepositoryArchitectureSnapshot');
+const { buildArchitectureTrendTimeline }        = require('../../execution/architecture/buildArchitectureTrendTimeline');
+const { detectArchitectureRegressions }         = require('../../execution/architecture/detectArchitectureRegressions');
+const { detectCouplingGrowthAlerts }            = require('../../execution/architecture/detectCouplingGrowthAlerts');
+const { forecastStructuralDegradation }         = require('../../execution/architecture/forecastStructuralDegradation');
 
 const router = express.Router();
 
@@ -735,6 +739,81 @@ router.get('/:id/maturity-trend', async (req, res, next) => {
           dimensions:      s.dimensions,
         };
       }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/repos/:id/architecture/forecast
+// Returns a structural degradation forecast derived from persisted architecture snapshots.
+// Loads up to 10 recent snapshots, runs the full timeline → regression → coupling → forecast
+// pipeline, and returns forecast analytics together with request metadata.
+// No live GitHub calls are made — all data comes from repo_architecture_snapshots.
+router.get('/:id/architecture/forecast', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const horizonSnapshots = Number(req.query && req.query.horizon) || 3;
+    const db = req.app.locals.db;
+
+    const [repoResult, snapshotsResult] = await Promise.all([
+      db.query(
+        `SELECT id, github_full_name AS "fullName"
+         FROM repositories
+         WHERE id = $1 AND user_id = $2 AND is_active = true`,
+        [repoId, req.user.userId]
+      ),
+      db.query(
+        `SELECT s.snapshot, s.snapshot_at AS "snapshotAt"
+         FROM repo_architecture_snapshots s
+         JOIN repositories r ON r.id = s.repo_id
+         WHERE s.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY s.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    if (repoResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    const repo = repoResult.rows[0];
+
+    // Parse rows safely — JSONB columns are already objects from the pg driver,
+    // but filter any rows where the column is null or not a plain object.
+    const snapshots = snapshotsResult.rows
+      .map(function(r) { return r.snapshot; })
+      .filter(function(s) { return s != null && typeof s === 'object'; });
+
+    const snapshotCount = snapshots.length;
+
+    const timelineData      = buildArchitectureTrendTimeline({ snapshots });
+    const regressionData    = detectArchitectureRegressions({ timelineData });
+    const couplingAlertData = detectCouplingGrowthAlerts({ timelineData });
+    const forecast          = forecastStructuralDegradation({
+      timelineData,
+      regressionData,
+      couplingAlertData,
+      horizonSnapshots,
+    });
+
+    res.json({
+      ...forecast,
+      timelineData,
+      regressionData,
+      couplingAlertData,
+      _meta: {
+        repoId,
+        repoName:         repo.fullName,
+        snapshotCount,
+        source:           'repo_architecture_snapshots',
+        horizonSnapshots,
+      },
     });
   } catch (err) {
     next(err);
