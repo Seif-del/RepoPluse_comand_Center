@@ -1,0 +1,967 @@
+'use strict';
+
+const { buildRemediationRecommendations } = require('../../../../execution/architecture/buildRemediationRecommendations');
+
+// ─── Factories ───────────────────────────────────────────────────────────────
+
+function makeGovernance(level, score, extra = {}) {
+  return { governanceLevel: level, governanceScore: score, governanceRisks: [], ...extra };
+}
+function makeForecast(level, risk, extra = {}) {
+  return { forecastLevel: level, degradationRisk: risk, ...extra };
+}
+function makeRegression(level, score, patterns = {}) {
+  return { regressionLevel: level, regressionScore: score, patterns };
+}
+function makeCoupling(level, trend = {}, extra = {}) {
+  return { alertLevel: level, couplingTrend: trend, ...extra };
+}
+function makeAnomaly(level, patterns = {}) {
+  return { anomalyLevel: level, patterns };
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+describe('buildRemediationRecommendations', () => {
+
+  // 1. Module export
+  describe('module export', () => {
+    it('exports buildRemediationRecommendations as a function', () => {
+      expect(typeof buildRemediationRecommendations).toBe('function');
+    });
+  });
+
+  // 2. Null / non-object input
+  describe('null / non-object input', () => {
+    it('returns unknown for null', () => {
+      expect(buildRemediationRecommendations(null).recommendationLevel).toBe('unknown');
+    });
+    it('returns unknown for undefined', () => {
+      expect(buildRemediationRecommendations(undefined).recommendationLevel).toBe('unknown');
+    });
+    it('returns unknown for a string', () => {
+      expect(buildRemediationRecommendations('bad').recommendationLevel).toBe('unknown');
+    });
+    it('returns zero remediationScore for null', () => {
+      expect(buildRemediationRecommendations(null).remediationScore).toBe(0);
+    });
+  });
+
+  // 3. Empty object — no usable sources
+  describe('empty object (no sources)', () => {
+    let result;
+    beforeEach(() => { result = buildRemediationRecommendations({}); });
+
+    it('recommendationLevel is unknown', () => {
+      expect(result.recommendationLevel).toBe('unknown');
+    });
+    it('remediationScore is 0', () => {
+      expect(result.remediationScore).toBe(0);
+    });
+    it('confidenceLevel is low', () => {
+      expect(result.confidenceLevel).toBe('low');
+    });
+    it('recommendations is empty array', () => {
+      expect(result.recommendations).toEqual([]);
+    });
+    it('summary mentions insufficient data', () => {
+      expect(result.summary).toMatch(/Insufficient data/i);
+    });
+    it('actionPlan has empty buckets', () => {
+      expect(result.actionPlan).toEqual({ immediate: [], shortTerm: [], mediumTerm: [], longTerm: [] });
+    });
+    it('priorities has null highestPriorityRecommendationId', () => {
+      expect(result.priorities.highestPriorityRecommendationId).toBeNull();
+    });
+  });
+
+  // 4. Confidence levels
+  describe('confidence levels', () => {
+    it('1 source => low confidence', () => {
+      expect(buildRemediationRecommendations({
+        forecast: makeForecast('stable', 0)
+      }).confidenceLevel).toBe('low');
+    });
+
+    it('2 sources => medium confidence', () => {
+      expect(buildRemediationRecommendations({
+        forecast: makeForecast('stable', 0),
+        regression: makeRegression('none', 0)
+      }).confidenceLevel).toBe('medium');
+    });
+
+    it('4 sources => high confidence', () => {
+      expect(buildRemediationRecommendations({
+        forecast: makeForecast('stable', 0),
+        regression: makeRegression('none', 0),
+        anomaly: makeAnomaly('none'),
+        couplingAlert: makeCoupling('none')
+      }).confidenceLevel).toBe('high');
+    });
+
+    it('watchlistItem counts as a source', () => {
+      expect(buildRemediationRecommendations({
+        watchlistItem: { escalationLevel: 'monitor' },
+        forecast: makeForecast('stable', 0)
+      }).confidenceLevel).toBe('medium');
+    });
+
+    it('array source values do not count', () => {
+      expect(buildRemediationRecommendations({
+        governance: []
+      }).confidenceLevel).toBe('low');
+    });
+  });
+
+  // 5. Governance recommendations
+  describe('governance recommendations', () => {
+    it('critical governanceLevel generates critical priority rec', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('critical governance rec has governance category', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.category).toBe('governance');
+    });
+
+    it('weak governanceLevel generates high priority rec', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('weak', 40) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('strong governanceLevel generates no governance_remediation rec', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('strong', 80) });
+      expect(r.recommendations.find(x => x.id === 'governance_remediation')).toBeUndefined();
+    });
+
+    it('critical governance risk generates targeted rec', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('strong', 80, {
+          governanceRisks: [{ type: 'dim_c', severity: 'critical', source: 'architectureGovernance', summary: 'issue' }]
+        })
+      });
+      expect(r.recommendations.find(x => x.id === 'governance_risk_dim_c')).toBeDefined();
+    });
+
+    it('high governance risk generates targeted rec', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('strong', 80, {
+          governanceRisks: [{ type: 'dim_h', severity: 'high', source: 'maturityGovernance', summary: 'issue' }]
+        })
+      });
+      expect(r.recommendations.find(x => x.id === 'governance_risk_dim_h')).toBeDefined();
+    });
+
+    it('low-severity governance risk is skipped', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('strong', 80, {
+          governanceRisks: [{ type: 'dim_l', severity: 'low', source: 'behavioralGovernance', summary: 'low' }]
+        })
+      });
+      expect(r.recommendations.find(x => x.id === 'governance_risk_dim_l')).toBeUndefined();
+    });
+
+    it('max 3 targeted governance risk recs', () => {
+      const risks = ['r1','r2','r3','r4'].map(t => ({
+        type: t, severity: 'critical', source: 'architectureGovernance', summary: t
+      }));
+      const r = buildRemediationRecommendations({ governance: makeGovernance('strong', 80, { governanceRisks: risks }) });
+      expect(r.recommendations.filter(x => x.id.startsWith('governance_risk_')).length).toBe(3);
+    });
+
+    it('duplicate governance risk type produces only one rec', () => {
+      const risks = [
+        { type: 'dup', severity: 'critical', source: 'architectureGovernance', summary: 'first' },
+        { type: 'dup', severity: 'high',     source: 'maturityGovernance',     summary: 'second' },
+      ];
+      const r = buildRemediationRecommendations({ governance: makeGovernance('strong', 80, { governanceRisks: risks }) });
+      expect(r.recommendations.filter(x => x.id === 'governance_risk_dup').length).toBe(1);
+    });
+
+    it('governance risk category uses GOV_RISK_CATEGORY mapping for couplingAlerts', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('strong', 80, {
+          governanceRisks: [{ type: 'cp', severity: 'critical', source: 'couplingAlerts', summary: 'coupling' }]
+        })
+      });
+      const rec = r.recommendations.find(x => x.id === 'governance_risk_cp');
+      expect(rec).toBeDefined();
+      expect(rec.category).toBe('coupling');
+    });
+  });
+
+  // 6. Forecast recommendations
+  describe('forecast recommendations', () => {
+    it('immediate interventionUrgency generates forecast_immediate_intervention critical', () => {
+      const r = buildRemediationRecommendations({
+        forecast: makeForecast('critical', 90, { trajectory: { interventionUrgency: 'immediate' } })
+      });
+      const rec = r.recommendations.find(x => x.id === 'forecast_immediate_intervention');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('immediate urgency short-circuits — only one forecast rec returned', () => {
+      const r = buildRemediationRecommendations({
+        forecast: makeForecast('critical', 90, { trajectory: { interventionUrgency: 'immediate' } })
+      });
+      expect(r.recommendations.filter(x => x.id.startsWith('forecast_')).length).toBe(1);
+    });
+
+    it('critical forecastLevel generates forecast_stabilization critical', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('critical', 85) });
+      const rec = r.recommendations.find(x => x.id === 'forecast_stabilization');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('degrading forecastLevel generates forecast_stabilization high', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('degrading', 60) });
+      const rec = r.recommendations.find(x => x.id === 'forecast_stabilization');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('watch forecastLevel generates forecast_watch medium', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('watch', 35) });
+      const rec = r.recommendations.find(x => x.id === 'forecast_watch');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('medium');
+    });
+
+    it('stable forecastLevel generates no forecast rec', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('stable', 5) });
+      expect(r.recommendations.filter(x => x.id.startsWith('forecast_'))).toHaveLength(0);
+    });
+  });
+
+  // 7. Regression recommendations
+  describe('regression recommendations', () => {
+    it('regression level generates regression_review high', () => {
+      const r = buildRemediationRecommendations({ regression: makeRegression('regression', 55) });
+      const rec = r.recommendations.find(x => x.id === 'regression_review');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('critical regression level generates regression_review critical', () => {
+      const r = buildRemediationRecommendations({ regression: makeRegression('critical', 20) });
+      const rec = r.recommendations.find(x => x.id === 'regression_review');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('levelDegradationCount >= 2 generates regression_governance high', () => {
+      const r = buildRemediationRecommendations({
+        regression: makeRegression('watch', 70, { levelDegradationCount: 3 })
+      });
+      const rec = r.recommendations.find(x => x.id === 'regression_governance');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('levelDegradationCount < 2 does not generate regression_governance', () => {
+      const r = buildRemediationRecommendations({
+        regression: makeRegression('watch', 70, { levelDegradationCount: 1 })
+      });
+      expect(r.recommendations.find(x => x.id === 'regression_governance')).toBeUndefined();
+    });
+
+    it('recurringRiskCount >= 2 generates regression_recurring high', () => {
+      const r = buildRemediationRecommendations({
+        regression: makeRegression('watch', 70, { recurringRiskCount: 2 })
+      });
+      const rec = r.recommendations.find(x => x.id === 'regression_recurring');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('watch level with no patterns generates no regression recs', () => {
+      const r = buildRemediationRecommendations({ regression: makeRegression('watch', 70) });
+      expect(r.recommendations.filter(x => x.id.startsWith('regression_'))).toHaveLength(0);
+    });
+  });
+
+  // 8. Coupling recommendations
+  describe('coupling recommendations', () => {
+    it('circularDependencyDelta > 0 generates coupling_decoupling critical', () => {
+      const r = buildRemediationRecommendations({
+        couplingAlert: makeCoupling('watch', { circularDependencyDelta: 2 })
+      });
+      const rec = r.recommendations.find(x => x.id === 'coupling_decoupling');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('alertLevel critical (no delta) generates coupling_decoupling critical', () => {
+      const r = buildRemediationRecommendations({ couplingAlert: makeCoupling('critical', {}) });
+      const rec = r.recommendations.find(x => x.id === 'coupling_decoupling');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('boundaryViolationDelta > 0 generates coupling_boundary high', () => {
+      const r = buildRemediationRecommendations({
+        couplingAlert: makeCoupling('watch', { boundaryViolationDelta: 1 })
+      });
+      const rec = r.recommendations.find(x => x.id === 'coupling_boundary');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('boundaryViolationDelta > 0 with critical level escalates coupling_boundary to critical', () => {
+      const r = buildRemediationRecommendations({
+        couplingAlert: makeCoupling('critical', { boundaryViolationDelta: 3 })
+      });
+      const rec = r.recommendations.find(x => x.id === 'coupling_boundary');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('acceleration > 0 generates coupling_acceleration high', () => {
+      const r = buildRemediationRecommendations({
+        couplingAlert: makeCoupling('watch', { acceleration: 0.5 })
+      });
+      const rec = r.recommendations.find(x => x.id === 'coupling_acceleration');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('pressureEscalated true generates coupling_acceleration high', () => {
+      const r = buildRemediationRecommendations({
+        couplingAlert: makeCoupling('watch', { pressureEscalated: true })
+      });
+      const rec = r.recommendations.find(x => x.id === 'coupling_acceleration');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('alertLevel alert with no trend signals generates coupling_review high', () => {
+      const r = buildRemediationRecommendations({ couplingAlert: makeCoupling('alert', {}) });
+      const rec = r.recommendations.find(x => x.id === 'coupling_review');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('alertLevel watch with no trend signals generates coupling_review medium', () => {
+      const r = buildRemediationRecommendations({ couplingAlert: makeCoupling('watch', {}) });
+      const rec = r.recommendations.find(x => x.id === 'coupling_review');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('medium');
+    });
+  });
+
+  // 9. Anomaly recommendations
+  describe('anomaly recommendations', () => {
+    it('scoreCollapseCount > 0 generates anomaly_investigation critical', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('critical', { scoreCollapseCount: 2 }) });
+      const rec = r.recommendations.find(x => x.id === 'anomaly_investigation');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('volatilityOutlierCount > 0 with non-critical level => anomaly_observability medium', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('anomaly', { volatilityOutlierCount: 3 }) });
+      const rec = r.recommendations.find(x => x.id === 'anomaly_observability');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('medium');
+    });
+
+    it('volatilityOutlierCount > 0 with critical level => anomaly_observability high', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('critical', { volatilityOutlierCount: 2 }) });
+      const rec = r.recommendations.find(x => x.id === 'anomaly_observability');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('implementationDebtSurgeCount > 0 generates anomaly_implementation high', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('watch', { implementationDebtSurgeCount: 1 }) });
+      const rec = r.recommendations.find(x => x.id === 'anomaly_implementation');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('anomaly_implementation category is implementation', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('watch', { implementationDebtSurgeCount: 1 }) });
+      expect(r.recommendations.find(x => x.id === 'anomaly_implementation').category).toBe('implementation');
+    });
+
+    it('empty patterns object generates no anomaly recs', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('watch', {}) });
+      expect(r.recommendations.filter(x => x.id.startsWith('anomaly_'))).toHaveLength(0);
+    });
+
+    it('missing patterns object generates no anomaly recs', () => {
+      const r = buildRemediationRecommendations({ anomaly: { anomalyLevel: 'watch' } });
+      expect(r.recommendations.filter(x => x.id.startsWith('anomaly_'))).toHaveLength(0);
+    });
+  });
+
+  // 10. Snapshot recommendations
+  describe('snapshot recommendations', () => {
+    it('unresolvedFrontendCallCount >= 5 generates snapshot_api_linkage high', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { apiLinkage: { coverage: { unresolvedFrontendCallCount: 7 } } }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_api_linkage');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('unresolvedFrontendCallCount 1-4 generates snapshot_api_linkage medium', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { apiLinkage: { coverage: { unresolvedFrontendCallCount: 3 } } }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_api_linkage');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('medium');
+    });
+
+    it('unresolvedFrontendCalls array fallback works (>= 5 items => high)', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: {
+          apiLinkage: {
+            coverage: { unresolvedFrontendCallCount: 0 },
+            unresolvedFrontendCalls: ['a','b','c','d','e','f']
+          }
+        }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_api_linkage');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('methodMismatchCount > 0 generates snapshot_contract high', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { apiLinkage: { coverage: { methodMismatchCount: 2 } } }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_contract');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('methodMismatches array fallback generates snapshot_contract', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: {
+          apiLinkage: {
+            coverage: { methodMismatchCount: 0 },
+            methodMismatches: ['GET/POST mismatch']
+          }
+        }
+      });
+      expect(r.recommendations.find(x => x.id === 'snapshot_contract')).toBeDefined();
+    });
+
+    it('boundary violations with critical/high severity => snapshot_boundary high', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: {
+          boundaryVerification: { violations: [{ severity: 'high' }, { severity: 'low' }] }
+        }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_boundary');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('boundary violations without critical/high severity => snapshot_boundary medium', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: {
+          boundaryVerification: { violations: [{ severity: 'low' }, { severity: 'low' }] }
+        }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_boundary');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('medium');
+    });
+
+    it('completenessScore < 30 generates snapshot_implementation high', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { implementationCompleteness: { completenessScore: 20 } }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_implementation');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('high');
+    });
+
+    it('completenessScore 30-49 generates snapshot_implementation medium', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { implementationCompleteness: { completenessScore: 40 } }
+      });
+      const rec = r.recommendations.find(x => x.id === 'snapshot_implementation');
+      expect(rec).toBeDefined();
+      expect(rec.priority).toBe('medium');
+    });
+
+    it('completenessScore 0 generates no snapshot_implementation rec', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { implementationCompleteness: { completenessScore: 0 } }
+      });
+      expect(r.recommendations.find(x => x.id === 'snapshot_implementation')).toBeUndefined();
+    });
+
+    it('completenessScore >= 50 generates no snapshot_implementation rec', () => {
+      const r = buildRemediationRecommendations({
+        architectureSnapshot: { implementationCompleteness: { completenessScore: 70 } }
+      });
+      expect(r.recommendations.find(x => x.id === 'snapshot_implementation')).toBeUndefined();
+    });
+  });
+
+  // 11. Deduplication
+  describe('deduplication', () => {
+    it('duplicate governance risk types produce only one targeted rec', () => {
+      const risks = [
+        { type: 'dup2', severity: 'critical', source: 'architectureGovernance', summary: 'first' },
+        { type: 'dup2', severity: 'high',     source: 'maturityGovernance',     summary: 'second' },
+      ];
+      const r = buildRemediationRecommendations({ governance: makeGovernance('strong', 80, { governanceRisks: risks }) });
+      expect(r.recommendations.filter(x => x.id === 'governance_risk_dup2').length).toBe(1);
+    });
+
+    it('different source generators produce distinct recs (no false dedup)', () => {
+      const r = buildRemediationRecommendations({
+        anomaly: makeAnomaly('critical', { scoreCollapseCount: 1 }),
+        architectureSnapshot: { implementationCompleteness: { completenessScore: 25 } }
+      });
+      expect(r.recommendations.find(x => x.id === 'anomaly_investigation')).toBeDefined();
+      expect(r.recommendations.find(x => x.id === 'snapshot_implementation')).toBeDefined();
+    });
+
+    it('governance base rec and targeted risk rec both survive (different titles)', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 15, {
+          governanceRisks: [{ type: 'arch_risk', severity: 'critical', source: 'architectureGovernance', summary: 'Arch issue' }]
+        })
+      });
+      expect(r.recommendations.find(x => x.id === 'governance_remediation')).toBeDefined();
+      expect(r.recommendations.find(x => x.id === 'governance_risk_arch_risk')).toBeDefined();
+    });
+  });
+
+  // 12. Sorting
+  describe('sorting', () => {
+    it('critical recommendations appear before high', () => {
+      const r = buildRemediationRecommendations({
+        forecast: makeForecast('degrading', 60),
+        regression: makeRegression('critical', 20),
+      });
+      const priorities = r.recommendations.map(x => x.priority);
+      const firstHighIdx  = priorities.indexOf('high');
+      const lastCritIdx   = priorities.lastIndexOf('critical');
+      expect(lastCritIdx).toBeLessThan(firstHighIdx);
+    });
+
+    it('same-priority recs sorted by id ASC', () => {
+      const r = buildRemediationRecommendations({
+        forecast: makeForecast('degrading', 60),
+        regression: makeRegression('regression', 50),
+      });
+      const highRecs = r.recommendations.filter(x => x.priority === 'high');
+      for (let i = 1; i < highRecs.length; i++) {
+        expect(highRecs[i - 1].id <= highRecs[i].id).toBe(true);
+      }
+    });
+
+    it('no null entries in recommendations array', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+        regression: makeRegression('critical', 20),
+      });
+      r.recommendations.forEach(rec => expect(rec).not.toBeNull());
+    });
+  });
+
+  // 13. Max recommendation limit
+  describe('max recommendation limit (10)', () => {
+    it('never returns more than 10 recommendations regardless of signal count', () => {
+      const risks = ['r1','r2','r3','r4','r5'].map(t => ({
+        type: t, severity: 'critical', source: 'architectureGovernance', summary: t
+      }));
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10, { governanceRisks: risks }),
+        forecast: makeForecast('critical', 90, { trajectory: { interventionUrgency: 'immediate' } }),
+        regression: makeRegression('critical', 20, { levelDegradationCount: 3, recurringRiskCount: 3 }),
+        couplingAlert: makeCoupling('critical', { circularDependencyDelta: 2, boundaryViolationDelta: 2, acceleration: 1 }),
+        anomaly: makeAnomaly('critical', { scoreCollapseCount: 2, volatilityOutlierCount: 2, implementationDebtSurgeCount: 1 }),
+        architectureSnapshot: {
+          apiLinkage: { coverage: { unresolvedFrontendCallCount: 10, methodMismatchCount: 3 } },
+          boundaryVerification: { violations: [{ severity: 'critical' }] },
+          implementationCompleteness: { completenessScore: 20 }
+        }
+      });
+      expect(r.recommendations.length).toBeLessThanOrEqual(10);
+    });
+  });
+
+  // 14. remediationScore
+  describe('remediationScore', () => {
+    it('1 critical rec => score 25', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.remediationScore).toBe(25);
+    });
+
+    it('1 high rec => score 15', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('weak', 40) });
+      expect(r.remediationScore).toBe(15);
+    });
+
+    it('1 medium rec => score 8', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('watch', 30) });
+      expect(r.remediationScore).toBe(8);
+    });
+
+    it('score is capped at 100', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10, {
+          governanceRisks: ['x1','x2','x3'].map(t => ({
+            type: t, severity: 'critical', source: 'architectureGovernance', summary: t
+          }))
+        }),
+        forecast: makeForecast('critical', 90, { trajectory: { interventionUrgency: 'immediate' } }),
+        anomaly: makeAnomaly('critical', { scoreCollapseCount: 3, volatilityOutlierCount: 2 }),
+        regression: makeRegression('critical', 20, { levelDegradationCount: 3, recurringRiskCount: 3 }),
+      });
+      expect(r.remediationScore).toBeLessThanOrEqual(100);
+    });
+
+    it('score equals sum of PRI_SCORE values when below cap', () => {
+      // 1 critical (25) + 1 high (15) = 40
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('degrading', 60),
+      });
+      const critCount = r.recommendations.filter(x => x.priority === 'critical').length;
+      const highCount = r.recommendations.filter(x => x.priority === 'high').length;
+      const medCount  = r.recommendations.filter(x => x.priority === 'medium').length;
+      const expected  = Math.min(critCount * 25 + highCount * 15 + medCount * 8, 100);
+      expect(r.remediationScore).toBe(expected);
+    });
+  });
+
+  // 15. recommendationLevel thresholds
+  describe('recommendationLevel thresholds', () => {
+    it('score >= 75 => critical level', () => {
+      // 3 criticals = 75
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90, { trajectory: { interventionUrgency: 'immediate' } }),
+        anomaly: makeAnomaly('critical', { scoreCollapseCount: 1 }),
+      });
+      expect(r.remediationScore).toBe(75);
+      expect(r.recommendationLevel).toBe('critical');
+    });
+
+    it('score 50-74 => high level', () => {
+      // 2 criticals = 50
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+      });
+      expect(r.remediationScore).toBe(50);
+      expect(r.recommendationLevel).toBe('high');
+    });
+
+    it('score 25-49 => medium level', () => {
+      // 1 critical = 25
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.remediationScore).toBe(25);
+      expect(r.recommendationLevel).toBe('medium');
+    });
+
+    it('score 1-24 => low level', () => {
+      // 1 medium (forecast_watch) = 8
+      const r = buildRemediationRecommendations({ forecast: makeForecast('watch', 30) });
+      expect(r.remediationScore).toBe(8);
+      expect(r.recommendationLevel).toBe('low');
+    });
+
+    it('score 0 with sources (no recs) => none level', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('stable', 5) });
+      expect(r.remediationScore).toBe(0);
+      expect(r.recommendationLevel).toBe('none');
+    });
+  });
+
+  // 16. Action plan buckets
+  describe('action plan buckets', () => {
+    it('critical recs go to immediate bucket', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.actionPlan.immediate.length).toBeGreaterThan(0);
+    });
+
+    it('high recs go to shortTerm bucket', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('weak', 40) });
+      expect(r.actionPlan.shortTerm.length).toBeGreaterThan(0);
+    });
+
+    it('medium recs go to mediumTerm bucket', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('watch', 30) });
+      expect(r.actionPlan.mediumTerm.length).toBeGreaterThan(0);
+    });
+
+    it('action plan items have title and reason fields', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      const item = r.actionPlan.immediate[0];
+      expect(typeof item.title).toBe('string');
+      expect(typeof item.reason).toBe('string');
+    });
+
+    it('longTerm bucket is always an array', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(Array.isArray(r.actionPlan.longTerm)).toBe(true);
+    });
+  });
+
+  // 17. Priorities object
+  describe('priorities object', () => {
+    it('highestPriorityCategory is from top recommendation', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.priorities.highestPriorityCategory).toBe('governance');
+    });
+
+    it('highestPriorityRecommendationId is from top recommendation', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.priorities.highestPriorityRecommendationId).toBe('governance_remediation');
+    });
+
+    it('criticalRecommendationCount matches actual count', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+      });
+      const actual = r.recommendations.filter(x => x.priority === 'critical').length;
+      expect(r.priorities.criticalRecommendationCount).toBe(actual);
+    });
+
+    it('highRecommendationCount matches actual count', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('weak', 40),
+        forecast: makeForecast('degrading', 60),
+      });
+      const actual = r.recommendations.filter(x => x.priority === 'high').length;
+      expect(r.priorities.highRecommendationCount).toBe(actual);
+    });
+  });
+
+  // 18. Estimated impact
+  describe('estimatedImpact', () => {
+    it('governance category recs add 30 to governanceImpact base', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      // hasGov=true, critCount=1, highCount=0 => clamp(30 + 15 + 0, 0, 100) = 45
+      expect(r.estimatedImpact.governanceImpact).toBe(45);
+    });
+
+    it('no governance category recs => lower governanceImpact', () => {
+      // forecast degrading => 1 high rec in 'architecture' category, no 'governance' category
+      const r = buildRemediationRecommendations({ forecast: makeForecast('degrading', 60) });
+      // hasGov=false, critCount=0, highCount=1 => clamp(0 + 0 + 8, 0, 100) = 8
+      expect(r.estimatedImpact.governanceImpact).toBe(8);
+    });
+
+    it('architecture category recs add 25 to architectureImpact base', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('critical', 90) });
+      // hasArch=true, hasCoupling=false, totalScore=25 => clamp(25 + 0 + round(25*0.4), 0, 100) = clamp(25+10,0,100) = 35
+      expect(r.estimatedImpact.architectureImpact).toBe(35);
+    });
+
+    it('coupling category recs add 20 to architectureImpact', () => {
+      // need at least one coupling rec and one architecture rec
+      const r = buildRemediationRecommendations({
+        couplingAlert: makeCoupling('critical', {}),
+        forecast: makeForecast('watch', 30),
+      });
+      expect(r.estimatedImpact.architectureImpact).toBeGreaterThanOrEqual(20);
+    });
+
+    it('estimatedImpact.confidence matches result confidenceLevel', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.estimatedImpact.confidence).toBe(r.confidenceLevel);
+    });
+
+    it('riskReduction is between 0 and 100', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+        regression: makeRegression('critical', 20),
+      });
+      expect(r.estimatedImpact.riskReduction).toBeGreaterThanOrEqual(0);
+      expect(r.estimatedImpact.riskReduction).toBeLessThanOrEqual(100);
+    });
+  });
+
+  // 19. Summary strings
+  describe('summary strings', () => {
+    it('unknown => mentions insufficient data', () => {
+      expect(buildRemediationRecommendations({}).summary).toMatch(/Insufficient data/i);
+    });
+
+    it('none level => mentions no remediation required', () => {
+      const r = buildRemediationRecommendations({ forecast: makeForecast('stable', 0) });
+      expect(r.recommendationLevel).toBe('none');
+      expect(r.summary).toMatch(/No remediation required/i);
+    });
+
+    it('medium level summary mentions medium priority', () => {
+      // 1 critical = score 25 => medium
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.recommendationLevel).toBe('medium');
+      expect(r.summary).toMatch(/Medium priority remediation/i);
+    });
+
+    it('high level summary mentions high priority', () => {
+      // 2 criticals = score 50 => high
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+      });
+      expect(r.recommendationLevel).toBe('high');
+      expect(r.summary).toMatch(/High priority remediation/i);
+    });
+
+    it('critical level summary mentions critical', () => {
+      // 3 criticals = score 75 => critical
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90, { trajectory: { interventionUrgency: 'immediate' } }),
+        anomaly: makeAnomaly('critical', { scoreCollapseCount: 1 }),
+      });
+      expect(r.recommendationLevel).toBe('critical');
+      expect(r.summary).toMatch(/Critical remediation required/i);
+    });
+
+    it('summary includes remediationScore and confidenceLevel', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+      expect(r.summary).toContain(String(r.remediationScore));
+      expect(r.summary).toContain(r.confidenceLevel);
+    });
+  });
+
+  // 20. Non-mutation
+  describe('non-mutation', () => {
+    it('does not mutate the input object', () => {
+      const input = {
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+      };
+      const snapshot = JSON.stringify(input);
+      buildRemediationRecommendations(input);
+      expect(JSON.stringify(input)).toBe(snapshot);
+    });
+
+    it('does not mutate governanceRisks array', () => {
+      const risks = [
+        { type: 'rr', severity: 'critical', source: 'architectureGovernance', summary: 'rr' }
+      ];
+      buildRemediationRecommendations({ governance: makeGovernance('strong', 80, { governanceRisks: risks }) });
+      expect(risks.length).toBe(1);
+    });
+  });
+
+  // 21. Deterministic output
+  describe('deterministic output', () => {
+    it('same input produces identical output on repeated calls', () => {
+      const input = {
+        governance: makeGovernance('critical', 15, {
+          governanceRisks: [{ type: 'arch', severity: 'critical', source: 'architectureGovernance', summary: 'arch' }]
+        }),
+        forecast: makeForecast('degrading', 60),
+        regression: makeRegression('regression', 55, { levelDegradationCount: 2 }),
+        couplingAlert: makeCoupling('alert', { circularDependencyDelta: 1 }),
+        anomaly: makeAnomaly('critical', { scoreCollapseCount: 1, volatilityOutlierCount: 2 }),
+      };
+      const r1 = buildRemediationRecommendations(input);
+      const r2 = buildRemediationRecommendations(input);
+      expect(JSON.stringify(r1)).toBe(JSON.stringify(r2));
+    });
+  });
+
+  // 22. Missing / null field safety
+  describe('missing and null field safety', () => {
+    it('governance with null governanceRisks does not throw', () => {
+      expect(() => buildRemediationRecommendations({
+        governance: { governanceLevel: 'critical', governanceScore: 10, governanceRisks: null }
+      })).not.toThrow();
+    });
+
+    it('forecast with missing trajectory does not throw', () => {
+      expect(() => buildRemediationRecommendations({
+        forecast: { forecastLevel: 'critical', degradationRisk: 80 }
+      })).not.toThrow();
+    });
+
+    it('regression with null patterns does not throw', () => {
+      expect(() => buildRemediationRecommendations({
+        regression: { regressionLevel: 'critical', regressionScore: 20, patterns: null }
+      })).not.toThrow();
+    });
+
+    it('couplingAlert with missing couplingTrend does not throw', () => {
+      expect(() => buildRemediationRecommendations({
+        couplingAlert: { alertLevel: 'critical' }
+      })).not.toThrow();
+    });
+
+    it('architectureSnapshot with null sub-fields does not throw', () => {
+      expect(() => buildRemediationRecommendations({
+        architectureSnapshot: { apiLinkage: null, boundaryVerification: null, implementationCompleteness: null }
+      })).not.toThrow();
+    });
+
+    it('array source does not count as a usable source', () => {
+      expect(buildRemediationRecommendations({ governance: [] }).recommendationLevel).toBe('unknown');
+    });
+
+    it('nested null evidence fields are tolerated', () => {
+      expect(() => buildRemediationRecommendations({
+        anomaly: { anomalyLevel: null, patterns: null }
+      })).not.toThrow();
+    });
+  });
+
+  // 23. Recommendation structure
+  describe('recommendation structure', () => {
+    const requiredFields = ['id', 'category', 'priority', 'title', 'rationale', 'expectedOutcome', 'evidence'];
+
+    it('each recommendation has all required fields', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('degrading', 60),
+        couplingAlert: makeCoupling('critical', { circularDependencyDelta: 1 }),
+      });
+      r.recommendations.forEach(rec => {
+        requiredFields.forEach(f => expect(rec).toHaveProperty(f));
+      });
+    });
+
+    it('all priorities are valid values', () => {
+      const valid = new Set(['critical', 'high', 'medium', 'low']);
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('watch', 30),
+        regression: makeRegression('regression', 55),
+        couplingAlert: makeCoupling('watch', {}),
+      });
+      r.recommendations.forEach(rec => {
+        expect(valid.has(rec.priority)).toBe(true);
+      });
+    });
+
+    it('evidence is an object on every rec', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 10),
+        forecast: makeForecast('critical', 90),
+      });
+      r.recommendations.forEach(rec => {
+        expect(rec.evidence !== null && typeof rec.evidence === 'object').toBe(true);
+      });
+    });
+  });
+
+});
