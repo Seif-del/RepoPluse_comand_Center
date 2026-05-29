@@ -16,6 +16,11 @@ jest.mock('../../../../execution/risk/scorePullRequestHealth');
 jest.mock('../../../../execution/risk/scoreRepositoryMaturity');
 jest.mock('../../../../execution/risk/buildPortfolioMaturityIndex');
 jest.mock('../../../../execution/architecture/buildPortfolioArchitectureIntelligence');
+jest.mock('../../../../execution/architecture/buildArchitectureTrendTimeline');
+jest.mock('../../../../execution/architecture/detectArchitectureRegressions');
+jest.mock('../../../../execution/architecture/detectCouplingGrowthAlerts');
+jest.mock('../../../../execution/architecture/forecastStructuralDegradation');
+jest.mock('../../../../execution/architecture/buildPortfolioForecastingIntelligence');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +38,11 @@ const { scorePullRequestHealth }             = require('../../../../execution/ri
 const { scoreRepositoryMaturity }            = require('../../../../execution/risk/scoreRepositoryMaturity');
 const { buildPortfolioMaturityIndex }        = require('../../../../execution/risk/buildPortfolioMaturityIndex');
 const { buildPortfolioArchitectureIntelligence } = require('../../../../execution/architecture/buildPortfolioArchitectureIntelligence');
+const { buildArchitectureTrendTimeline }         = require('../../../../execution/architecture/buildArchitectureTrendTimeline');
+const { detectArchitectureRegressions }          = require('../../../../execution/architecture/detectArchitectureRegressions');
+const { detectCouplingGrowthAlerts }             = require('../../../../execution/architecture/detectCouplingGrowthAlerts');
+const { forecastStructuralDegradation }          = require('../../../../execution/architecture/forecastStructuralDegradation');
+const { buildPortfolioForecastingIntelligence }  = require('../../../../execution/architecture/buildPortfolioForecastingIntelligence');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -103,167 +113,334 @@ function makeDb(rows = []) {
 
 // ── GET /forecast ─────────────────────────────────────────────────────────────
 
+const MOCK_SNAP_ENTRY = {
+  snapshotAt:                 '2026-05-27T08:00:00.000Z',
+  architectureHealthScore:    75,
+  architectureHealthLevel:    'watch',
+  confidenceLevel:            'high',
+  metrics:                    {},
+  dependencyGraph:            {},
+  boundaryVerification:       {},
+  apiLinkage:                 {},
+  implementationCompleteness: {},
+};
+
+const MOCK_FORECAST_ROW = {
+  repoId:          1,
+  repoName:        'org/repo-1',
+  snapshotHistory: [
+    MOCK_SNAP_ENTRY,
+    { ...MOCK_SNAP_ENTRY, snapshotAt: '2026-05-26T08:00:00.000Z', architectureHealthScore: 70 },
+  ],
+};
+
+const MOCK_NO_SNAP_FORECAST_ROW = {
+  repoId:          2,
+  repoName:        'org/repo-2',
+  snapshotHistory: [],
+};
+
+const MOCK_REPO_FORECAST_OUTPUT = {
+  forecastLevel:        'watch',
+  degradationRisk:      20,
+  confidenceLevel:      'medium',
+  summary:              'Some structural risk detected.',
+  trajectory:           { scoreTrend: 'stable', averageScoreDelta: -2, projectedScore: 68, projectedLevel: 'watch', interventionUrgency: 'none' },
+  riskFactors:          [],
+  structuralProjection: { couplingForecast: 'stable', implementationHealthForecast: 'stable', boundaryIntegrityForecast: 'stable' },
+  recommendations:      [],
+};
+
+const MOCK_TREND_TIMELINE = {
+  timeline:         [],
+  scoreTimeline:    [],
+  levelTransitions: [],
+  driftEvents:      [],
+  summary:          'stable',
+  recommendations:  [],
+};
+
+const MOCK_REGRESSIONS    = { regressionLevel: 'none', regressionScore: 0, confidenceLevel: 'medium', regressions: [], recommendations: [] };
+const MOCK_COUPLING_ALERTS = { alertLevel: 'none', couplingGrowthScore: 0, confidenceLevel: 'medium', alerts: [], recommendations: [] };
+
+const MOCK_PORTFOLIO_FORECAST_RESULT = {
+  portfolioForecastLevel:    'watch',
+  portfolioForecastScore:    30,
+  confidenceLevel:           'medium',
+  summary:                   'Portfolio structural forecast: low risk.',
+  forecastDistribution:      { healthy: 1, watch: 0, weak: 0, risky: 0, unknown: 0 },
+  projectedRiskRepos:        [],
+  projectedHotspots:         [],
+  projectedCouplingPressure: { level: 'low' },
+  projectedGovernanceRisk:   { level: 'low' },
+  trendForecast:             { direction: 'stable' },
+  recommendations:           [],
+  benchmarking:              { topPerformers: [], atRisk: [] },
+};
+
 describe('portfolioRoutes GET /forecast', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    getPortfolioForecast.mockReturnValue(MOCK_RESULT);
+    buildArchitectureTrendTimeline.mockReturnValue(MOCK_TREND_TIMELINE);
+    detectArchitectureRegressions.mockReturnValue(MOCK_REGRESSIONS);
+    detectCouplingGrowthAlerts.mockReturnValue(MOCK_COUPLING_ALERTS);
+    forecastStructuralDegradation.mockReturnValue(MOCK_REPO_FORECAST_OUTPUT);
+    buildPortfolioForecastingIntelligence.mockReturnValue(MOCK_PORTFOLIO_FORECAST_RESULT);
   });
 
-  it('returns the forecast object from getPortfolioForecast', async () => {
-    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+  it('returns { ...portfolioForecast, repoForecasts, _cache } on success', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    expect(res.json).toHaveBeenCalledWith(MOCK_RESULT);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('portfolioForecastLevel');
+    expect(body).toHaveProperty('repoForecasts');
+    expect(body).toHaveProperty('_cache');
+    expect(next).not.toHaveBeenCalled();
   });
 
-  it('calls getPortfolioForecast with an array of repo summaries', async () => {
+  it('calls buildPortfolioForecastingIntelligence with { repoForecasts }', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledWith({
+      repoForecasts: expect.any(Array),
+    });
+  });
+
+  it('calls buildArchitectureTrendTimeline once per forecasted repo', async () => {
     const rows = [
-      { repoId: 1, label: 'critical', trend: 'worsening', recentLabels: ['critical', 'critical', 'critical'] },
-      { repoId: 2, label: 'healthy',  trend: 'stable',    recentLabels: ['healthy'] },
+      MOCK_FORECAST_ROW,
+      { ...MOCK_FORECAST_ROW, repoId: 3, repoName: 'org/repo-3' },
     ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
+    const db  = makeDb(rows);
+    const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    expect(getPortfolioForecast).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ repoId: 1, trajectory: 'escalating' }),
-        expect.objectContaining({ repoId: 2, trajectory: 'stable' }),
-      ])
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes { snapshots } to buildArchitectureTrendTimeline', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({
+      snapshots: MOCK_FORECAST_ROW.snapshotHistory,
+    });
+  });
+
+  it('passes { timelineData } to detectArchitectureRegressions (cached pipeline)', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(detectArchitectureRegressions).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TREND_TIMELINE })
     );
   });
 
-  it('passes empty array when no active repos exist', async () => {
-    const req = makeReq({ app: { locals: { db: makeDb([]) } } });
+  it('passes { timelineData } to detectCouplingGrowthAlerts (cached pipeline)', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    expect(getPortfolioForecast).toHaveBeenCalledWith([]);
+    expect(detectCouplingGrowthAlerts).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TREND_TIMELINE })
+    );
   });
 
-  it('calls next on db error', async () => {
-    const db = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+  it('passes { snapshots, timelineData } to forecastStructuralDegradation (cached pipeline)', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(forecastStructuralDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TREND_TIMELINE })
+    );
+  });
+
+  it('repos with 0 snapshots produce unknown repoForecast', async () => {
+    const db  = makeDb([MOCK_NO_SNAP_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
+    expect(call[0].repoForecasts[0]).toMatchObject({
+      repoId:          MOCK_NO_SNAP_FORECAST_ROW.repoId,
+      forecastLevel:   'unknown',
+      confidenceLevel: 'low',
+    });
+  });
+
+  it('repos with 1 snapshot produce unknown repoForecast and skip pipeline', async () => {
+    const oneSnap = { ...MOCK_NO_SNAP_FORECAST_ROW, snapshotHistory: [MOCK_SNAP_ENTRY] };
+    const db  = makeDb([oneSnap]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
+    expect(call[0].repoForecasts[0].forecastLevel).toBe('unknown');
+    expect(buildArchitectureTrendTimeline).not.toHaveBeenCalled();
+  });
+
+  it('_cache has correct source, repoCount, forecastedRepoCount, missingSnapshotCount', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW, MOCK_NO_SNAP_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toEqual({
+      source:               'repo_architecture_snapshots',
+      repoCount:            2,
+      forecastedRepoCount:  1,
+      missingSnapshotCount: 1,
+    });
+  });
+
+  it('_cache has missingSnapshotCount 0 when all repos have enough snapshots', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache.missingSnapshotCount).toBe(0);
+    expect(body._cache.forecastedRepoCount).toBe(1);
+  });
+
+  it('empty portfolio calls buildPortfolioForecastingIntelligence with empty repoForecasts', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledWith({ repoForecasts: [] });
+  });
+
+  it('_cache has repoCount 0 when portfolio is empty', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toEqual({
+      source:               'repo_architecture_snapshots',
+      repoCount:            0,
+      forecastedRepoCount:  0,
+      missingSnapshotCount: 0,
+    });
+  });
+
+  it('SQL query scopes to r.user_id', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('user_id');
+    expect(params).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL query filters to active repos only (r.is_active = true)', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL query reads from repo_architecture_snapshots with LIMIT 10', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('repo_architecture_snapshots');
+    expect(sql).toContain('LIMIT  10');
+  });
+
+  it('SQL builds snapshotHistory JSON array from snapshot column fields', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('snapshotHistory');
+    expect(sql).toContain('architectureHealthScore');
+    expect(sql).toContain('architectureHealthLevel');
+  });
+
+  it('only one DB query is made (no live GitHub API call)', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('repoForecasts in response matches what was passed to helper', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const body    = res.json.mock.calls[0][0];
+    const callArg = buildPortfolioForecastingIntelligence.mock.calls[0][0];
+    expect(body.repoForecasts).toEqual(callArg.repoForecasts);
+  });
+
+  it('normalized repoForecast carries forecastLevel, degradationRisk, confidenceLevel from pipeline output', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
+    const rf = call[0].repoForecasts[0];
+    expect(rf).toMatchObject({
+      repoId:          MOCK_FORECAST_ROW.repoId,
+      repoName:        MOCK_FORECAST_ROW.repoName,
+      forecastLevel:   MOCK_REPO_FORECAST_OUTPUT.forecastLevel,
+      degradationRisk: MOCK_REPO_FORECAST_OUTPUT.degradationRisk,
+      confidenceLevel: MOCK_REPO_FORECAST_OUTPUT.confidenceLevel,
+    });
+  });
+
+  it('repoName falls back to stringified repoId when github_full_name is null', async () => {
+    const db  = makeDb([{ ...MOCK_FORECAST_ROW, repoName: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
+    expect(call[0].repoForecasts[0].repoName).toBe(String(MOCK_FORECAST_ROW.repoId));
+  });
+
+  it('null snapshotHistory is treated as empty — produces unknown repoForecast', async () => {
+    const db  = makeDb([{ ...MOCK_FORECAST_ROW, snapshotHistory: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getForecastHandler(req, res, next);
+    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
+    expect(call[0].repoForecasts[0].forecastLevel).toBe('unknown');
+  });
+
+  it('DB error is forwarded to next without crashing', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
     const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
     expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
   });
 
-  it('SQL query targets the authenticated user', async () => {
-    const db = makeDb([]);
+  it('response does not expose any token value', async () => {
+    const db  = makeDb([MOCK_FORECAST_ROW]);
     const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    const sql = db.query.mock.calls[0][0];
-    expect(sql).toContain('user_id');
-    expect(db.query.mock.calls[0][1]).toContain(MOCK_USER.userId);
-  });
-
-  it('SQL query filters to active repos only', async () => {
-    const db = makeDb([]);
-    const req = makeReq({ app: { locals: { db } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const sql = db.query.mock.calls[0][0];
-    expect(sql).toContain('is_active');
-  });
-
-  it('SQL query fetches up to 3 recent risk labels for persistentRisk derivation', async () => {
-    const db = makeDb([]);
-    const req = makeReq({ app: { locals: { db } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const sql = db.query.mock.calls[0][0];
-    expect(sql).toContain('LIMIT  3');
-  });
-
-  // ── Trajectory derivation ────────────────────────────────────────────────────
-
-  it('derives trajectory=escalating for critical+worsening label/trend', async () => {
-    const rows = [
-      { repoId: 1, label: 'critical', trend: 'worsening', recentLabels: [] },
-      { repoId: 2, label: 'critical', trend: 'worsening', recentLabels: [] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg.every(r => r.trajectory === 'escalating')).toBe(true);
-  });
-
-  it('derives trajectory=deteriorating for at-risk+worsening', async () => {
-    const rows = [
-      { repoId: 1, label: 'at-risk', trend: 'worsening', recentLabels: [] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].trajectory).toBe('deteriorating');
-  });
-
-  it('derives trajectory=recovering for improving trend', async () => {
-    const rows = [
-      { repoId: 1, label: 'healthy', trend: 'improving', recentLabels: [] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].trajectory).toBe('recovering');
-  });
-
-  it('derives trajectory=stable for stable trend', async () => {
-    const rows = [
-      { repoId: 1, label: 'healthy', trend: 'stable', recentLabels: [] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].trajectory).toBe('stable');
-  });
-
-  it('derives trajectory=unknown when label or trend is missing', async () => {
-    const rows = [
-      { repoId: 1, label: null, trend: null, recentLabels: [] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].trajectory).toBe('unknown');
-  });
-
-  it('derives persistentRisk=true when 3 recent labels are all at-risk/critical', async () => {
-    const rows = [
-      { repoId: 1, label: 'at-risk', trend: 'stable', recentLabels: ['at-risk', 'critical', 'at-risk'] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].persistentRisk).toBe(true);
-  });
-
-  it('derives persistentRisk=false when fewer than 3 recent labels', async () => {
-    const rows = [
-      { repoId: 1, label: 'at-risk', trend: 'stable', recentLabels: ['at-risk', 'critical'] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].persistentRisk).toBe(false);
-  });
-
-  it('derives persistentRisk=false when any of 3 recent labels is healthy', async () => {
-    const rows = [
-      { repoId: 1, label: 'at-risk', trend: 'stable', recentLabels: ['at-risk', 'healthy', 'at-risk'] },
-    ];
-    const req = makeReq({ app: { locals: { db: makeDb(rows) } } });
-    const res = makeRes();
-    await getForecastHandler(req, res, next);
-    const arg = getPortfolioForecast.mock.calls[0][0];
-    expect(arg[0].persistentRisk).toBe(false);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body.toLowerCase()).not.toContain('access_token');
+    expect(body.toLowerCase()).not.toContain('token_enc');
   });
 });
 

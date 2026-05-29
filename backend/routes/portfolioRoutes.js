@@ -14,90 +14,121 @@ const { buildBehavioralStabilityIndex }      = require('../../execution/risk/bui
 const { scorePullRequestHealth }             = require('../../execution/risk/scorePullRequestHealth');
 const { scoreRepositoryMaturity }            = require('../../execution/risk/scoreRepositoryMaturity');
 const { buildPortfolioMaturityIndex }        = require('../../execution/risk/buildPortfolioMaturityIndex');
-const { buildPortfolioArchitectureIntelligence } = require('../../execution/architecture/buildPortfolioArchitectureIntelligence');
+const { buildPortfolioArchitectureIntelligence }   = require('../../execution/architecture/buildPortfolioArchitectureIntelligence');
+const { buildArchitectureTrendTimeline }            = require('../../execution/architecture/buildArchitectureTrendTimeline');
+const { detectArchitectureRegressions }             = require('../../execution/architecture/detectArchitectureRegressions');
+const { detectCouplingGrowthAlerts }                = require('../../execution/architecture/detectCouplingGrowthAlerts');
+const { forecastStructuralDegradation }             = require('../../execution/architecture/forecastStructuralDegradation');
+const { buildPortfolioForecastingIntelligence }     = require('../../execution/architecture/buildPortfolioForecastingIntelligence');
 
 const router = express.Router();
 
 router.use(authenticate);
 
 // GET /api/portfolio/forecast
-// Derives a portfolio-level operational trajectory by querying the latest
-// risk score and recent history for every active repo, then aggregating
-// via getPortfolioForecast. Returns a deterministic forecast object.
+// Returns portfolio-wide structural degradation forecasting intelligence by
+// loading the latest 10 repo_architecture_snapshots per active repo, running
+// the architecture forecasting pipeline per repo (trendTimeline →
+// regressions → couplingAlerts → forecast), then aggregating via
+// buildPortfolioForecastingIntelligence. Repos with < 2 snapshots produce
+// unknown forecasts. No live GitHub calls — persisted snapshots only.
 router.get('/forecast', async (req, res, next) => {
   try {
     const result = await req.app.locals.db.query(
       `SELECT
-         r.id       AS "repoId",
-         rs.label,
-         rs.trend,
-         ARRAY(
-           SELECT label
-           FROM   risk_scores rsi
-           WHERE  rsi.repo_id = r.id
-           ORDER  BY rsi.snapshot_at DESC
-           LIMIT  3
-         ) AS "recentLabels"
+         r.id               AS "repoId",
+         r.github_full_name AS "repoName",
+         (
+           SELECT COALESCE(
+             JSON_AGG(
+               JSON_BUILD_OBJECT(
+                 'snapshotAt',                 ras2.snapshot_at,
+                 'architectureHealthScore',    (ras2.snapshot->>'architectureHealthScore')::numeric,
+                 'architectureHealthLevel',    ras2.snapshot->>'architectureHealthLevel',
+                 'confidenceLevel',            ras2.snapshot->>'confidenceLevel',
+                 'metrics',                    ras2.snapshot->'metrics',
+                 'dependencyGraph',            ras2.snapshot->'dependencyGraph',
+                 'boundaryVerification',       ras2.snapshot->'boundaryVerification',
+                 'apiLinkage',                 ras2.snapshot->'apiLinkage',
+                 'implementationCompleteness', ras2.snapshot->'implementationCompleteness'
+               ) ORDER BY ras2.snapshot_at DESC
+             ),
+             '[]'::json
+           )
+           FROM (
+             SELECT snapshot, snapshot_at
+             FROM   repo_architecture_snapshots
+             WHERE  repo_id = r.id
+             ORDER  BY snapshot_at DESC
+             LIMIT  10
+           ) ras2
+         ) AS "snapshotHistory"
        FROM repositories r
-       LEFT JOIN LATERAL (
-         SELECT label, trend
-         FROM   risk_scores
-         WHERE  repo_id = r.id
-         ORDER  BY snapshot_at DESC
-         LIMIT  1
-       ) rs ON true
        WHERE r.user_id = $1 AND r.is_active = true`,
       [req.user.userId]
     );
 
-    const repos = result.rows.map(function(r) {
-      var label        = r.label  || '';
-      var trend        = r.trend  || 'unknown';
-      var recentLabels = Array.isArray(r.recentLabels) ? r.recentLabels : [];
+    let missingSnapshotCount = 0;
 
-      // Derive trajectory from the stored label + trend combination.
-      var trajectory;
-      if (!r.label || !r.trend) {
-        trajectory = 'unknown';
-      } else if (label === 'critical' && trend === 'worsening') {
-        trajectory = 'escalating';
-      } else if (label === 'at-risk' && trend === 'worsening') {
-        trajectory = 'deteriorating';
-      } else if (trend === 'improving') {
-        trajectory = 'recovering';
-      } else {
-        trajectory = 'stable';
+    const repoForecasts = result.rows.map(function(r) {
+      const repoId   = r.repoId;
+      const repoName = r.repoName || String(r.repoId);
+
+      let snapshots = r.snapshotHistory;
+      try {
+        if (typeof snapshots === 'string') snapshots = JSON.parse(snapshots);
+      } catch (_) {
+        snapshots = [];
+      }
+      if (!Array.isArray(snapshots)) snapshots = [];
+
+      if (snapshots.length < 2) {
+        missingSnapshotCount++;
+        return {
+          repoId,
+          repoName,
+          forecastLevel:        'unknown',
+          degradationRisk:      0,
+          confidenceLevel:      'low',
+          trajectory:           { scoreTrend: 'stable', averageScoreDelta: 0, projectedScore: 0, projectedLevel: 'unknown', interventionUrgency: 'none' },
+          riskFactors:          [],
+          structuralProjection: { couplingForecast: 'stable', implementationHealthForecast: 'stable', boundaryIntegrityForecast: 'stable' },
+          recommendations:      [],
+        };
       }
 
-      var FORECAST_MAP = {
-        escalating:    'critical',
-        deteriorating: 'high',
-        recovering:    'medium',
-        stable:        'low',
-        unknown:       'unknown',
-      };
-
-      var escalationLevel = (label === 'critical' && trend === 'worsening') ? 'critical'
-                          : trend === 'worsening'                           ? 'high'
-                          : 'none';
-
-      // persistentRisk: true when the 3 most-recent snapshots are all at-risk/critical.
-      var persistentRisk = recentLabels.length >= 3 &&
-        recentLabels.slice(0, 3).every(function(l) {
-          return l === 'at-risk' || l === 'critical';
-        });
+      const trendTimeline = buildArchitectureTrendTimeline({ snapshots });
+      detectArchitectureRegressions({ timelineData: trendTimeline });
+      detectCouplingGrowthAlerts({ timelineData: trendTimeline });
+      const forecast = forecastStructuralDegradation({ snapshots, timelineData: trendTimeline });
 
       return {
-        repoId:          r.repoId,
-        trajectory:      trajectory,
-        forecastLevel:   FORECAST_MAP[trajectory] || 'unknown',
-        escalationLevel: escalationLevel,
-        volatilityLevel: 'low',
-        persistentRisk:  persistentRisk,
+        repoId,
+        repoName,
+        forecastLevel:        forecast.forecastLevel,
+        degradationRisk:      forecast.degradationRisk,
+        confidenceLevel:      forecast.confidenceLevel,
+        trajectory:           forecast.trajectory           || {},
+        riskFactors:          Array.isArray(forecast.riskFactors)     ? forecast.riskFactors     : [],
+        structuralProjection: forecast.structuralProjection           || {},
+        recommendations:      Array.isArray(forecast.recommendations) ? forecast.recommendations : [],
       };
     });
 
-    res.json(getPortfolioForecast(repos));
+    const repoCount           = result.rows.length;
+    const forecastedRepoCount = repoCount - missingSnapshotCount;
+
+    const portfolioForecast = buildPortfolioForecastingIntelligence({ repoForecasts });
+
+    res.json(Object.assign({}, portfolioForecast, {
+      repoForecasts,
+      _cache: {
+        source:               'repo_architecture_snapshots',
+        repoCount,
+        forecastedRepoCount,
+        missingSnapshotCount,
+      },
+    }));
   } catch (err) {
     next(err);
   }
