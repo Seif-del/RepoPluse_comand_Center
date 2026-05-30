@@ -22,6 +22,7 @@ const { forecastStructuralDegradation }             = require('../../execution/a
 const { buildPortfolioForecastingIntelligence }     = require('../../execution/architecture/buildPortfolioForecastingIntelligence');
 const { scoreEngineeringGovernance }                = require('../../execution/architecture/scoreEngineeringGovernance');
 const { detectArchitectureAnomalies }               = require('../../execution/architecture/detectArchitectureAnomalies');
+const { buildArchitectureWatchlists }               = require('../../execution/architecture/buildArchitectureWatchlists');
 
 const router = express.Router();
 
@@ -1231,6 +1232,183 @@ router.get('/governance', async (req, res, next) => {
         forecastedRepoCount,
         maturityRepoCount,
         generatedAt:              new Date().toISOString(),
+      },
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portfolio/watchlists
+// Builds architecture-aware watchlists by running the full per-repo pipeline
+// (trendTimeline → regressions → couplingAlerts → forecast → anomaly) against
+// persisted repo_architecture_snapshots. Repos with < 2 snapshots produce
+// unknown signals. Per-repo governance is approximated from architectureHealthLevel.
+// Calls buildArchitectureWatchlists to produce priority-ranked categories.
+// No live GitHub calls — persisted data only.
+router.get('/watchlists', async (req, res, next) => {
+  try {
+    const result = await req.app.locals.db.query(
+      `SELECT
+         r.id               AS "repoId",
+         r.github_full_name AS "repoName",
+         (
+           SELECT COALESCE(
+             JSON_AGG(
+               JSON_BUILD_OBJECT(
+                 'snapshotAt',                 ras2.snapshot_at,
+                 'architectureHealthScore',    (ras2.snapshot->>'architectureHealthScore')::numeric,
+                 'architectureHealthLevel',    ras2.snapshot->>'architectureHealthLevel',
+                 'confidenceLevel',            ras2.snapshot->>'confidenceLevel',
+                 'metrics',                    ras2.snapshot->'metrics',
+                 'dependencyGraph',            ras2.snapshot->'dependencyGraph',
+                 'boundaryVerification',       ras2.snapshot->'boundaryVerification',
+                 'apiLinkage',                 ras2.snapshot->'apiLinkage',
+                 'implementationCompleteness', ras2.snapshot->'implementationCompleteness'
+               ) ORDER BY ras2.snapshot_at DESC
+             ),
+             '[]'::json
+           )
+           FROM (
+             SELECT snapshot, snapshot_at
+             FROM   repo_architecture_snapshots
+             WHERE  repo_id = r.id
+             ORDER  BY snapshot_at DESC
+             LIMIT  10
+           ) ras2
+         ) AS "snapshotHistory"
+       FROM repositories r
+       WHERE r.user_id = $1 AND r.is_active = true`,
+      [req.user.userId]
+    );
+
+    const _GOV_LEVEL_MAP = {
+      healthy: 'strong', watch: 'watch', weak: 'weak', risky: 'critical', unknown: 'unknown',
+    };
+
+    let missingSnapshotCount = 0;
+    const repoForecasts  = [];
+    const repositories   = [];
+
+    for (const r of result.rows) {
+      const repoId   = r.repoId;
+      const repoName = r.repoName || String(r.repoId);
+
+      let snapshots = r.snapshotHistory;
+      try {
+        if (typeof snapshots === 'string') snapshots = JSON.parse(snapshots);
+      } catch (_) {
+        snapshots = [];
+      }
+      if (!Array.isArray(snapshots)) snapshots = [];
+
+      if (snapshots.length < 2) {
+        missingSnapshotCount++;
+
+        const archHealthScore  = snapshots.length >= 1 && snapshots[0].architectureHealthScore != null
+          ? Number(snapshots[0].architectureHealthScore) : 0;
+        const archHealthLevel  = snapshots.length >= 1 ? (snapshots[0].architectureHealthLevel || 'unknown') : 'unknown';
+        const confLevel        = snapshots.length >= 1 ? (snapshots[0].confidenceLevel || 'low') : 'low';
+        const latestSnapshotAt = snapshots.length >= 1 ? (snapshots[0].snapshotAt || null) : null;
+
+        repoForecasts.push({
+          repoId, repoName,
+          forecastLevel: 'unknown', degradationRisk: 0, confidenceLevel: 'low',
+          trajectory: { scoreTrend: 'stable', averageScoreDelta: 0, projectedScore: 0, projectedLevel: 'unknown', interventionUrgency: 'none' },
+          riskFactors: [], structuralProjection: {}, recommendations: [],
+        });
+
+        repositories.push({
+          repoId,
+          repoName,
+          architectureHealthScore: archHealthScore,
+          architectureHealthLevel: archHealthLevel,
+          confidenceLevel:         confLevel,
+          latestSnapshotAt,
+          forecast:      { forecastLevel: 'unknown',   degradationRisk: 0,      confidenceLevel: 'low' },
+          regression:    { regressionLevel: 'unknown', regressionScore: 0,      confidenceLevel: 'low' },
+          couplingAlert: { alertLevel: 'unknown',      couplingGrowthScore: 0,  confidenceLevel: 'low' },
+          anomaly:       { anomalyLevel: 'unknown',    anomalyScore: 0,         confidenceLevel: 'low' },
+          governance:    {
+            governanceLevel: _GOV_LEVEL_MAP[archHealthLevel] || 'unknown',
+            governanceScore: archHealthScore,
+            confidenceLevel: confLevel,
+          },
+        });
+      } else {
+        const first            = snapshots[0];
+        const archHealthScore  = first.architectureHealthScore != null ? Number(first.architectureHealthScore) : 0;
+        const archHealthLevel  = first.architectureHealthLevel || 'unknown';
+        const confLevel        = first.confidenceLevel || 'low';
+        const latestSnapshotAt = first.snapshotAt || null;
+
+        const trendTimeline = buildArchitectureTrendTimeline({ snapshots });
+        const regression    = detectArchitectureRegressions({ timelineData: trendTimeline });
+        const couplingAlert = detectCouplingGrowthAlerts({ timelineData: trendTimeline });
+        const forecast      = forecastStructuralDegradation({ snapshots, timelineData: trendTimeline });
+        const anomaly       = detectArchitectureAnomalies({ timelineData: trendTimeline, repoForecasts: [forecast] });
+
+        repoForecasts.push({
+          repoId,
+          repoName,
+          forecastLevel:        forecast.forecastLevel,
+          degradationRisk:      forecast.degradationRisk,
+          confidenceLevel:      forecast.confidenceLevel,
+          trajectory:           forecast.trajectory           || {},
+          riskFactors:          Array.isArray(forecast.riskFactors)     ? forecast.riskFactors     : [],
+          structuralProjection: forecast.structuralProjection           || {},
+          recommendations:      Array.isArray(forecast.recommendations) ? forecast.recommendations : [],
+        });
+
+        repositories.push({
+          repoId,
+          repoName,
+          architectureHealthScore: archHealthScore,
+          architectureHealthLevel: archHealthLevel,
+          confidenceLevel:         confLevel,
+          latestSnapshotAt,
+          forecast: {
+            forecastLevel:   forecast.forecastLevel,
+            degradationRisk: forecast.degradationRisk,
+            confidenceLevel: forecast.confidenceLevel,
+          },
+          regression: {
+            regressionLevel: regression.regressionLevel,
+            regressionScore: regression.regressionScore || 0,
+            confidenceLevel: regression.confidenceLevel,
+          },
+          couplingAlert: {
+            alertLevel:          couplingAlert.alertLevel,
+            couplingGrowthScore: couplingAlert.couplingGrowthScore || 0,
+            confidenceLevel:     couplingAlert.confidenceLevel,
+          },
+          anomaly: {
+            anomalyLevel:    anomaly.anomalyLevel,
+            anomalyScore:    anomaly.anomalyScore || 0,
+            confidenceLevel: anomaly.confidenceLevel,
+          },
+          governance: {
+            governanceLevel: _GOV_LEVEL_MAP[archHealthLevel] || 'unknown',
+            governanceScore: archHealthScore,
+            confidenceLevel: confLevel,
+          },
+        });
+      }
+    }
+
+    const portfolioForecast    = buildPortfolioForecastingIntelligence({ repoForecasts });
+    const watchlists           = buildArchitectureWatchlists({ repositories, portfolioGovernance: null, portfolioForecast });
+
+    const repoCount            = result.rows.length;
+    const watchlistedRepoCount = Array.isArray(watchlists.priorityQueue) ? watchlists.priorityQueue.length : 0;
+
+    res.json(Object.assign({}, watchlists, {
+      _meta: {
+        source:                'repo_architecture_snapshots',
+        repoCount,
+        watchlistedRepoCount,
+        missingSnapshotCount,
+        generatedAt:           new Date().toISOString(),
       },
     }));
   } catch (err) {

@@ -23,6 +23,7 @@ jest.mock('../../../../execution/architecture/forecastStructuralDegradation');
 jest.mock('../../../../execution/architecture/buildPortfolioForecastingIntelligence');
 jest.mock('../../../../execution/architecture/scoreEngineeringGovernance');
 jest.mock('../../../../execution/architecture/detectArchitectureAnomalies');
+jest.mock('../../../../execution/architecture/buildArchitectureWatchlists');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ const { forecastStructuralDegradation }          = require('../../../../executio
 const { buildPortfolioForecastingIntelligence }  = require('../../../../execution/architecture/buildPortfolioForecastingIntelligence');
 const { scoreEngineeringGovernance }             = require('../../../../execution/architecture/scoreEngineeringGovernance');
 const { detectArchitectureAnomalies }            = require('../../../../execution/architecture/detectArchitectureAnomalies');
+const { buildArchitectureWatchlists }            = require('../../../../execution/architecture/buildArchitectureWatchlists');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -75,6 +77,7 @@ const getBehavioralStabilityHandler     = extractHandler(router, 'GET', '/behavi
 const getPortfolioMaturityHandler            = extractHandler(router, 'GET', '/maturity');
 const getPortfolioArchitectureHandler        = extractHandler(router, 'GET', '/architecture');
 const getPortfolioGovernanceHandler          = extractHandler(router, 'GET', '/governance');
+const getPortfolioWatchlistsHandler          = extractHandler(router, 'GET', '/watchlists');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -2541,5 +2544,353 @@ describe('portfolioRoutes GET /governance', () => {
     const res = makeRes();
     await getPortfolioGovernanceHandler(req, res, next);
     expect(scorePullRequestHealth).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── GET /watchlists ───────────────────────────────────────────────────────────
+
+const MOCK_WL_SNAP_ENTRY = {
+  snapshotAt:                 '2026-05-27T08:00:00.000Z',
+  architectureHealthScore:    75,
+  architectureHealthLevel:    'watch',
+  confidenceLevel:            'high',
+  metrics:                    {},
+  dependencyGraph:            {},
+  boundaryVerification:       {},
+  apiLinkage:                 {},
+  implementationCompleteness: {},
+};
+
+const MOCK_WL_ARCH_ROW = {
+  repoId:          1,
+  repoName:        'org/repo-1',
+  snapshotHistory: [
+    MOCK_WL_SNAP_ENTRY,
+    { ...MOCK_WL_SNAP_ENTRY, snapshotAt: '2026-05-26T08:00:00.000Z', architectureHealthScore: 70 },
+  ],
+};
+
+const MOCK_WL_NO_SNAP_ROW = {
+  repoId:          2,
+  repoName:        'org/repo-2',
+  snapshotHistory: [],
+};
+
+const MOCK_WL_ONE_SNAP_ROW = {
+  repoId:          3,
+  repoName:        'org/repo-3',
+  snapshotHistory: [MOCK_WL_SNAP_ENTRY],
+};
+
+const MOCK_WL_TREND_TIMELINE = {
+  timeline: [], scoreTimeline: [], levelTransitions: [], driftEvents: [], summary: 'stable', recommendations: [],
+};
+
+const MOCK_WL_REGRESSIONS     = { regressionLevel: 'none', regressionScore: 0, confidenceLevel: 'medium', regressions: [] };
+const MOCK_WL_COUPLING_ALERTS = { alertLevel: 'none', couplingGrowthScore: 0, confidenceLevel: 'medium', alerts: [] };
+
+const MOCK_WL_REPO_FORECAST_OUTPUT = {
+  forecastLevel:        'watch',
+  degradationRisk:      20,
+  confidenceLevel:      'medium',
+  trajectory:           { scoreTrend: 'stable', averageScoreDelta: -2, projectedScore: 68, projectedLevel: 'watch', interventionUrgency: 'none' },
+  riskFactors:          [],
+  structuralProjection: {},
+  recommendations:      [],
+};
+
+const MOCK_WL_ANOMALY_OUTPUT = {
+  anomalyLevel:    'none',
+  anomalyScore:    0,
+  confidenceLevel: 'low',
+  summary:         'No anomalies detected.',
+  anomalies:       [],
+  outliers:        [],
+  patterns:        {},
+  recommendations: [],
+};
+
+const MOCK_WL_PORTFOLIO_FORECAST = {
+  portfolioForecastLevel:    'watch',
+  portfolioForecastScore:    30,
+  confidenceLevel:           'medium',
+  summary:                   'Portfolio structural forecast: low risk.',
+  forecastDistribution:      { healthy: 1, watch: 0, weak: 0, risky: 0, unknown: 0 },
+  projectedRiskRepos:        [],
+  projectedHotspots:         [],
+  projectedCouplingPressure: { level: 'low' },
+  projectedGovernanceRisk:   { level: 'low' },
+  trendForecast:             { direction: 'stable' },
+  recommendations:           [],
+  benchmarking:              { topPerformers: [], atRisk: [] },
+};
+
+const MOCK_WL_WATCHLISTS_RESULT = {
+  watchlistLevel: 'watch',
+  watchlistScore: 30,
+  confidenceLevel: 'medium',
+  summary: 'Portfolio watchlist: 1 repository requiring attention.',
+  categories: {
+    criticalGovernance: [], degradingForecasts: [], anomalyHeavy: [],
+    couplingPressure: [], regressionRisk: [], lowConfidence: [], emergingRisk: [],
+  },
+  priorityQueue: [
+    { repoId: 1, repoName: 'org/repo-1', watchlistScore: 30, watchlistLevel: 'watch', categories: [] },
+  ],
+  escalationSummary: { escalationLevel: 'none', escalationCount: 0, escalationRepos: [] },
+  recommendations: [],
+};
+
+describe('portfolioRoutes GET /watchlists', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    buildArchitectureWatchlists.mockReturnValue(MOCK_WL_WATCHLISTS_RESULT);
+    buildPortfolioForecastingIntelligence.mockReturnValue(MOCK_WL_PORTFOLIO_FORECAST);
+    buildArchitectureTrendTimeline.mockReturnValue(MOCK_WL_TREND_TIMELINE);
+    detectArchitectureRegressions.mockReturnValue(MOCK_WL_REGRESSIONS);
+    detectCouplingGrowthAlerts.mockReturnValue(MOCK_WL_COUPLING_ALERTS);
+    forecastStructuralDegradation.mockReturnValue(MOCK_WL_REPO_FORECAST_OUTPUT);
+    detectArchitectureAnomalies.mockReturnValue(MOCK_WL_ANOMALY_OUTPUT);
+  });
+
+  it('returns { ...watchlists, _meta } with required keys on success', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('watchlistLevel');
+    expect(body).toHaveProperty('watchlistScore');
+    expect(body).toHaveProperty('categories');
+    expect(body).toHaveProperty('priorityQueue');
+    expect(body).toHaveProperty('escalationSummary');
+    expect(body).toHaveProperty('recommendations');
+    expect(body).toHaveProperty('_meta');
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('calls buildArchitectureWatchlists with { repositories, portfolioGovernance: null, portfolioForecast }', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(buildArchitectureWatchlists).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositories:     expect.any(Array),
+        portfolioGovernance: null,
+        portfolioForecast:   expect.any(Object),
+      })
+    );
+  });
+
+  it('calls buildPortfolioForecastingIntelligence with { repoForecasts }', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledWith({
+      repoForecasts: expect.any(Array),
+    });
+  });
+
+  it('calls buildArchitectureTrendTimeline once per repo with >= 2 snapshots', async () => {
+    const rows = [MOCK_WL_ARCH_ROW, MOCK_WL_NO_SNAP_ROW];
+    const db   = makeDb(rows);
+    const req  = makeReq({ app: { locals: { db } } });
+    const res  = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes { snapshots } to buildArchitectureTrendTimeline', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({
+      snapshots: MOCK_WL_ARCH_ROW.snapshotHistory,
+    });
+  });
+
+  it('calls detectArchitectureAnomalies per repo with { timelineData, repoForecasts: [forecast] }', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(detectArchitectureAnomalies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timelineData: MOCK_WL_TREND_TIMELINE,
+        repoForecasts: expect.any(Array),
+      })
+    );
+  });
+
+  it('repos with 0 snapshots produce unknown forecast, regression, couplingAlert, anomaly', async () => {
+    const db  = makeDb([MOCK_WL_NO_SNAP_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).not.toHaveBeenCalled();
+    const [call] = buildArchitectureWatchlists.mock.calls;
+    const repo = call[0].repositories[0];
+    expect(repo.forecast.forecastLevel).toBe('unknown');
+    expect(repo.regression.regressionLevel).toBe('unknown');
+    expect(repo.couplingAlert.alertLevel).toBe('unknown');
+    expect(repo.anomaly.anomalyLevel).toBe('unknown');
+    expect(repo.architectureHealthScore).toBe(0);
+    expect(repo.latestSnapshotAt).toBeNull();
+  });
+
+  it('repos with 1 snapshot produce arch info but unknown forecast/regression/coupling/anomaly', async () => {
+    const db  = makeDb([MOCK_WL_ONE_SNAP_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).not.toHaveBeenCalled();
+    const [call] = buildArchitectureWatchlists.mock.calls;
+    const repo = call[0].repositories[0];
+    expect(repo.architectureHealthScore).toBe(MOCK_WL_SNAP_ENTRY.architectureHealthScore);
+    expect(repo.architectureHealthLevel).toBe(MOCK_WL_SNAP_ENTRY.architectureHealthLevel);
+    expect(repo.forecast.forecastLevel).toBe('unknown');
+    expect(repo.regression.regressionLevel).toBe('unknown');
+    expect(repo.latestSnapshotAt).toBe(MOCK_WL_SNAP_ENTRY.snapshotAt);
+  });
+
+  it('_meta has source, repoCount, watchlistedRepoCount, missingSnapshotCount, generatedAt', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW, MOCK_WL_NO_SNAP_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta.source).toBe('repo_architecture_snapshots');
+    expect(_meta.repoCount).toBe(2);
+    expect(typeof _meta.watchlistedRepoCount).toBe('number');
+    expect(_meta.missingSnapshotCount).toBe(1);
+    expect(typeof _meta.generatedAt).toBe('string');
+  });
+
+  it('_meta.watchlistedRepoCount equals priorityQueue length from helper', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._meta.watchlistedRepoCount).toBe(MOCK_WL_WATCHLISTS_RESULT.priorityQueue.length);
+  });
+
+  it('_meta.missingSnapshotCount counts repos with both 0 and 1 snapshot', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW, MOCK_WL_NO_SNAP_ROW, MOCK_WL_ONE_SNAP_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta.missingSnapshotCount).toBe(2);
+    expect(_meta.repoCount).toBe(3);
+  });
+
+  it('SQL query scopes to r.user_id', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('user_id');
+    expect(params).toContain(MOCK_USER.userId);
+  });
+
+  it('SQL query filters to active repos only (r.is_active = true)', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('is_active');
+  });
+
+  it('SQL query reads from repo_architecture_snapshots with LIMIT 10', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('repo_architecture_snapshots');
+    expect(sql).toContain('LIMIT  10');
+  });
+
+  it('SQL builds snapshotHistory JSON with architectureHealthScore and architectureHealthLevel', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).toContain('snapshotHistory');
+    expect(sql).toContain('architectureHealthScore');
+    expect(sql).toContain('architectureHealthLevel');
+  });
+
+  it('only one DB query is made (no live GitHub API call)', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('empty portfolio: buildArchitectureWatchlists called with empty repositories array', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [call] = buildArchitectureWatchlists.mock.calls;
+    expect(call[0].repositories).toHaveLength(0);
+    expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledWith({ repoForecasts: [] });
+  });
+
+  it('per-repo governance maps architectureHealthLevel to governanceLevel correctly', async () => {
+    const rows = [
+      { ...MOCK_WL_ARCH_ROW, repoId: 1, snapshotHistory: [
+        { ...MOCK_WL_SNAP_ENTRY, architectureHealthLevel: 'healthy' },
+        { ...MOCK_WL_SNAP_ENTRY, architectureHealthLevel: 'healthy', snapshotAt: '2026-05-26T00:00:00.000Z' },
+      ]},
+      { ...MOCK_WL_ARCH_ROW, repoId: 2, snapshotHistory: [
+        { ...MOCK_WL_SNAP_ENTRY, architectureHealthLevel: 'risky' },
+        { ...MOCK_WL_SNAP_ENTRY, architectureHealthLevel: 'risky', snapshotAt: '2026-05-26T00:00:00.000Z' },
+      ]},
+    ];
+    const db  = makeDb(rows);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [call] = buildArchitectureWatchlists.mock.calls;
+    expect(call[0].repositories[0].governance.governanceLevel).toBe('strong');
+    expect(call[0].repositories[1].governance.governanceLevel).toBe('critical');
+  });
+
+  it('repoName falls back to stringified repoId when github_full_name is null', async () => {
+    const db  = makeDb([{ ...MOCK_WL_ARCH_ROW, repoName: null }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const [call] = buildArchitectureWatchlists.mock.calls;
+    expect(call[0].repositories[0].repoName).toBe(String(MOCK_WL_ARCH_ROW.repoId));
+  });
+
+  it('DB error is forwarded to next without crashing', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('response does not expose any token value', async () => {
+    const db  = makeDb([MOCK_WL_ARCH_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioWatchlistsHandler(req, res, next);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body.toLowerCase()).not.toContain('access_token');
+    expect(body.toLowerCase()).not.toContain('token_enc');
   });
 });
