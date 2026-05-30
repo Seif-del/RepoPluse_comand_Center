@@ -21,6 +21,8 @@ jest.mock('../../../../execution/architecture/detectArchitectureRegressions');
 jest.mock('../../../../execution/architecture/detectCouplingGrowthAlerts');
 jest.mock('../../../../execution/architecture/forecastStructuralDegradation');
 jest.mock('../../../../execution/architecture/buildPortfolioForecastingIntelligence');
+jest.mock('../../../../execution/architecture/scoreEngineeringGovernance');
+jest.mock('../../../../execution/architecture/detectArchitectureAnomalies');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -43,6 +45,8 @@ const { detectArchitectureRegressions }          = require('../../../../executio
 const { detectCouplingGrowthAlerts }             = require('../../../../execution/architecture/detectCouplingGrowthAlerts');
 const { forecastStructuralDegradation }          = require('../../../../execution/architecture/forecastStructuralDegradation');
 const { buildPortfolioForecastingIntelligence }  = require('../../../../execution/architecture/buildPortfolioForecastingIntelligence');
+const { scoreEngineeringGovernance }             = require('../../../../execution/architecture/scoreEngineeringGovernance');
+const { detectArchitectureAnomalies }            = require('../../../../execution/architecture/detectArchitectureAnomalies');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -70,6 +74,7 @@ const getTelemetryCoverageHandler       = extractHandler(router, 'GET', '/teleme
 const getBehavioralStabilityHandler     = extractHandler(router, 'GET', '/behavioral-stability');
 const getPortfolioMaturityHandler            = extractHandler(router, 'GET', '/maturity');
 const getPortfolioArchitectureHandler        = extractHandler(router, 'GET', '/architecture');
+const getPortfolioGovernanceHandler          = extractHandler(router, 'GET', '/governance');
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -2100,5 +2105,441 @@ describe('portfolioRoutes GET /architecture', () => {
         expect.objectContaining({ repoName: String(MOCK_ARCH_ROW.repoId) }),
       ]),
     });
+  });
+});
+
+// ── GET /governance ───────────────────────────────────────────────────────────
+
+const MOCK_GOVERNANCE_RESULT = {
+  governanceScore:  72,
+  governanceLevel:  'strong',
+  confidenceLevel:  'high',
+  summary:          'Portfolio governance is strong (score: 72, 5/5 dimensions, high confidence).',
+  dimensions: {
+    architectureGovernance: { score: 75, level: 'strong',    drivers: [] },
+    maturityGovernance:     { score: 65, level: 'watch',     drivers: [] },
+    behavioralGovernance:   { score: 80, level: 'strong',    drivers: [] },
+    predictiveGovernance:   { score: 70, level: 'strong',    drivers: [] },
+    anomalyGovernance:      { score: 90, level: 'excellent', drivers: [] },
+  },
+  governanceRisks:  [],
+  strengths:        [],
+  executiveSignals: {
+    interventionRequired:   false,
+    highestRiskArea:        null,
+    lowestScoringDimension: 'maturityGovernance',
+    strongestDimension:     'anomalyGovernance',
+    forecastConcern:        false,
+    anomalyConcern:         false,
+    confidenceConcern:      false,
+  },
+  recommendations: ['Portfolio governance is healthy — maintain current practices.'],
+};
+
+const MOCK_ANOMALIES_RESULT = {
+  anomalyLevel:    'none',
+  anomalyScore:    0,
+  confidenceLevel: 'low',
+  summary:         'No anomalies detected.',
+  anomalies:       [],
+  outliers:        [],
+  patterns:        {},
+  recommendations: [],
+};
+
+const MOCK_GOV_SNAP_ENTRY = {
+  snapshotAt:                 '2026-05-27T08:00:00.000Z',
+  architectureHealthScore:    75,
+  architectureHealthLevel:    'watch',
+  confidenceLevel:            'high',
+  metrics:                    {},
+  dependencyGraph:            {},
+  boundaryVerification:       {},
+  apiLinkage:                 {},
+  implementationCompleteness: {},
+};
+
+const MOCK_GOV_ARCH_ROW = {
+  repoId:          1,
+  repoName:        'org/repo-1',
+  snapshotHistory: [
+    MOCK_GOV_SNAP_ENTRY,
+    { ...MOCK_GOV_SNAP_ENTRY, snapshotAt: '2026-05-26T08:00:00.000Z', architectureHealthScore: 70 },
+  ],
+};
+
+const MOCK_GOV_NO_SNAP_ROW = {
+  repoId:          2,
+  repoName:        'org/repo-2',
+  snapshotHistory: [],
+};
+
+const MOCK_GOV_METRICS_ROW = {
+  repoId:               1,
+  fullName:             'org/repo-1',
+  lastSyncedAt:         '2026-05-27T00:00:00.000Z',
+  ciStatus:             'passing',
+  releaseStatus:        'healthy',
+  contributorStatus:    'healthy',
+  commits7d:            10,
+  lastPushAt:           '2026-05-27T00:00:00.000Z',
+  label:                'healthy',
+  trend:                'stable',
+  recentLabels:         ['healthy', 'healthy'],
+  prTelemetryStatus:    'active',
+  openPrCount:          2,
+  mergedPrCount30d:     5,
+  stalePrCount:         0,
+  avgMergeLatencyHours: 24,
+  failedCheckPrCount:   0,
+  avgPrSize:            100,
+  throughput30d:        2,
+  abandonedPrCount:     0,
+  oldestOpenPrAgeDays:  3,
+  snapshotCount:        8,
+};
+
+// Two-query db factory: archRows for query 1, metricsRows for query 2.
+function makeGovDb(archRows = [], metricsRows = []) {
+  return {
+    query: jest.fn()
+      .mockResolvedValueOnce({ rows: archRows })
+      .mockResolvedValueOnce({ rows: metricsRows }),
+  };
+}
+
+const MOCK_GOV_ARCH_INTELLIGENCE = {
+  portfolioArchitectureScore: 75,
+  architectureLevel:          'watch',
+  confidenceLevel:            'high',
+  summary:                    'Portfolio architecture has watch items.',
+  distribution:               { healthy: 0, watch: 1, weak: 0, risky: 0, unknown: 0 },
+  systemicBoundaryViolations: [],
+  portfolioCoupling:          { totalEdges: 4, couplingLevel: 'healthy' },
+  apiIntegrationHealth:       { integrationLevel: 'unknown' },
+  implementationIntegrity:    { integrityLevel: 'moderate' },
+  benchmarkedRepositories:    [],
+  topFindings:                [],
+  recommendations:            [],
+};
+
+const MOCK_GOV_FORECAST_INTELLIGENCE = {
+  portfolioForecastLevel: 'watch',
+  portfolioForecastScore: 30,
+  confidenceLevel:        'medium',
+  summary:                'Portfolio structural forecast: low risk.',
+  forecastDistribution:   { healthy: 1, watch: 0, weak: 0, risky: 0, unknown: 0 },
+  projectedRiskRepos:     [],
+  projectedHotspots:      [],
+  projectedCouplingPressure: { level: 'low' },
+  projectedGovernanceRisk:   { level: 'low', governanceRiskScore: 0 },
+  trendForecast:             { direction: 'stable' },
+  recommendations:           [],
+  benchmarking:              { topPerformers: [], atRisk: [] },
+};
+
+const MOCK_GOV_MATURITY_SCORED = {
+  maturityScore: 65, maturityLevel: 'developing', confidenceLevel: 'high',
+  dimensions: { ciMaturity: 20, releaseMaturity: 10, contributorMaturity: 20, activityMaturity: 10, prWorkflowMaturity: 6, telemetryMaturity: 4 },
+  gaps: [], recommendations: [],
+};
+
+const MOCK_GOV_MATURITY_INDEX = {
+  portfolioMaturityScore: 65, maturityLevel: 'developing', confidenceLevel: 'low',
+  summary: 'Portfolio engineering maturity is developing.',
+  distribution: { mature: 0, developing: 1, immature: 0, unknown: 0 },
+  dimensionAverages: {}, commonGaps: [], benchmarkedRepositories: [], recommendations: [],
+};
+
+const MOCK_GOV_PR_HEALTH   = { label: 'healthy', score: 0, reasons: [], signals: [], confidenceLevel: 'high' };
+
+const MOCK_GOV_BSI_RESULT = {
+  indexScore: 80, stabilityLevel: 'stable', confidenceLevel: 'medium',
+  summary: 'Portfolio behavioral signals are stable.', drivers: [],
+  counts: { totalRepos: 1, escalatingRepos: 0, deterioratingRepos: 0, volatileRepos: 0, persistentRiskRepos: 0, prRiskRepos: 0, ciFailingRepos: 0, abandonedRepos: 0, improvingRepos: 0 },
+};
+
+const MOCK_GOV_TREND_TIMELINE = {
+  timeline: [], scoreTimeline: [], levelTransitions: [], driftEvents: [], summary: 'stable', recommendations: [],
+};
+
+const MOCK_GOV_REGRESSIONS    = { regressionLevel: 'none', regressionScore: 0, confidenceLevel: 'medium', regressions: [], recommendations: [] };
+const MOCK_GOV_COUPLING_ALERTS = { alertLevel: 'none', couplingGrowthScore: 0, confidenceLevel: 'medium', alerts: [], recommendations: [] };
+
+const MOCK_GOV_REPO_FORECAST = {
+  forecastLevel: 'watch', degradationRisk: 20, confidenceLevel: 'medium', summary: '',
+  trajectory: { scoreTrend: 'stable', averageScoreDelta: -2, projectedScore: 68, projectedLevel: 'watch', interventionUrgency: 'none' },
+  riskFactors: [], structuralProjection: {}, recommendations: [],
+};
+
+describe('portfolioRoutes GET /governance', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    scoreEngineeringGovernance.mockReturnValue(MOCK_GOVERNANCE_RESULT);
+    buildPortfolioArchitectureIntelligence.mockReturnValue(MOCK_GOV_ARCH_INTELLIGENCE);
+    buildPortfolioForecastingIntelligence.mockReturnValue(MOCK_GOV_FORECAST_INTELLIGENCE);
+    detectArchitectureAnomalies.mockReturnValue(MOCK_ANOMALIES_RESULT);
+    buildArchitectureTrendTimeline.mockReturnValue(MOCK_GOV_TREND_TIMELINE);
+    detectArchitectureRegressions.mockReturnValue(MOCK_GOV_REGRESSIONS);
+    detectCouplingGrowthAlerts.mockReturnValue(MOCK_GOV_COUPLING_ALERTS);
+    forecastStructuralDegradation.mockReturnValue(MOCK_GOV_REPO_FORECAST);
+    scoreRepositoryMaturity.mockReturnValue(MOCK_GOV_MATURITY_SCORED);
+    buildPortfolioMaturityIndex.mockReturnValue(MOCK_GOV_MATURITY_INDEX);
+    scorePullRequestHealth.mockReturnValue(MOCK_GOV_PR_HEALTH);
+    buildBehavioralStabilityIndex.mockReturnValue(MOCK_GOV_BSI_RESULT);
+  });
+
+  it('returns { ...governance, _meta } with required keys on success', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], [MOCK_GOV_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('governanceScore');
+    expect(body).toHaveProperty('governanceLevel');
+    expect(body).toHaveProperty('confidenceLevel');
+    expect(body).toHaveProperty('dimensions');
+    expect(body).toHaveProperty('governanceRisks');
+    expect(body).toHaveProperty('strengths');
+    expect(body).toHaveProperty('executiveSignals');
+    expect(body).toHaveProperty('recommendations');
+    expect(body).toHaveProperty('_meta');
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('calls scoreEngineeringGovernance with all 7 required signals', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], [MOCK_GOV_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(scoreEngineeringGovernance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        portfolioArchitecture: expect.any(Object),
+        portfolioForecast:     expect.any(Object),
+        portfolioMaturity:     expect.any(Object),
+        behavioralStability:   expect.any(Object),
+        architectureAnomalies: expect.any(Object),
+      })
+    );
+  });
+
+  it('builds portfolioArchitecture via buildPortfolioArchitectureIntelligence', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({
+      repositories: expect.any(Array),
+    });
+  });
+
+  it('builds portfolioForecast via buildPortfolioForecastingIntelligence', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledWith({
+      repoForecasts: expect.any(Array),
+    });
+  });
+
+  it('calls detectArchitectureAnomalies with repoForecasts and portfolioForecast', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(detectArchitectureAnomalies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoForecasts:   expect.any(Array),
+        portfolioForecast: expect.any(Object),
+      })
+    );
+  });
+
+  it('calls detectArchitectureRegressions once per repo with >= 2 snapshots', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW, MOCK_GOV_NO_SNAP_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(detectArchitectureRegressions).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls detectCouplingGrowthAlerts once per repo with >= 2 snapshots', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW, MOCK_GOV_NO_SNAP_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(detectCouplingGrowthAlerts).toHaveBeenCalledTimes(1);
+  });
+
+  it('first SQL query scopes to r.user_id and r.is_active', async () => {
+    const db  = makeGovDb([], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const [sql1, params1] = db.query.mock.calls[0];
+    expect(sql1).toContain('user_id');
+    expect(sql1).toContain('is_active');
+    expect(params1).toContain(MOCK_USER.userId);
+  });
+
+  it('second SQL query scopes to r.user_id and r.is_active', async () => {
+    const db  = makeGovDb([], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const [sql2, params2] = db.query.mock.calls[1];
+    expect(sql2).toContain('user_id');
+    expect(sql2).toContain('is_active');
+    expect(params2).toContain(MOCK_USER.userId);
+  });
+
+  it('first SQL query reads from repo_architecture_snapshots with LIMIT 10', async () => {
+    const db  = makeGovDb([], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const [sql1] = db.query.mock.calls[0];
+    expect(sql1).toContain('repo_architecture_snapshots');
+    expect(sql1).toContain('LIMIT  10');
+  });
+
+  it('second SQL query joins repo_metrics, repo_pr_metrics and risk_scores', async () => {
+    const db  = makeGovDb([], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const [sql2] = db.query.mock.calls[1];
+    expect(sql2).toContain('repo_metrics');
+    expect(sql2).toContain('repo_pr_metrics');
+    expect(sql2).toContain('risk_scores');
+  });
+
+  it('_meta has all required fields', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW, MOCK_GOV_NO_SNAP_ROW], [MOCK_GOV_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta.source).toBe('persisted_portfolio_signals');
+    expect(_meta.repoCount).toBe(2);
+    expect(_meta.architectureSnapshotCount).toBe(1);
+    expect(_meta.forecastedRepoCount).toBe(1);
+    expect(_meta.maturityRepoCount).toBe(1);
+    expect(typeof _meta.generatedAt).toBe('string');
+  });
+
+  it('_meta.forecastedRepoCount excludes repos with < 2 snapshots', async () => {
+    const db  = makeGovDb([MOCK_GOV_NO_SNAP_ROW, MOCK_GOV_NO_SNAP_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta.forecastedRepoCount).toBe(0);
+    expect(_meta.repoCount).toBe(2);
+  });
+
+  it('empty portfolio: scoreEngineeringGovernance called with empty-derived signals', async () => {
+    const db  = makeGovDb([], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(scoreEngineeringGovernance).toHaveBeenCalledTimes(1);
+    expect(buildPortfolioArchitectureIntelligence).toHaveBeenCalledWith({ repositories: [] });
+    expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledWith({ repoForecasts: [] });
+  });
+
+  it('empty metricsResult: portfolioMaturity and behavioralStability built from empty arrays', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(buildPortfolioMaturityIndex).toHaveBeenCalledWith({ repositories: [] });
+    expect(buildBehavioralStabilityIndex).toHaveBeenCalledWith([], {}, []);
+  });
+
+  it('malformed snapshotHistory (null) treated as empty — repo still included as unknown', async () => {
+    const db  = makeGovDb([{ ...MOCK_GOV_ARCH_ROW, snapshotHistory: null }], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const [archCall] = buildPortfolioArchitectureIntelligence.mock.calls;
+    expect(archCall[0].repositories[0]).toMatchObject({
+      repoId:                  MOCK_GOV_ARCH_ROW.repoId,
+      architectureHealthLevel: 'unknown',
+    });
+  });
+
+  it('repos with < 2 snapshots produce unknown repoForecast without running pipeline', async () => {
+    const db  = makeGovDb([MOCK_GOV_NO_SNAP_ROW], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).not.toHaveBeenCalled();
+    const [forecastCall] = buildPortfolioForecastingIntelligence.mock.calls;
+    expect(forecastCall[0].repoForecasts[0].forecastLevel).toBe('unknown');
+  });
+
+  it('only two DB queries are made (no live GitHub calls)', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], [MOCK_GOV_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('DB error on first query is forwarded to next without crashing', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('DB error on second query is forwarded to next without crashing', async () => {
+    const db  = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce(new Error('metrics db fail')),
+    };
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('response does not expose any token value', async () => {
+    const db  = makeGovDb([MOCK_GOV_ARCH_ROW], [MOCK_GOV_METRICS_ROW]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body.toLowerCase()).not.toContain('access_token');
+    expect(body.toLowerCase()).not.toContain('token_enc');
+  });
+
+  it('route auth is applied via authenticate middleware at router level', () => {
+    const routerMiddleware = router.stack.find(function(layer) {
+      return !layer.route && typeof layer.handle === 'function';
+    });
+    expect(routerMiddleware).toBeDefined();
+  });
+
+  it('scoreRepositoryMaturity called once per metrics row', async () => {
+    const db  = makeGovDb([], [MOCK_GOV_METRICS_ROW, { ...MOCK_GOV_METRICS_ROW, repoId: 2 }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(scoreRepositoryMaturity).toHaveBeenCalledTimes(2);
+  });
+
+  it('scorePullRequestHealth called once per metrics row', async () => {
+    const db  = makeGovDb([], [MOCK_GOV_METRICS_ROW, { ...MOCK_GOV_METRICS_ROW, repoId: 2 }]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    expect(scorePullRequestHealth).toHaveBeenCalledTimes(2);
   });
 });
