@@ -22,6 +22,9 @@ jest.mock('../../../../execution/architecture/buildArchitectureTrendTimeline');
 jest.mock('../../../../execution/architecture/detectArchitectureRegressions');
 jest.mock('../../../../execution/architecture/detectCouplingGrowthAlerts');
 jest.mock('../../../../execution/architecture/forecastStructuralDegradation');
+jest.mock('../../../../execution/architecture/detectArchitectureAnomalies');
+jest.mock('../../../../execution/architecture/buildRemediationRecommendations');
+jest.mock('../../../../execution/architecture/predictChangeRisk');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
 
@@ -48,6 +51,9 @@ const { buildArchitectureTrendTimeline }       = require('../../../../execution/
 const { detectArchitectureRegressions }        = require('../../../../execution/architecture/detectArchitectureRegressions');
 const { detectCouplingGrowthAlerts }           = require('../../../../execution/architecture/detectCouplingGrowthAlerts');
 const { forecastStructuralDegradation }        = require('../../../../execution/architecture/forecastStructuralDegradation');
+const { detectArchitectureAnomalies }           = require('../../../../execution/architecture/detectArchitectureAnomalies');
+const { buildRemediationRecommendations }       = require('../../../../execution/architecture/buildRemediationRecommendations');
+const { predictChangeRisk }                     = require('../../../../execution/architecture/predictChangeRisk');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
 
@@ -79,6 +85,8 @@ const getMaturityHandler                = extractHandler(router, 'GET',  '/:id/m
 const getMaturityTrendHandler           = extractHandler(router, 'GET',  '/:id/maturity-trend');
 const getArchitectureHandler            = extractHandler(router, 'GET',  '/:id/architecture');
 const getArchForecastHandler            = extractHandler(router, 'GET',  '/:id/architecture/forecast');
+const getRemediationHandler             = extractHandler(router, 'GET',  '/:id/remediation');
+const postChangeRiskHandler             = extractHandler(router, 'POST', '/:id/change-risk');
 const postRegisterHandler               = extractHandler(router, 'POST', '/register');
 const postSyncHandler                   = extractHandler(router, 'POST', '/sync');
 
@@ -2439,5 +2447,531 @@ describe('repoRoutes GET /:id/architecture/forecast', () => {
     const body = JSON.stringify(res.json.mock.calls[0][0]);
     expect(body).not.toContain('access_token');
     expect(body).not.toContain('enc_token');
+  });
+});
+
+// ── GET /:id/remediation ───────────────────────────────────────────────────────
+
+describe('repoRoutes GET /:id/remediation', () => {
+  const MOCK_REM_REPO = { id: 9, fullName: 'owner/rem-repo' };
+
+  const MOCK_REM_SNAP_OBJ = {
+    repoId:                 9,
+    repoName:               'owner/rem-repo',
+    architectureHealthScore: 78,
+    architectureHealthLevel: 'healthy',
+    confidenceLevel:         'high',
+    snapshotAt:              '2026-05-01T00:00:00.000Z',
+  };
+
+  const MOCK_REM_SNAP_ROW = { snapshot: MOCK_REM_SNAP_OBJ, snapshotAt: '2026-05-01T00:00:00.000Z' };
+
+  const MOCK_TIMELINE_DATA    = { scoreTimeline: [], driftEvents: [], levelTransitions: [], summary: {}, recommendations: [] };
+  const MOCK_REGRESSION_DATA  = { regressionLevel: 'none', regressionScore: 0 };
+  const MOCK_COUPLING_DATA    = { alertLevel: 'none', couplingGrowthScore: 0 };
+  const MOCK_FORECAST_DATA    = { forecastLevel: 'none', degradationRisk: 0, confidenceLevel: 'low', summary: 'stable', recommendations: [] };
+  const MOCK_ANOMALY_DATA     = { anomalyLevel: 'none', anomalyScore: 0, confidenceLevel: 'low', summary: 'no anomalies', anomalies: [] };
+  const MOCK_REMEDIATION_DATA = {
+    recommendationLevel: 'none',
+    remediationScore:    0,
+    confidenceLevel:     'medium',
+    summary:             'No urgent remediations required.',
+    recommendations:     [],
+    actionPlan:          { immediate: [], shortTerm: [], mediumTerm: [], longTerm: [] },
+    priorities:          { highestPriorityCategory: null, highestPriorityRecommendationId: null, criticalRecommendationCount: 0, highRecommendationCount: 0 },
+    estimatedImpact:     { governanceImpact: 0, architectureImpact: 0, riskReduction: 0, confidence: 'medium' },
+  };
+
+  function makeRemDb({ repoRows = [MOCK_REM_REPO], snapshotRows = [MOCK_REM_SNAP_ROW] } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM repo_architecture_snapshots')) return { rows: snapshotRows };
+        return { rows: repoRows };
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    buildArchitectureTrendTimeline.mockReturnValue(MOCK_TIMELINE_DATA);
+    detectArchitectureRegressions.mockReturnValue(MOCK_REGRESSION_DATA);
+    detectCouplingGrowthAlerts.mockReturnValue(MOCK_COUPLING_DATA);
+    forecastStructuralDegradation.mockReturnValue(MOCK_FORECAST_DATA);
+    detectArchitectureAnomalies.mockReturnValue(MOCK_ANOMALY_DATA);
+    buildRemediationRecommendations.mockReturnValue(MOCK_REMEDIATION_DATA);
+    fetchRepositoryFiles.mockClear();
+  });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const req = makeReq({ params: { id: 'abc' } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns 404 when repo is not found, inactive, or not owned by user', async () => {
+    const db  = makeRemDb({ repoRows: [] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('repo ownership query scopes to r.user_id', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('repo_architecture_snapshots'));
+    expect(repoCall[0]).toMatch(/user_id/);
+    expect(repoCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('repo ownership query filters r.is_active = true', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('repo_architecture_snapshots'));
+    expect(repoCall[0]).toContain('is_active');
+  });
+
+  it('snapshot query loads from repo_architecture_snapshots', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall).toBeDefined();
+  });
+
+  it('snapshot query is ordered newest-first and limited to 10', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall[0]).toContain('snapshot_at DESC');
+    expect(snapCall[0]).toContain('LIMIT 10');
+  });
+
+  it('snapshot query scopes to r.user_id', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall[0]).toMatch(/r\.user_id/);
+    expect(snapCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('calls detectArchitectureRegressions with { timelineData }', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(detectArchitectureRegressions).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TIMELINE_DATA })
+    );
+  });
+
+  it('calls detectCouplingGrowthAlerts with { timelineData }', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(detectCouplingGrowthAlerts).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TIMELINE_DATA })
+    );
+  });
+
+  it('calls forecastStructuralDegradation with timelineData, regression and coupling', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(forecastStructuralDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timelineData:      MOCK_TIMELINE_DATA,
+        regressionData:    MOCK_REGRESSION_DATA,
+        couplingAlertData: MOCK_COUPLING_DATA,
+      })
+    );
+  });
+
+  it('calls detectArchitectureAnomalies with { timelineData }', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(detectArchitectureAnomalies).toHaveBeenCalledWith(
+      expect.objectContaining({ timelineData: MOCK_TIMELINE_DATA })
+    );
+  });
+
+  it('calls buildRemediationRecommendations with all six intelligence inputs', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(buildRemediationRecommendations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        governance:          expect.any(Object),
+        forecast:            MOCK_FORECAST_DATA,
+        anomaly:             MOCK_ANOMALY_DATA,
+        regression:          MOCK_REGRESSION_DATA,
+        couplingAlert:       MOCK_COUPLING_DATA,
+        architectureSnapshot: MOCK_REM_SNAP_OBJ,
+      })
+    );
+  });
+
+  it('governance approximation maps healthy architectureHealthLevel to strong governanceLevel', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const call = buildRemediationRecommendations.mock.calls[0][0];
+    expect(call.governance.governanceLevel).toBe('strong');
+    expect(call.governance.governanceScore).toBe(MOCK_REM_SNAP_OBJ.architectureHealthScore);
+    expect(call.governance.confidenceLevel).toBe(MOCK_REM_SNAP_OBJ.confidenceLevel);
+  });
+
+  it('handles no snapshots safely — returns 200 with unknown-level remediation, not a crash', async () => {
+    const db  = makeRemDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body).toHaveProperty('_meta');
+    expect(body._meta.snapshotCount).toBe(0);
+  });
+
+  it('handles one snapshot safely', async () => {
+    const db  = makeRemDb({ snapshotRows: [MOCK_REM_SNAP_ROW] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0]._meta.snapshotCount).toBe(1);
+  });
+
+  it('skips malformed snapshots (null snapshot column)', async () => {
+    const nullRow = { snapshot: null, snapshotAt: '2026-04-01T00:00:00.000Z' };
+    const db      = makeRemDb({ snapshotRows: [nullRow, MOCK_REM_SNAP_ROW] });
+    const req     = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res     = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({ snapshots: [MOCK_REM_SNAP_OBJ] });
+  });
+
+  it('skips malformed snapshots (string snapshot column)', async () => {
+    const strRow = { snapshot: 'bad', snapshotAt: '2026-04-01T00:00:00.000Z' };
+    const db     = makeRemDb({ snapshotRows: [strRow, MOCK_REM_SNAP_ROW] });
+    const req    = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res    = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(buildArchitectureTrendTimeline).toHaveBeenCalledWith({ snapshots: [MOCK_REM_SNAP_OBJ] });
+  });
+
+  it('_meta shape is stable', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta).toMatchObject({
+      repoId:       9,
+      repoName:     MOCK_REM_REPO.fullName,
+      snapshotCount: 1,
+      source:       'repo_architecture_snapshots',
+    });
+    expect(typeof _meta.generatedAt).toBe('string');
+  });
+
+  it('_meta.snapshotCount reflects filtered snapshot count', async () => {
+    const db  = makeRemDb({ snapshotRows: [MOCK_REM_SNAP_ROW, MOCK_REM_SNAP_ROW] });
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(res.json.mock.calls[0][0]._meta.snapshotCount).toBe(2);
+  });
+
+  it('forwards DB errors to next(err)', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('does not call GitHub helpers', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    expect(fetchRepositoryFiles).not.toHaveBeenCalled();
+  });
+
+  it('response does not expose tokens', async () => {
+    const db  = makeRemDb();
+    const req = makeReq({ params: { id: '9' }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await getRemediationHandler(req, res, next);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body).not.toContain('access_token');
+    expect(body).not.toContain('enc_token');
+  });
+});
+
+// ── POST /:id/change-risk ─────────────────────────────────────────────────────
+
+describe('repoRoutes POST /:id/change-risk', () => {
+  const MOCK_CR_REPO = { id: 11, fullName: 'owner/change-repo' };
+
+  const MOCK_SNAP_OBJ = {
+    repoId:                  11,
+    architectureHealthScore: 70,
+    architectureHealthLevel: 'watch',
+    confidenceLevel:         'medium',
+  };
+
+  const MOCK_CHANGE_RISK = {
+    changeRiskScore:    42,
+    changeRiskLevel:    'medium',
+    confidenceLevel:    'medium',
+    summary:            'Medium change risk identified.',
+    riskFactors:        ['auth surface touched'],
+    impactedAreas:      { architecture: false, api: true, database: false, auth: true, frontend: false, backend: true, dependencies: false, tests: false, governance: false },
+    recommendedReview:  { requiredReviewLevel: 'senior', reviewers: [], rationale: 'Auth change detected' },
+    mitigationChecklist: ['Review auth changes thoroughly'],
+    releaseGuidance:    { canFastTrack: false, requiresStaging: true, requiresRollbackPlan: false, requiresSecurityReview: true, requiresMigrationPlan: false, requiresArchitectureReview: false },
+  };
+
+  const MOCK_CHANGE = {
+    filesChanged:         ['src/auth/login.js'],
+    commitCount:          3,
+    authorCount:          1,
+    hasTestsChanged:      true,
+    hasConfigChanged:     false,
+    hasMigrationChanged:  false,
+    hasDependencyChanged: false,
+    hasAuthChanged:       true,
+    hasApiChanged:        true,
+    hasFrontendChanged:   false,
+    hasBackendChanged:    true,
+    description:          'Update login flow',
+  };
+
+  function makeCrDb({ repoRows = [MOCK_CR_REPO], snapshotRows = [{ snapshot: MOCK_SNAP_OBJ }] } = {}) {
+    return {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM repo_architecture_snapshots')) return { rows: snapshotRows };
+        return { rows: repoRows };
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    predictChangeRisk.mockClear();
+    predictChangeRisk.mockReturnValue(MOCK_CHANGE_RISK);
+    fetchRepositoryFiles.mockClear();
+  });
+
+  it('returns 400 for a non-numeric repo id', async () => {
+    const req = makeReq({ params: { id: 'not-a-number' }, body: { change: MOCK_CHANGE } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('returns 404 when repo is not found, inactive, or not owned by user', async () => {
+    const db  = makeCrDb({ repoRows: [] });
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+
+  it('repo query scopes to req.user.userId', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('repo_architecture_snapshots'));
+    expect(repoCall[0]).toMatch(/user_id/);
+    expect(repoCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('repo query filters is_active = true', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const repoCall = db.query.mock.calls.find(c => !c[0].includes('repo_architecture_snapshots'));
+    expect(repoCall[0]).toContain('is_active');
+  });
+
+  it('snapshot query targets repo_architecture_snapshots ordered DESC limited to 1', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall).toBeDefined();
+    expect(snapCall[0]).toContain('snapshot_at DESC');
+    expect(snapCall[0]).toContain('LIMIT 1');
+  });
+
+  it('snapshot query scopes to r.user_id', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const snapCall = db.query.mock.calls.find(c => c[0].includes('FROM repo_architecture_snapshots'));
+    expect(snapCall[0]).toMatch(/r\.user_id/);
+    expect(snapCall[1]).toContain(MOCK_USER.userId);
+  });
+
+  it('calls predictChangeRisk with change and repository', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(predictChangeRisk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change:     MOCK_CHANGE,
+        repository: expect.objectContaining({ id: MOCK_CR_REPO.id, fullName: MOCK_CR_REPO.fullName }),
+      })
+    );
+  });
+
+  it('passes architectureSnapshot when one exists', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(predictChangeRisk).toHaveBeenCalledWith(
+      expect.objectContaining({ architectureSnapshot: MOCK_SNAP_OBJ })
+    );
+  });
+
+  it('works without an architecture snapshot — still calls predictChangeRisk', async () => {
+    const db  = makeCrDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(predictChangeRisk).toHaveBeenCalled();
+    const call = predictChangeRisk.mock.calls[0][0];
+    expect(call.architectureSnapshot).toBeUndefined();
+  });
+
+  it('_meta.hasArchitectureSnapshot is true when snapshot present', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(res.json.mock.calls[0][0]._meta.hasArchitectureSnapshot).toBe(true);
+  });
+
+  it('_meta.hasArchitectureSnapshot is false when no snapshot', async () => {
+    const db  = makeCrDb({ snapshotRows: [] });
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(res.json.mock.calls[0][0]._meta.hasArchitectureSnapshot).toBe(false);
+  });
+
+  it('handles empty change body safely — passes empty object to predictChangeRisk', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: {}, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(predictChangeRisk).toHaveBeenCalled();
+    const call = predictChangeRisk.mock.calls[0][0];
+    expect(call.change).toEqual({});
+  });
+
+  it('handles missing body safely — passes empty object to predictChangeRisk', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: undefined, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(predictChangeRisk).toHaveBeenCalled();
+    const call = predictChangeRisk.mock.calls[0][0];
+    expect(call.change).toEqual({});
+  });
+
+  it('handles malformed filesChanged (string instead of array) — does not crash', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({
+      params: { id: '11' },
+      body:   { change: { filesChanged: 'bad-string', hasAuthChanged: true } },
+      app:    { locals: { db, config: MOCK_CONFIG } },
+    });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalled();
+  });
+
+  it('response includes _meta shape', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const { _meta } = res.json.mock.calls[0][0];
+    expect(_meta).toMatchObject({
+      repoId:               11,
+      repoName:             MOCK_CR_REPO.fullName,
+      source:               'request_body_and_repo_architecture_snapshot',
+      hasArchitectureSnapshot: true,
+    });
+    expect(typeof _meta.generatedAt).toBe('string');
+  });
+
+  it('response spreads changeRisk fields at top level', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.changeRiskScore).toBe(MOCK_CHANGE_RISK.changeRiskScore);
+    expect(body.changeRiskLevel).toBe(MOCK_CHANGE_RISK.changeRiskLevel);
+    expect(body.confidenceLevel).toBe(MOCK_CHANGE_RISK.confidenceLevel);
+    expect(body.summary).toBe(MOCK_CHANGE_RISK.summary);
+  });
+
+  it('forwards DB errors to next(err)', async () => {
+    const db  = { query: jest.fn(async () => { throw new Error('db fail'); }) };
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('does not call GitHub helpers', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    expect(fetchRepositoryFiles).not.toHaveBeenCalled();
+  });
+
+  it('response does not expose tokens', async () => {
+    const db  = makeCrDb();
+    const req = makeReq({ params: { id: '11' }, body: { change: MOCK_CHANGE }, app: { locals: { db, config: MOCK_CONFIG } } });
+    const res = makeRes();
+    await postChangeRiskHandler(req, res, next);
+    const body = JSON.stringify(res.json.mock.calls[0][0]);
+    expect(body).not.toContain('access_token');
+    expect(body).not.toContain('enc_token');
+    expect(body).not.toContain('access_token_enc');
   });
 });

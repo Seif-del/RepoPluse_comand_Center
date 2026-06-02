@@ -24,6 +24,9 @@ const { buildArchitectureTrendTimeline }        = require('../../execution/archi
 const { detectArchitectureRegressions }         = require('../../execution/architecture/detectArchitectureRegressions');
 const { detectCouplingGrowthAlerts }            = require('../../execution/architecture/detectCouplingGrowthAlerts');
 const { forecastStructuralDegradation }         = require('../../execution/architecture/forecastStructuralDegradation');
+const { detectArchitectureAnomalies }            = require('../../execution/architecture/detectArchitectureAnomalies');
+const { buildRemediationRecommendations }        = require('../../execution/architecture/buildRemediationRecommendations');
+const { predictChangeRisk }                      = require('../../execution/architecture/predictChangeRisk');
 
 const router = express.Router();
 
@@ -820,6 +823,106 @@ router.get('/:id/architecture/forecast', async (req, res, next) => {
   }
 });
 
+const ARCH_HEALTH_TO_GOV_LEVEL = {
+  healthy: 'strong',
+  watch:   'watch',
+  weak:    'weak',
+  risky:   'critical',
+  unknown: 'unknown',
+};
+
+// GET /api/repos/:id/remediation
+// Returns deterministic remediation recommendations for one repository.
+// Builds a full architecture intelligence pipeline from persisted snapshots — no live GitHub calls.
+router.get('/:id/remediation', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const db = req.app.locals.db;
+
+    const [repoResult, snapshotsResult] = await Promise.all([
+      db.query(
+        `SELECT id, github_full_name AS "fullName"
+         FROM repositories
+         WHERE id = $1 AND user_id = $2 AND is_active = true`,
+        [repoId, req.user.userId]
+      ),
+      db.query(
+        `SELECT s.snapshot, s.snapshot_at AS "snapshotAt"
+         FROM repo_architecture_snapshots s
+         JOIN repositories r ON r.id = s.repo_id
+         WHERE s.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY s.snapshot_at DESC
+         LIMIT 10`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    if (repoResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    const repo = repoResult.rows[0];
+
+    const snapshots = snapshotsResult.rows
+      .map(function(r) { return r.snapshot; })
+      .filter(function(s) { return s != null && typeof s === 'object'; });
+
+    const snapshotCount      = snapshots.length;
+    const architectureSnapshot = snapshots[0] || {};
+
+    const timelineData  = buildArchitectureTrendTimeline({ snapshots });
+    const regression    = detectArchitectureRegressions({ timelineData });
+    const couplingAlert = detectCouplingGrowthAlerts({ timelineData });
+    const forecast      = forecastStructuralDegradation({
+      timelineData,
+      regressionData:    regression,
+      couplingAlertData: couplingAlert,
+    });
+    const anomaly = detectArchitectureAnomalies({ timelineData });
+
+    const archLevel = typeof architectureSnapshot.architectureHealthLevel === 'string'
+      ? architectureSnapshot.architectureHealthLevel
+      : 'unknown';
+
+    const governance = {
+      governanceScore: typeof architectureSnapshot.architectureHealthScore === 'number'
+        ? architectureSnapshot.architectureHealthScore
+        : 0,
+      governanceLevel: ARCH_HEALTH_TO_GOV_LEVEL[archLevel] || 'unknown',
+      confidenceLevel: typeof architectureSnapshot.confidenceLevel === 'string'
+        ? architectureSnapshot.confidenceLevel
+        : 'low',
+    };
+
+    const remediation = buildRemediationRecommendations({
+      governance,
+      forecast,
+      anomaly,
+      regression,
+      couplingAlert,
+      watchlistItem:       null,
+      architectureSnapshot,
+    });
+
+    res.json({
+      ...remediation,
+      _meta: {
+        repoId,
+        repoName:    repo.fullName,
+        snapshotCount,
+        source:      'repo_architecture_snapshots',
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const ARCH_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // GET /api/repos/:id/architecture
@@ -1193,6 +1296,74 @@ router.post('/register', authorize('repositories:configure'), async (req, res, n
         fullName: row.fullName,
         linkedAt: row.linkedAt,
         url:      `https://github.com/${row.fullName}`,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/repos/:id/change-risk
+// Predicts the risk level of a proposed code change for one repository.
+// Uses persisted architecture snapshots to build context; no live GitHub calls.
+// Scores based on the submitted change object alone when no snapshot is available.
+router.post('/:id/change-risk', async (req, res, next) => {
+  try {
+    const repoId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(repoId)) {
+      return res.status(400).json({ error: 'Invalid repo id' });
+    }
+
+    const db = req.app.locals.db;
+
+    const [repoResult, snapshotResult] = await Promise.all([
+      db.query(
+        `SELECT id, github_full_name AS "fullName"
+         FROM repositories
+         WHERE id = $1 AND user_id = $2 AND is_active = true`,
+        [repoId, req.user.userId]
+      ),
+      db.query(
+        `SELECT s.snapshot
+         FROM repo_architecture_snapshots s
+         JOIN repositories r ON r.id = s.repo_id
+         WHERE s.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
+         ORDER BY s.snapshot_at DESC
+         LIMIT 1`,
+        [repoId, req.user.userId]
+      ),
+    ]);
+
+    if (repoResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    const repo = repoResult.rows[0];
+
+    const rawSnapshot        = snapshotResult.rows[0] && snapshotResult.rows[0].snapshot;
+    const architectureSnapshot = (rawSnapshot != null && typeof rawSnapshot === 'object' && !Array.isArray(rawSnapshot))
+      ? rawSnapshot
+      : null;
+    const hasArchitectureSnapshot = architectureSnapshot !== null;
+
+    const change = (req.body && typeof req.body.change === 'object' && req.body.change !== null)
+      ? req.body.change
+      : {};
+
+    const changeRisk = predictChangeRisk({
+      change,
+      repository:          { id: repo.id, fullName: repo.fullName },
+      architectureSnapshot: hasArchitectureSnapshot ? architectureSnapshot : undefined,
+    });
+
+    res.json({
+      ...changeRisk,
+      _meta: {
+        repoId,
+        repoName:             repo.fullName,
+        source:               'request_body_and_repo_architecture_snapshot',
+        hasArchitectureSnapshot,
+        generatedAt:          new Date().toISOString(),
       },
     });
   } catch (err) {
