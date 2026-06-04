@@ -1,0 +1,534 @@
+'use strict';
+
+// Pure-logic unit tests for buildRepoRemediationHtml.
+// The function is embedded in frontend/dashboard.html but has no DOM
+// dependency — logic is duplicated here verbatim so Jest (node env) can run
+// these without a browser or jsdom.
+
+// ── Minimal esc stub (matches dashboard implementation) ──────────────────────
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── buildRepoRemediationHtml (copied verbatim from dashboard.html) ────────────
+function buildRepoRemediationHtml(data) {
+  var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+    + 'Remediation guidance unavailable until architecture intelligence is available for this repository.</p>';
+
+  if (!data) return UNAVAIL;
+
+  var level = (data.recommendationLevel || 'unknown').toLowerCase();
+  if (level === 'unknown') return UNAVAIL;
+
+  var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+  if (recs.length === 0 && level === 'none') {
+    return '<p style="font-size:0.83rem;color:var(--text-muted);padding:6px 0;">'
+      + 'No remediation actions are currently recommended for this repository.</p>';
+  }
+
+  function levelCls(l) {
+    if (l === 'none' || l === 'low') return 'severity-healthy';
+    if (l === 'medium')   return 'severity-medium';
+    if (l === 'high')     return 'severity-high';
+    if (l === 'critical') return 'severity-critical';
+    return 'severity-unknown';
+  }
+
+  function priCls(p) {
+    var s = (p || '').toLowerCase();
+    if (s === 'critical') return 'severity-critical';
+    if (s === 'high')     return 'severity-high';
+    if (s === 'medium')   return 'severity-medium';
+    if (s === 'low')      return 'severity-healthy';
+    return 'severity-unknown';
+  }
+
+  var badge = 'font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:2px 9px;border-radius:99px;border:1px solid transparent;white-space:nowrap;';
+  var h = '';
+
+  var score = data.remediationScore != null ? data.remediationScore : null;
+  var conf  = data.confidenceLevel   || null;
+
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 6px;">';
+  if (score !== null) {
+    h += '<span style="font-size:1.4rem;font-weight:700;color:var(--text-primary);">' + esc(String(score)) + '</span>';
+    h += '<span style="font-size:0.75rem;color:var(--text-muted);">/ 100</span>';
+  }
+  h += '<span class="aq-badge ' + levelCls(level) + '" style="' + badge + '">'
+    + esc((data.recommendationLevel || 'UNKNOWN').toUpperCase()) + '</span>';
+  if (conf) {
+    h += '<span class="aq-badge severity-neutral" style="' + badge + '">'
+      + esc(String(conf).toUpperCase()) + ' CONFIDENCE</span>';
+  }
+  h += '</div>';
+
+  if (data.summary) {
+    h += '<p style="font-size:0.83rem;color:var(--text-secondary);line-height:1.45;margin:0 0 8px;">'
+      + esc(data.summary) + '</p>';
+  }
+
+  var meta = data._meta || {};
+  var mp   = [];
+  if (meta.snapshotCount != null) mp.push(esc(String(meta.snapshotCount)) + ' snapshots');
+  if (meta.source)                mp.push('source: ' + esc(String(meta.source)));
+  if (meta.generatedAt) {
+    try { mp.push('generated ' + new Date(meta.generatedAt).toLocaleString()); } catch (e) { /* ignore */ }
+  }
+  if (mp.length) {
+    h += '<div style="font-size:0.70rem;color:var(--text-muted);margin-bottom:10px;">' + mp.join(' · ') + '</div>';
+  }
+
+  // A. Action Plan
+  var ap     = data.actionPlan || {};
+  var phases = [['immediate','Immediate'],['shortTerm','Short-term'],['mediumTerm','Medium-term'],['longTerm','Long-term']];
+  var hasAP  = phases.some(function(p) { var a = ap[p[0]]; return Array.isArray(a) && a.length > 0; });
+  if (hasAP) {
+    h += '<div class="arch-sub-panel">';
+    h += '<div class="arch-sub-label">Action Plan</div>';
+    phases.forEach(function(p) {
+      var items = ap[p[0]];
+      if (!Array.isArray(items) || !items.length) return;
+      h += '<div style="font-size:0.72rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 4px;">'
+        + esc(p[1]) + '</div>';
+      items.forEach(function(item) {
+        if (!item) return;
+        h += '<div class="arch-rec">';
+        if (item.title)  h += '<strong>' + esc(item.title) + '</strong>';
+        if (item.reason) h += '<span style="color:var(--text-muted);font-size:0.78rem;margin-left:6px;">' + esc(item.reason) + '</span>';
+        h += '</div>';
+      });
+    });
+    h += '</div>';
+  }
+
+  // B. Recommendations (top 10)
+  if (recs.length > 0) {
+    h += '<div class="arch-sub-panel">';
+    h += '<div class="arch-sub-label">Recommendations</div>';
+    recs.slice(0, 10).forEach(function(rec) {
+      if (!rec) return;
+      h += '<div style="padding:8px 0;border-bottom:1px solid var(--border);">';
+      h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">';
+      if (rec.priority) {
+        h += '<span class="aq-badge ' + priCls(rec.priority) + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
+          + esc(String(rec.priority).toUpperCase()) + '</span>';
+      }
+      if (rec.category) {
+        h += '<span style="font-size:0.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">'
+          + esc(String(rec.category)) + '</span>';
+      }
+      h += '</div>';
+      if (rec.title)           h += '<div style="font-size:0.82rem;font-weight:600;color:var(--text-primary);margin-bottom:3px;">' + esc(rec.title) + '</div>';
+      if (rec.rationale)       h += '<div style="font-size:0.77rem;color:var(--text-secondary);margin-bottom:2px;">' + esc(rec.rationale) + '</div>';
+      if (rec.expectedOutcome) h += '<div style="font-size:0.75rem;color:var(--text-muted);font-style:italic;">Expected outcome: ' + esc(rec.expectedOutcome) + '</div>';
+      if (Array.isArray(rec.evidence) && rec.evidence.length) {
+        var ev = rec.evidence.slice(0, 2).map(function(e) { return esc(typeof e === 'string' ? e : String(e)); });
+        h += '<div style="font-size:0.70rem;color:var(--text-muted);margin-top:3px;">Evidence: '
+          + ev.join(', ') + (rec.evidence.length > 2 ? '…' : '') + '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+
+  // C. Priorities
+  var pri = data.priorities || {};
+  if (pri.highestPriorityCategory || pri.highestPriorityRecommendationId != null
+      || pri.criticalRecommendationCount != null || pri.highRecommendationCount != null) {
+    h += '<div class="arch-sub-panel">';
+    h += '<div class="arch-sub-label">Priorities</div>';
+    h += '<div class="arch-metric-grid">';
+    if (pri.criticalRecommendationCount != null) h += '<div class="arch-metric"><div class="arch-metric-val">' + esc(String(pri.criticalRecommendationCount)) + '</div><div class="arch-metric-lbl">Critical</div></div>';
+    if (pri.highRecommendationCount    != null) h += '<div class="arch-metric"><div class="arch-metric-val">' + esc(String(pri.highRecommendationCount))    + '</div><div class="arch-metric-lbl">High</div></div>';
+    if (pri.highestPriorityCategory)            h += '<div class="arch-metric"><div class="arch-metric-val" style="font-size:0.8rem;">' + esc(String(pri.highestPriorityCategory)) + '</div><div class="arch-metric-lbl">Top Category</div></div>';
+    h += '</div>';
+    if (pri.highestPriorityRecommendationId) {
+      h += '<div style="font-size:0.71rem;color:var(--text-muted);margin-top:6px;">Highest priority: '
+        + esc(String(pri.highestPriorityRecommendationId)) + '</div>';
+    }
+    h += '</div>';
+  }
+
+  // D. Estimated Impact
+  var imp     = data.estimatedImpact || {};
+  var impKeys = ['governanceImpact','architectureImpact','riskReduction','confidence'];
+  var impLbls = { governanceImpact:'Governance', architectureImpact:'Architecture', riskReduction:'Risk Reduction', confidence:'Confidence' };
+  if (impKeys.some(function(k) { return imp[k] != null; })) {
+    h += '<div class="arch-sub-panel">';
+    h += '<div class="arch-sub-label">Estimated Impact</div>';
+    h += '<div class="arch-metric-grid">';
+    impKeys.forEach(function(k) {
+      if (imp[k] == null) return;
+      h += '<div class="arch-metric"><div class="arch-metric-val" style="font-size:0.85rem;text-transform:capitalize;">'
+        + esc(String(imp[k])) + '</div><div class="arch-metric-lbl">' + esc(impLbls[k]) + '</div></div>';
+    });
+    h += '</div>';
+    h += '</div>';
+  }
+
+  return h;
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe('buildRepoRemediationHtml — empty/failure states', () => {
+  test('returns unavailable message for null data', () => {
+    const html = buildRepoRemediationHtml(null);
+    expect(html).toContain('Remediation guidance unavailable');
+  });
+
+  test('returns unavailable message for undefined', () => {
+    expect(buildRepoRemediationHtml(undefined)).toContain('Remediation guidance unavailable');
+  });
+
+  test('returns unavailable message when recommendationLevel is unknown', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'unknown', recommendations: [] });
+    expect(html).toContain('Remediation guidance unavailable');
+  });
+
+  test('returns unavailable message when recommendationLevel is UNKNOWN (uppercase)', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'UNKNOWN', recommendations: [] });
+    expect(html).toContain('Remediation guidance unavailable');
+  });
+
+  test('returns positive message when level is none and recommendations empty', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'none', recommendations: [] });
+    expect(html).toContain('No remediation actions are currently recommended');
+    expect(html).not.toContain('Remediation guidance unavailable');
+  });
+
+  test('returns positive message when recommendations absent and level is none', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'none' });
+    expect(html).toContain('No remediation actions are currently recommended');
+  });
+});
+
+describe('buildRepoRemediationHtml — score and level badge', () => {
+  const base = { recommendationLevel: 'high', remediationScore: 64, recommendations: [] };
+
+  test('renders score value', () => {
+    expect(buildRepoRemediationHtml(base)).toContain('64');
+  });
+
+  test('renders / 100 label', () => {
+    expect(buildRepoRemediationHtml(base)).toContain('/ 100');
+  });
+
+  test('renders recommendation level badge uppercased', () => {
+    expect(buildRepoRemediationHtml(base)).toContain('HIGH');
+  });
+
+  test('high level maps to severity-high badge', () => {
+    expect(buildRepoRemediationHtml(base)).toContain('severity-high');
+  });
+
+  test('critical level maps to severity-critical badge', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'critical', recommendations: [] });
+    expect(html).toContain('severity-critical');
+  });
+
+  test('medium level maps to severity-medium badge', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'medium', recommendations: [] });
+    expect(html).toContain('severity-medium');
+  });
+
+  test('low level maps to severity-healthy badge', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'low', recommendations: [] });
+    expect(html).toContain('severity-healthy');
+  });
+
+  test('none level maps to severity-healthy badge', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'none', recommendations: [{ title: 'x' }] });
+    expect(html).toContain('severity-healthy');
+  });
+});
+
+describe('buildRepoRemediationHtml — confidence and summary', () => {
+  test('renders confidence badge when confidenceLevel present', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      confidenceLevel: 'high',
+      recommendations: [],
+    });
+    expect(html).toContain('HIGH CONFIDENCE');
+    expect(html).toContain('severity-neutral');
+  });
+
+  test('omits confidence badge when confidenceLevel absent', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'high', recommendations: [] });
+    expect(html).not.toContain('CONFIDENCE');
+  });
+
+  test('renders summary text', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'medium',
+      summary: 'Address coupling issues.',
+      recommendations: [],
+    });
+    expect(html).toContain('Address coupling issues.');
+  });
+
+  test('escapes XSS in summary', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'medium',
+      summary: '<script>alert(1)</script>',
+      recommendations: [],
+    });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('buildRepoRemediationHtml — _meta', () => {
+  test('renders snapshotCount', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'medium',
+      recommendations: [],
+      _meta: { snapshotCount: 5 },
+    });
+    expect(html).toContain('5 snapshots');
+  });
+
+  test('renders source', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'medium',
+      recommendations: [],
+      _meta: { source: 'architecture' },
+    });
+    expect(html).toContain('source: architecture');
+  });
+
+  test('omits meta section when _meta absent', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'medium', recommendations: [] });
+    expect(html).not.toContain('snapshots');
+  });
+});
+
+describe('buildRepoRemediationHtml — action plan', () => {
+  const data = {
+    recommendationLevel: 'high',
+    recommendations: [],
+    actionPlan: {
+      immediate: [{ title: 'Fix auth', reason: 'Security gap' }],
+      shortTerm:  [{ title: 'Reduce coupling' }],
+      mediumTerm: [],
+      longTerm:   [],
+    },
+  };
+
+  test('renders action plan section when items exist', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Action Plan');
+  });
+
+  test('renders immediate phase label', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Immediate');
+  });
+
+  test('renders item title', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Fix auth');
+  });
+
+  test('renders item reason', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Security gap');
+  });
+
+  test('renders short-term phase', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Short-term');
+  });
+
+  test('omits empty phases', () => {
+    const html = buildRepoRemediationHtml(data);
+    expect(html).not.toContain('Medium-term');
+    expect(html).not.toContain('Long-term');
+  });
+
+  test('omits action plan section when actionPlan absent', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'high', recommendations: [] });
+    expect(html).not.toContain('Action Plan');
+  });
+
+  test('escapes XSS in action plan title', () => {
+    const d = {
+      recommendationLevel: 'high',
+      recommendations: [],
+      actionPlan: { immediate: [{ title: '<img src=x onerror=alert(1)>' }] },
+    };
+    expect(buildRepoRemediationHtml(d)).not.toContain('<img');
+  });
+});
+
+describe('buildRepoRemediationHtml — recommendations', () => {
+  const rec = {
+    priority: 'high',
+    category: 'architecture',
+    title: 'Extract service',
+    rationale: 'Reduces coupling.',
+    expectedOutcome: 'Improved maintainability.',
+    evidence: ['file_a.js', 'file_b.js'],
+  };
+
+  const data = { recommendationLevel: 'high', recommendations: [rec] };
+
+  test('renders Recommendations section', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Recommendations');
+  });
+
+  test('renders priority badge uppercased', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('HIGH');
+  });
+
+  test('priority high maps to severity-high', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('severity-high');
+  });
+
+  test('priority critical maps to severity-critical', () => {
+    const d = { recommendationLevel: 'critical', recommendations: [{ priority: 'critical', title: 't' }] };
+    expect(buildRepoRemediationHtml(d)).toContain('severity-critical');
+  });
+
+  test('priority low maps to severity-healthy', () => {
+    const d = { recommendationLevel: 'low', recommendations: [{ priority: 'low', title: 't' }] };
+    expect(buildRepoRemediationHtml(d)).toContain('severity-healthy');
+  });
+
+  test('renders category', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('architecture');
+  });
+
+  test('renders title', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Extract service');
+  });
+
+  test('renders rationale', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Reduces coupling.');
+  });
+
+  test('renders expected outcome', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Expected outcome: Improved maintainability.');
+  });
+
+  test('renders evidence (first 2)', () => {
+    const html = buildRepoRemediationHtml(data);
+    expect(html).toContain('file_a.js');
+    expect(html).toContain('file_b.js');
+  });
+
+  test('truncates evidence beyond 2 with ellipsis', () => {
+    const d = {
+      recommendationLevel: 'high',
+      recommendations: [{ title: 't', evidence: ['a', 'b', 'c'] }],
+    };
+    expect(buildRepoRemediationHtml(d)).toContain('…');
+  });
+
+  test('caps recommendations at 10', () => {
+    const recs = Array.from({ length: 15 }, function(_, i) { return { title: 'rec-' + i }; });
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'high', recommendations: recs });
+    expect(html).toContain('rec-9');
+    expect(html).not.toContain('rec-10');
+  });
+
+  test('escapes XSS in recommendation title', () => {
+    const d = { recommendationLevel: 'high', recommendations: [{ title: '<script>bad</script>' }] };
+    expect(buildRepoRemediationHtml(d)).not.toContain('<script>');
+  });
+});
+
+describe('buildRepoRemediationHtml — priorities sub-panel', () => {
+  const data = {
+    recommendationLevel: 'high',
+    recommendations: [],
+    priorities: {
+      criticalRecommendationCount: 2,
+      highRecommendationCount: 5,
+      highestPriorityCategory: 'security',
+      highestPriorityRecommendationId: 'rec-001',
+    },
+  };
+
+  test('renders Priorities section', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Priorities');
+  });
+
+  test('renders criticalRecommendationCount', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('2');
+  });
+
+  test('renders highRecommendationCount', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('5');
+  });
+
+  test('renders highestPriorityCategory', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('security');
+  });
+
+  test('renders highestPriorityRecommendationId', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('rec-001');
+  });
+
+  test('omits priorities section when priorities absent', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'high', recommendations: [] });
+    expect(html).not.toContain('Priorities');
+  });
+});
+
+describe('buildRepoRemediationHtml — estimated impact sub-panel', () => {
+  const data = {
+    recommendationLevel: 'high',
+    recommendations: [],
+    estimatedImpact: {
+      governanceImpact: 'significant',
+      architectureImpact: 'moderate',
+      riskReduction: 'high',
+      confidence: 'medium',
+    },
+  };
+
+  test('renders Estimated Impact section', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Estimated Impact');
+  });
+
+  test('renders governanceImpact value', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('significant');
+  });
+
+  test('renders architectureImpact value', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('moderate');
+  });
+
+  test('renders riskReduction value', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('high');
+  });
+
+  test('renders confidence value', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('medium');
+  });
+
+  test('renders Governance label', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Governance');
+  });
+
+  test('renders Risk Reduction label', () => {
+    expect(buildRepoRemediationHtml(data)).toContain('Risk Reduction');
+  });
+
+  test('omits estimated impact section when estimatedImpact absent', () => {
+    const html = buildRepoRemediationHtml({ recommendationLevel: 'high', recommendations: [] });
+    expect(html).not.toContain('Estimated Impact');
+  });
+
+  test('renders partial impact fields gracefully', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      estimatedImpact: { governanceImpact: 'low' },
+    });
+    expect(html).toContain('Estimated Impact');
+    expect(html).toContain('low');
+    expect(html).not.toContain('architectureImpact');
+  });
+});
