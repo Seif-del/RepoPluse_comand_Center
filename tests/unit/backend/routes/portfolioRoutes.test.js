@@ -1714,6 +1714,15 @@ describe('portfolioRoutes GET /maturity', () => {
     expect(sql).toMatch(/COUNT/i);
   });
 
+  it('SQL references rs_cnt."snapshotCount" with quotes to prevent PostgreSQL case-folding', async () => {
+    const db  = makeDb([]);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioMaturityHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('rs_cnt."snapshotCount"');
+  });
+
   it('null ciStatus normalises to "unknown" before scoring', async () => {
     const db  = makeDb([{ ...MOCK_METRICS_ROW, ciStatus: null }]);
     const req = makeReq({ app: { locals: { db } } });
@@ -2416,6 +2425,15 @@ describe('portfolioRoutes GET /governance', () => {
     expect(sql2).toContain('repo_metrics');
     expect(sql2).toContain('repo_pr_metrics');
     expect(sql2).toContain('risk_scores');
+  });
+
+  it('second SQL references rs_cnt."snapshotCount" with quotes to prevent PostgreSQL case-folding', async () => {
+    const db  = makeGovDb([], []);
+    const req = makeReq({ app: { locals: { db } } });
+    const res = makeRes();
+    await getPortfolioGovernanceHandler(req, res, next);
+    const [sql2] = db.query.mock.calls[1];
+    expect(sql2).toContain('rs_cnt."snapshotCount"');
   });
 
   it('_meta has all required fields', async () => {

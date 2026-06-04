@@ -766,7 +766,7 @@ router.get('/maturity', async (req, res, next) => {
          rm.commits_7d                   AS "commits7d",
          rm.last_push_at                 AS "lastPushAt",
          pm.pr_telemetry_status          AS "prTelemetryStatus",
-         COALESCE(rs_cnt.snapshotCount, 0) AS "snapshotCount"
+         COALESCE(rs_cnt."snapshotCount", 0) AS "snapshotCount"
        FROM repositories r
        LEFT JOIN LATERAL (
          SELECT ci_status, release_status, contributor_status, commits_7d, last_push_at
@@ -1003,7 +1003,7 @@ router.get('/governance', async (req, res, next) => {
          pm.throughput_30d                  AS "throughput30d",
          pm.abandoned_pr_count              AS "abandonedPrCount",
          pm.oldest_open_pr_age_days         AS "oldestOpenPrAgeDays",
-         COALESCE(rs_cnt.snapshotCount, 0)  AS "snapshotCount"
+         COALESCE(rs_cnt."snapshotCount", 0)  AS "snapshotCount"
        FROM repositories r
        LEFT JOIN LATERAL (
          SELECT ci_status, release_status, contributor_status, commits_7d, last_push_at
