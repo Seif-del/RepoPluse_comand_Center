@@ -23,6 +23,8 @@ const { buildPortfolioForecastingIntelligence }     = require('../../execution/a
 const { scoreEngineeringGovernance }                = require('../../execution/architecture/scoreEngineeringGovernance');
 const { detectArchitectureAnomalies }               = require('../../execution/architecture/detectArchitectureAnomalies');
 const { buildArchitectureWatchlists }               = require('../../execution/architecture/buildArchitectureWatchlists');
+const { deduplicateTopFindings }                    = require('../../execution/architecture/deduplicateTopFindings');
+const { deduplicateRecommendations }                = require('../../execution/architecture/deduplicateRecommendations');
 
 const router = express.Router();
 
@@ -899,8 +901,8 @@ router.get('/architecture', async (req, res, next) => {
         apiLinkage:                 snap.apiLinkage                 || {},
         boundaryVerification:       snap.boundaryVerification       || {},
         implementationCompleteness: snap.implementationCompleteness || {},
-        topFindings:                Array.isArray(snap.topFindings)     ? snap.topFindings     : [],
-        recommendations:            Array.isArray(snap.recommendations) ? snap.recommendations : [],
+        topFindings:                deduplicateTopFindings(Array.isArray(snap.topFindings) ? snap.topFindings : []),
+        recommendations:            deduplicateRecommendations(Array.isArray(snap.recommendations) ? snap.recommendations : []),
       };
     });
 

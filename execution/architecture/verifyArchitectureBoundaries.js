@@ -302,42 +302,41 @@ function _buildRecommendations(violations, circularAssessment, apiLinkage, route
 
   // 1. Strong violations
   if (violations.length > 0) {
-    const types = violations.map(v => v.type).join(', ');
-    recs.push(violations.length + ' architectural boundary violation' + (violations.length === 1 ? '' : 's') + ' detected (' + types + ') — fix import direction to respect layer boundaries.');
+    recs.push('Fix import direction violations to respect layer boundaries.');
   }
 
   // 2. Circular dependencies
   if (circularAssessment.severity === 'high') {
-    recs.push('High-severity circular dependencies detected — break cycles in route/service/model layers to prevent hidden coupling.');
+    recs.push('Break high-severity circular dependencies in route, service, and model layers to prevent hidden coupling.');
   } else if (circularAssessment.severity === 'medium') {
-    recs.push('Circular dependencies detected — consider extracting shared utilities to break import cycles.');
+    recs.push('Extract shared utilities to break circular import cycles.');
   }
 
   // 3. Unresolved API calls
   const unresolved = _safeArray(apiLinkage && apiLinkage.unresolvedFrontendCalls);
   if (unresolved.length > 0) {
-    recs.push(unresolved.length + ' frontend API call' + (unresolved.length === 1 ? '' : 's') + ' have no matching backend route — verify routes are defined or remove dead calls.');
+    recs.push('Verify backend routes exist for unresolved frontend API calls, or remove dead calls.');
   }
 
   // 4. Method mismatches
   const mismatches = _safeArray(apiLinkage && apiLinkage.methodMismatches);
   if (mismatches.length > 0) {
-    recs.push(mismatches.length + ' HTTP method mismatch' + (mismatches.length === 1 ? '' : 'es') + ' — align frontend call methods with backend route definitions.');
+    recs.push('Align frontend call methods with backend route definitions to resolve method mismatches.');
   }
 
   // 5. Route/model coupling
   if (routeModelCoupling.count > 0) {
-    recs.push('Routes import models directly (' + routeModelCoupling.count + ' instance' + (routeModelCoupling.count === 1 ? '' : 's') + ') — introduce a service layer between routes and models.');
+    recs.push('Introduce a service layer to eliminate direct model imports from route handlers.');
   }
 
   // 6. Fan-out/fan-in
   if (couplingAssessment.level !== 'healthy' && couplingAssessment.highFanOutFiles.length > 0) {
-    recs.push('High fan-out modules detected — consider splitting ' + couplingAssessment.highFanOutFiles[0] + ' to reduce coupling.');
+    recs.push('Split high fan-out modules such as ' + couplingAssessment.highFanOutFiles[0] + ' to reduce inter-module coupling.');
   }
 
   // 7. Orphaned routes
   if (orphaned.length > 0 && recs.length < RECOMMENDATIONS_MAX) {
-    recs.push(orphaned.length + ' backend route candidate' + (orphaned.length === 1 ? '' : 's') + ' have no frontend match — audit for unused or internal-only endpoints.');
+    recs.push('Audit backend routes without frontend consumers and retire unused or internal-only endpoints.');
   }
 
   return recs.slice(0, RECOMMENDATIONS_MAX);

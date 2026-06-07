@@ -226,32 +226,23 @@ function _recommendations(unresolved, orphaned, mismatches, linkageLevel) {
   const recs = [];
 
   if (mismatches.length > 0) {
-    recs.push(
-      mismatches.length + ' method mismatch' + (mismatches.length === 1 ? '' : 'es') +
-      ' detected — verify HTTP methods align between frontend calls and backend route definitions.'
-    );
+    recs.push('Align frontend request methods with backend route definitions to resolve HTTP method mismatches.');
   }
 
   if (unresolved.length > 0) {
-    recs.push(
-      unresolved.length + ' frontend API call' + (unresolved.length === 1 ? '' : 's') +
-      ' have no matching backend route — confirm the route is defined or remove the dead call.'
-    );
+    recs.push('Verify corresponding backend routes exist for unresolved frontend API calls, or remove obsolete calls.');
   }
 
   if (orphaned.length > 0) {
-    recs.push(
-      orphaned.length + ' backend route' + (orphaned.length === 1 ? '' : 's') +
-      ' have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.'
-    );
+    recs.push('Review backend routes without frontend consumers and retire unused endpoints where appropriate.');
   }
 
   if (linkageLevel === 'weak') {
-    recs.push('Overall API linkage is weak — consider documenting the API contract to ensure frontend and backend stay in sync.');
+    recs.push('Document the API contract and align frontend calls with backend routes to improve full-stack linkage.');
   }
 
   if (linkageLevel === 'partial') {
-    recs.push('API linkage is partial — review unresolved calls and orphaned routes to improve full-stack visibility.');
+    recs.push('Audit unresolved API calls and orphaned routes to improve full-stack visibility.');
   }
 
   return recs.slice(0, RECOMMENDATIONS_MAX);

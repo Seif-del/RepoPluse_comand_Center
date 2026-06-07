@@ -177,35 +177,28 @@ function _recommendations(signals, boundaryLevel) {
 
   const unresolved = signals.find(function(s) { return s.type === 'unresolved_frontend_api'; });
   if (unresolved) {
-    recs.push(unresolved.count + ' unresolved frontend API call' +
-      (unresolved.count === 1 ? '' : 's') +
-      ' — verify the corresponding backend routes exist.');
+    recs.push('Verify that backend routes exist for all unresolved frontend API calls.');
   }
 
   const routeNoSvc = signals.find(function(s) { return s.type === 'route_without_service_path'; });
   if (routeNoSvc) {
-    recs.push(routeNoSvc.count + ' route file' +
-      (routeNoSvc.count === 1 ? '' : 's') +
-      ' have no service layer import — consider delegating business logic to service modules.');
+    recs.push('Delegate business logic to service modules in route files that lack service layer imports.');
   }
 
   const placeholder = signals.find(function(s) { return s.type === 'placeholder_code_hint'; });
   const scaffold    = signals.find(function(s) { return s.type === 'scaffold_like_file'; });
   if (placeholder || scaffold) {
-    const total = (placeholder ? placeholder.count : 0) + (scaffold ? scaffold.count : 0);
-    recs.push(total + ' file' + (total === 1 ? '' : 's') +
-      ' show scaffold or placeholder patterns — replace stub implementations with production logic.');
+    recs.push('Replace scaffold and placeholder implementations with production-ready logic.');
   }
 
   const routeNoTests = signals.find(function(s) { return s.type === 'route_without_tests'; });
   const svcNoTests   = signals.find(function(s) { return s.type === 'service_without_tests'; });
   if (routeNoTests || svcNoTests) {
-    recs.push('Routes and/or services lack test coverage — add unit tests to verify behavior before shipping.');
+    recs.push('Add unit tests to routes and services to verify behavior before shipping.');
   }
 
   if (boundaryLevel === 'risky' || boundaryLevel === 'weak') {
-    recs.push('Architecture boundary health is ' + boundaryLevel +
-      ' — review boundary violations to improve layering.');
+    recs.push('Review and resolve architecture boundary violations to strengthen layering.');
   }
 
   return recs.slice(0, RECOMMENDATIONS_MAX);

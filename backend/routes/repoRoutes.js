@@ -27,6 +27,24 @@ const { forecastStructuralDegradation }         = require('../../execution/archi
 const { detectArchitectureAnomalies }            = require('../../execution/architecture/detectArchitectureAnomalies');
 const { buildRemediationRecommendations }        = require('../../execution/architecture/buildRemediationRecommendations');
 const { predictChangeRisk }                      = require('../../execution/architecture/predictChangeRisk');
+const { deduplicateTopFindings }         = require('../../execution/architecture/deduplicateTopFindings');
+const { deduplicateRecommendations }     = require('../../execution/architecture/deduplicateRecommendations');
+
+// Apply semantic dedup to both topFindings and recommendations when serving a
+// snapshot from the DB. This corrects cached snapshots that were built before
+// the dedup fix was deployed — the 6-hour cache would otherwise serve stale
+// data with duplicate bullets verbatim.
+function _withDedupedFindings(snap) {
+  if (!snap) return snap;
+  const result = Object.assign({}, snap);
+  if (Array.isArray(snap.topFindings) && snap.topFindings.length > 1) {
+    result.topFindings = deduplicateTopFindings(snap.topFindings);
+  }
+  if (Array.isArray(snap.recommendations) && snap.recommendations.length > 1) {
+    result.recommendations = deduplicateRecommendations(snap.recommendations);
+  }
+  return result;
+}
 
 const router = express.Router();
 
@@ -974,7 +992,7 @@ router.get('/:id/architecture', async (req, res, next) => {
       const ageMs = Date.now() - new Date(cachedRow.snapshotAt).getTime();
       if (ageMs < ARCH_CACHE_TTL_MS) {
         return res.json({
-          ...cachedRow.snapshot,
+          ..._withDedupedFindings(cachedRow.snapshot),
           _cache: { hit: true, snapshotAt: cachedRow.snapshotAt, stale: false },
         });
       }
@@ -984,7 +1002,7 @@ router.get('/:id/architecture', async (req, res, next) => {
 
     function _staleCacheResponse() {
       return {
-        ...cachedRow.snapshot,
+        ..._withDedupedFindings(cachedRow.snapshot),
         _cache: { hit: true, stale: true, warning: 'Using cached architecture snapshot because live refresh failed.' },
       };
     }

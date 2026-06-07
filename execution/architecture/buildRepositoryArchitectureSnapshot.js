@@ -19,6 +19,8 @@ const { extractRouteApiStructure }           = require('./extractRouteApiStructu
 const { linkFrontendBackendApis }            = require('./linkFrontendBackendApis');
 const { verifyArchitectureBoundaries }       = require('./verifyArchitectureBoundaries');
 const { assessImplementationCompleteness }   = require('./assessImplementationCompleteness');
+const { deduplicateTopFindings }             = require('./deduplicateTopFindings');
+const { deduplicateRecommendations }         = require('./deduplicateRecommendations');
 
 const RECOMMENDATIONS_MAX = 5;
 const TOP_FINDINGS_MAX    = 5;
@@ -138,7 +140,7 @@ function _topFindings(boundaryVerification, apiLinkage, implCompleteness, depend
     return _severityRank(a.severity) - _severityRank(b.severity);
   });
 
-  return candidates.slice(0, TOP_FINDINGS_MAX).map(function(f) {
+  return deduplicateTopFindings(candidates).slice(0, TOP_FINDINGS_MAX).map(function(f) {
     return { type: f.type, severity: f.severity, summary: f.summary };
   });
 }
@@ -146,22 +148,15 @@ function _topFindings(boundaryVerification, apiLinkage, implCompleteness, depend
 // ── Recommendations ───────────────────────────────────────────────────────────
 
 function _mergeRecommendations(boundaryRecs, completenessRecs, linkageRecs) {
-  const seen   = new Set();
-  const merged = [];
-  const all    = [].concat(
-    Array.isArray(boundaryRecs)     ? boundaryRecs     : [],
-    Array.isArray(completenessRecs) ? completenessRecs : [],
+  // Linkage first: it has the most specific/actionable wording for overlapping
+  // categories (unresolved frontend API calls, orphaned backend routes, method
+  // mismatches). Placing it first ensures its wording wins the semantic dedup.
+  const prioritized = [].concat(
     Array.isArray(linkageRecs)      ? linkageRecs      : [],
+    Array.isArray(completenessRecs) ? completenessRecs : [],
+    Array.isArray(boundaryRecs)     ? boundaryRecs     : [],
   );
-  for (let i = 0; i < all.length; i++) {
-    const rec = all[i];
-    if (!seen.has(rec)) {
-      seen.add(rec);
-      merged.push(rec);
-      if (merged.length >= RECOMMENDATIONS_MAX) break;
-    }
-  }
-  return merged;
+  return deduplicateRecommendations(prioritized, RECOMMENDATIONS_MAX);
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────
