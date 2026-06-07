@@ -2569,9 +2569,55 @@
       return false;
     }
 
+    // ── Active architecture risks ────────────────────────────────────────────
+    //
+    // Pure helper — no DOM or cache dependency.
+    // Returns an ordered array of risk-label strings.
+    //
+    // Mappings (inputs come from per-click architecture cache + portfolio intel):
+    //   unresolvedApiCalls > 0              → "API linkage gaps detected"
+    //   implementationCompleteness < 70     → "Implementation completeness is weak"
+    //   couplingRisk in elevated/high/risky/weak → "Coupling concentration is elevated"
+    //   forecastLevel in high/critical      → "Architecture forecast indicates degradation risk"
+    //   architectureConfidence = Low
+    //     OR !hasArchitectureSnapshot       → "Architecture coverage confidence is reduced"
+    function buildActiveArchitectureRisks(opts) {
+      var unresolvedApiCalls = opts ? opts.unresolvedApiCalls         : null;
+      var implCompleteness   = opts ? opts.implementationCompleteness : null;
+      var couplingRisk       = (opts && opts.couplingRisk)            || null;
+      var forecastLevel      = (opts && opts.forecastLevel)           || null;
+      var hasSnap            = !!(opts && opts.hasArchitectureSnapshot);
+      var conf               = (opts && opts.architectureConfidence)  || null;
+
+      var risks = [];
+
+      if (unresolvedApiCalls != null && unresolvedApiCalls > 0) {
+        risks.push('API linkage gaps detected');
+      }
+
+      if (implCompleteness != null && implCompleteness < 70) {
+        risks.push('Implementation completeness is weak');
+      }
+
+      var COUPLING_HIGH = ['elevated', 'high', 'risky', 'weak'];
+      if (couplingRisk && COUPLING_HIGH.indexOf(couplingRisk) >= 0) {
+        risks.push('Coupling concentration is elevated');
+      }
+
+      if (forecastLevel === 'high' || forecastLevel === 'critical') {
+        risks.push('Architecture forecast indicates degradation risk');
+      }
+
+      if (conf === 'Low' || !hasSnap) {
+        risks.push('Architecture coverage confidence is reduced');
+      }
+
+      return risks;
+    }
+
     // ── Risk explanation panel ───────────────────────────────────────────────
 
-    function buildExplanationHtml(exp) {
+    function buildExplanationHtml(exp, repoId) {
       if (!exp || !exp.hasMetrics) {
         return '<p style="font-size:0.82rem;color:var(--sev-unknown-text);font-style:italic;padding:4px 0;">'
           + 'No metrics available yet. Click <strong>Sync Now</strong> to analyze this repository.'
@@ -2582,47 +2628,43 @@
       var labelStyle = 'font-size:0.67rem;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;'
                      + 'color:var(--text-muted);margin-bottom:6px;';
 
-      // ── Section A: Active Operational Risks ─────────────────────────────────
-      html += '<div style="' + labelStyle + 'margin-top:8px;">Active Operational Risks</div>';
+      // ── Section A: Active Architecture Risks ─────────────────────────────────
+      html += '<div style="' + labelStyle + 'margin-top:8px;">Active Architecture Risks</div>';
 
-      if (exp.allClear) {
-        html += '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0;">&#10003; No risk signals detected for this repository.</p>';
-        return html;
+      var archRisks = [];
+      if (repoId != null) {
+        var archCache  = _archDataByRepoId[repoId]              || {};
+        var _intel     = _repoIntelligenceById[String(repoId)]  || {};
+        var _archData  = _resolveOverviewArchData(repoId);
+        var _fcData    = _resolveOverviewFcData(repoId);
+        var _snapExists = _intel.hasArchitectureSnapshot === true
+                       || (_intel.hasArchitectureSnapshot !== false
+                           && _archData && (_archData.architectureHealthScore != null || _archData.architectureHealthLevel != null));
+        var _conf = computeArchitectureConfidence({
+          hasArchitectureSnapshot: _snapExists,
+          architectureScore:       _archData ? _archData.architectureHealthScore : null,
+          forecastLevel:           _fcData   ? _fcData.forecastLevel             : null,
+        });
+        archRisks = buildActiveArchitectureRisks({
+          architectureHealthLevel:    _archData ? _archData.architectureHealthLevel : null,
+          architectureHealthScore:    _archData ? _archData.architectureHealthScore : null,
+          forecastLevel:              _fcData   ? _fcData.forecastLevel             : null,
+          implementationCompleteness: archCache.implementationCompleteness != null ? archCache.implementationCompleteness : null,
+          unresolvedApiCalls:         archCache.unresolvedApiCalls         != null ? archCache.unresolvedApiCalls         : null,
+          couplingRisk:               archCache.couplingRisk               || null,
+          hasArchitectureSnapshot:    _snapExists,
+          architectureConfidence:     _conf.label,
+        });
       }
 
-      var activeRisks    = exp.triggered.filter(isActiveOperationalRisk);
-      var structuralItems = exp.triggered.filter(function(r) { return !isActiveOperationalRisk(r); });
-      var hasNotMeasured = exp.notMeasured && exp.notMeasured.length;
-
-      if (activeRisks.length === 0) {
-        html += '<p style="font-size:0.82rem;color:var(--text-muted);padding:4px 0 8px;font-style:italic;">No active operational instability detected.</p>';
+      if (archRisks.length === 0) {
+        html += '<p style="font-size:0.82rem;color:var(--text-muted);padding:4px 0 8px;font-style:italic;">No active architecture risks detected.</p>';
       } else {
         html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:8px;">';
-        activeRisks.forEach(function(f) {
-          html += '<li style="color:var(--sev-critical-text);">&#9888;&#xFE0E; ' + esc(f) + '</li>';
+        archRisks.forEach(function(r) {
+          html += '<li style="color:var(--sev-critical-text);">&#9888;&#xFE0E; ' + esc(r) + '</li>';
         });
         html += '</ul>';
-      }
-
-      // ── Section B: Structural / Maturity Context ─────────────────────────────
-      if (structuralItems.length > 0 || hasNotMeasured) {
-        html += '<div style="' + labelStyle + 'margin-top:14px;">Structural / Maturity Context</div>';
-
-        if (structuralItems.length > 0) {
-          html += '<ul style="font-size:0.82rem;padding-left:18px;line-height:1.9;margin-bottom:6px;">';
-          structuralItems.forEach(function(f) {
-            html += '<li style="color:var(--text-secondary);">&#8212; ' + esc(f) + '</li>';
-          });
-          html += '</ul>';
-        }
-
-        if (hasNotMeasured) {
-          html += '<ul style="font-size:0.78rem;color:var(--sev-unknown-text);padding-left:18px;line-height:1.8;">';
-          exp.notMeasured.forEach(function(m) {
-            html += '<li>' + esc(m) + ': not yet measured</li>';
-          });
-          html += '</ul>';
-        }
       }
 
       return html;
@@ -2980,6 +3022,7 @@
     // computeRepoPriority and the overview cards can use real architecture data.
     var _archDataByRepoId         = {};   // { architectureHealthLevel, architectureHealthScore, confidenceLevel }
     var _archForecastDataByRepoId = {};   // { forecastLevel, degradationRisk, confidenceLevel, snapshotCount }
+    var _archFetchInFlightByRepoId = {};  // { [repoId]: true } while per-click arch fetch is active
 
     // ── Remediation panel state ───────────────────────────────────────────────
     var _remediationCacheByRepoId = {};
@@ -3176,6 +3219,229 @@
       return '<div class="assessment-card severity-' + a.level + '">' + esc(a.text) + '</div>';
     }
 
+    // ── Architecture assessment ──────────────────────────────────────────────
+    //
+    // Pure helper — accepts resolved architecture intelligence values and
+    // returns { text, level, cls } with no DOM or cache dependency.
+    //
+    // Priority tiers:
+    //   critical  — priority=critical OR architectureScore < 45
+    //   elevated  — priority=elevated
+    //   watch     — priority=watch
+    //   healthy   — priority=healthy
+    //
+    // Appended forecast context:
+    //   forecastLevel in ['critical','high']  → degradation-risk sentence
+    //   forecastLevel missing / unknown       → insufficient-history sentence
+    //
+    // Appended coverage context (applied after forecast):
+    //   !hasArchitectureSnapshot              → incomplete-coverage sentence
+    //   architectureConfidence Medium | Low   → reduced-confidence sentence
+    function buildArchitectureAssessment(opts) {
+      var score    = opts ? opts.architectureScore      : null;
+      var priority = (opts && opts.architecturalPriority) || null;
+      var fcLevel  = (opts && opts.forecastLevel)        || null;
+      var hasSnap  = !!(opts && opts.hasArchitectureSnapshot);
+      var conf     = (opts && opts.architectureConfidence) || null;
+
+      // ── Primary tier ────────────────────────────────────────────────────
+      var isCritical = priority === 'critical' || (score != null && score < 45);
+      var tier, text, cls;
+
+      if (isCritical) {
+        tier = 'critical'; cls = 'severity-critical';
+        var note = score != null ? ' (score: ' + score + ')' : '';
+        text = 'Architecture health is critical' + note
+             + '. Structural indicators suggest significant implementation, coupling, or integration risk.';
+      } else if (priority === 'elevated') {
+        tier = 'elevated'; cls = 'severity-high';
+        text = 'Architecture health requires attention. Structural quality indicators show elevated risk'
+             + ' that should be reviewed before additional complexity is introduced.';
+      } else if (priority === 'watch') {
+        tier = 'watch'; cls = 'severity-medium';
+        text = 'Architecture is currently stable but exhibits signals that should remain under observation.';
+      } else if (priority === 'healthy') {
+        tier = 'healthy'; cls = 'severity-healthy';
+        text = 'Architecture appears structurally healthy with no significant architectural risk indicators detected.';
+      } else {
+        tier = 'unknown'; cls = 'severity-unknown';
+        text = 'Architecture intelligence is insufficient to generate a full assessment.';
+      }
+
+      // ── Forecast context ─────────────────────────────────────────────────
+      var hasForecast = !!(fcLevel && fcLevel !== 'unknown');
+      if (hasForecast && (fcLevel === 'critical' || fcLevel === 'high')) {
+        text += ' Forecast analysis indicates elevated degradation risk.';
+      } else if (!hasForecast) {
+        text += ' Forecast confidence is limited due to insufficient architecture history.';
+      }
+
+      // ── Coverage context ─────────────────────────────────────────────────
+      if (!hasSnap) {
+        text += ' Architecture intelligence coverage is incomplete.';
+      } else if (conf === 'Medium' || conf === 'Low') {
+        text += ' Assessment confidence is reduced due to limited architecture evidence.';
+      }
+
+      return { text: text, level: tier, cls: cls };
+    }
+
+    // Wrapper that reads module-level caches and renders the assessment card HTML.
+    function buildArchitectureAssessmentHtml(repo) {
+      var intel    = _repoIntelligenceById[String(repo.id)] || {};
+      var aq       = _attentionMap[repo.id]                 || null;
+      var archData = _resolveOverviewArchData(repo.id);
+      var fcData   = _resolveOverviewFcData(repo.id);
+
+      // Build archData/fcData for priority — mirrors the table-row logic.
+      var archDataForPri;
+      if (intel.architectureHealthLevel || intel.architectureHealthScore != null) {
+        archDataForPri = {
+          architectureHealthLevel:  intel.architectureHealthLevel  || null,
+          architectureHealthScore:  intel.architectureHealthScore  != null ? intel.architectureHealthScore : null,
+          watchlistEscalationLevel: intel.watchlistEscalationLevel || null,
+        };
+      } else {
+        archDataForPri = archData;
+      }
+      var fcDataForPri = intel.forecastLevel ? { forecastLevel: intel.forecastLevel } : fcData;
+      var priority     = computeRepoPriority(repo, aq, archDataForPri, fcDataForPri);
+
+      // Snapshot detection — same precedence as Card 5 (Snapshot Coverage).
+      var snapExists = intel.hasArchitectureSnapshot === true
+                    || (intel.hasArchitectureSnapshot !== false
+                        && archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null));
+
+      // Architecture Confidence — same call as Card 6.
+      var conf = computeArchitectureConfidence({
+        hasArchitectureSnapshot: snapExists,
+        architectureScore:       archData ? archData.architectureHealthScore : null,
+        forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+      });
+
+      var a = buildArchitectureAssessment({
+        architectureScore:       archData ? archData.architectureHealthScore : null,
+        architectureLevel:       archData ? archData.architectureHealthLevel : null,
+        architecturalPriority:   priority,
+        forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+        hasArchitectureSnapshot: snapExists,
+        architectureConfidence:  conf.label,
+      });
+
+      return '<div class="assessment-card ' + a.cls + '">' + esc(a.text) + '</div>';
+    }
+
+    // ── Architecture recommendations ─────────────────────────────────────────
+    //
+    // Pure helper — no DOM or cache dependency.
+    // Returns an ordered array of recommendation strings.
+    //
+    // Primary tier:
+    //   critical / risky  (priority=critical OR score<45 OR level='risky')
+    //     → API linkage, coupling, completeness, orphaned-routes items
+    //   elevated
+    //     → hotspots, route-service coverage, dependency concentration
+    //   watch
+    //     → monitor trend, increase snapshot frequency
+    //   healthy
+    //     → (no recommendations)
+    //
+    // Always appended when !hasArchitectureSnapshot:
+    //     → generate snapshot, improve coverage
+    //
+    // Appended when forecastLevel in ['critical','high']:
+    //     → investigate degradation, prioritize structural remediation
+    function buildArchitectureRecommendations(opts) {
+      var score    = opts ? opts.architectureScore      : null;
+      var level    = (opts && opts.architectureLevel)   || null;
+      var priority = (opts && opts.architecturalPriority) || null;
+      var fcLevel  = (opts && opts.forecastLevel)        || null;
+      var hasSnap  = !!(opts && opts.hasArchitectureSnapshot);
+
+      var items = [];
+
+      // ── Primary tier ────────────────────────────────────────────────────
+      var isCritical = priority === 'critical'
+                    || (score != null && score < 45)
+                    || level === 'risky';
+
+      if (isCritical) {
+        items.push('Review unresolved API linkage issues');
+        items.push('Reduce coupling in high fan-out modules');
+        items.push('Address implementation completeness gaps');
+        items.push('Audit orphaned routes and dead integrations');
+      } else if (priority === 'elevated') {
+        items.push('Review architectural hotspots');
+        items.push('Improve route-to-service coverage');
+        items.push('Reduce dependency concentration');
+      } else if (priority === 'watch') {
+        items.push('Monitor architecture trend');
+        items.push('Increase architecture snapshot frequency');
+      }
+      // healthy → no primary recommendations
+
+      // ── No snapshot ──────────────────────────────────────────────────────
+      if (!hasSnap) {
+        items.push('Generate architecture snapshot');
+        items.push('Improve architecture coverage');
+      }
+
+      // ── High-risk forecast ───────────────────────────────────────────────
+      if (fcLevel === 'critical' || fcLevel === 'high') {
+        items.push('Investigate degradation trajectory');
+        items.push('Prioritize structural remediation');
+      }
+
+      return items;
+    }
+
+    // Wrapper that reads module-level caches and renders the recommendation list HTML.
+    function buildArchitectureRecommendationsHtml(repo) {
+      var intel    = _repoIntelligenceById[String(repo.id)] || {};
+      var aq       = _attentionMap[repo.id]                 || null;
+      var archData = _resolveOverviewArchData(repo.id);
+      var fcData   = _resolveOverviewFcData(repo.id);
+
+      // Priority — mirrors table-row and assessment logic.
+      var archDataForPri;
+      if (intel.architectureHealthLevel || intel.architectureHealthScore != null) {
+        archDataForPri = {
+          architectureHealthLevel:  intel.architectureHealthLevel  || null,
+          architectureHealthScore:  intel.architectureHealthScore  != null ? intel.architectureHealthScore : null,
+          watchlistEscalationLevel: intel.watchlistEscalationLevel || null,
+        };
+      } else {
+        archDataForPri = archData;
+      }
+      var fcDataForPri = intel.forecastLevel ? { forecastLevel: intel.forecastLevel } : fcData;
+      var priority     = computeRepoPriority(repo, aq, archDataForPri, fcDataForPri);
+
+      // Snapshot detection — same precedence as Architecture Confidence card.
+      var snapExists = intel.hasArchitectureSnapshot === true
+                    || (intel.hasArchitectureSnapshot !== false
+                        && archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null));
+
+      var items = buildArchitectureRecommendations({
+        architectureScore:       archData ? archData.architectureHealthScore : null,
+        architectureLevel:       archData ? archData.architectureHealthLevel : null,
+        architecturalPriority:   priority,
+        forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+        hasArchitectureSnapshot: snapExists,
+        architectureConfidence:  null,   // not used in recommendations
+      });
+
+      if (!items.length) {
+        return '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0 2px;">'
+          + '&#10003; No architecture recommendations at this time.</p>';
+      }
+
+      return '<ul class="actions-list">'
+        + items.map(function(a) {
+            return '<li class="action-item">' + esc(a) + '</li>';
+          }).join('')
+        + '</ul>';
+    }
+
     // ── Recommended actions ──────────────────────────────────────────────────
 
     function buildRecommendedActions(repo) {
@@ -3216,58 +3482,63 @@
         + '</ul>';
     }
 
-    // ── Operational Stability panel ──────────────────────────────────────────
+    // ── Architecture Direction panel ──────────────────────────────────────────
+    // fc = _archForecastDataByRepoId[repoId] || null
 
-    function buildStabilityHtml(data) {
-      if (!data) {
-        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + 'Unable to load stability data.</p>';
-      }
+    function buildArchTrajectoryHtml(fc) {
+      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                 + 'Not enough architecture history to determine architecture direction.</p>';
+      if (!fc || !fc.scoreTrend) return UNAVAIL;
 
-      var hasIssues = data.escalationLevel !== 'none'
-        || data.volatilityLevel !== 'low'
-        || data.persistentRisk
-        || (data.signals && data.signals.length > 0);
-
-      if (!hasIssues) {
-        return '<p style="font-size:0.82rem;color:var(--sev-healthy-text);padding:4px 0;">'
-          + '&#10003; No operational instability detected.</p>';
-      }
+      var st = fc.scoreTrend;
+      var trendLabel = st === 'volatile'  ? 'Volatile'      :
+                       st === 'degrading' ? 'Deteriorating'  :
+                       st === 'improving' ? 'Improving'      :
+                       st === 'stable'    ? 'Stable'         : 'Unknown';
+      var trendSev   = st === 'volatile'  ? 'medium'  :
+                       st === 'degrading' ? 'high'    :
+                       st === 'improving' ? 'healthy' :
+                       st === 'stable'    ? 'neutral' : 'unknown';
 
       var html = '<div class="stability-panel">';
 
-      var hasBadges = data.volatilityLevel !== 'low'
-        || data.escalationLevel !== 'none'
-        || data.persistentRisk;
+      // Row 1: direction trend badge + urgency badge
+      html += '<div class="stability-badges">';
+      html += '<span class="stability-badge severity-' + esc(trendSev) + '">'
+            + esc(trendLabel.toUpperCase()) + '</span>';
 
-      if (hasBadges) {
-        html += '<div class="stability-badges">';
-
-        if (data.volatilityLevel !== 'low') {
-          var volCls = data.volatilityLevel === 'high' ? 'severity-high' : 'severity-medium';
-          html += '<span class="stability-badge ' + volCls + '">'
-            + esc(data.volatilityLevel.toUpperCase() + ' VOLATILITY') + '</span>';
-        }
-
-        if (data.escalationLevel !== 'none') {
-          var escCls = data.escalationLevel === 'critical' ? 'severity-critical' : 'severity-high';
-          html += '<span class="stability-badge ' + escCls + '">'
-            + esc(data.escalationLevel.toUpperCase() + ' ESCALATION') + '</span>';
-        }
-
-        if (data.persistentRisk) {
-          html += '<span class="stability-badge severity-high">PERSISTENT RISK</span>';
-        }
-
-        html += '</div>';
+      if (fc.interventionUrgency && fc.interventionUrgency !== 'none') {
+        var uSev = fc.interventionUrgency === 'immediate' ? 'critical'
+                 : fc.interventionUrgency === 'urgent'    ? 'high'
+                 : fc.interventionUrgency === 'soon'      ? 'medium' : 'low';
+        html += '<span class="stability-badge severity-' + esc(uSev) + '">'
+              + esc(fc.interventionUrgency.toUpperCase()) + ' URGENCY</span>';
       }
+      html += '</div>';
 
-      if (data.signals && data.signals.length) {
-        html += '<ul class="stability-signals">'
-          + data.signals.map(function(s) {
-              return '<li class="stability-signal">' + esc(s) + '</li>';
-            }).join('')
-          + '</ul>';
+      // Row 2: projected score + projected level as primary metric tiles
+      var hasScore = fc.projectedScore != null;
+      var hasLevel = !!fc.projectedLevel;
+      if (hasScore || hasLevel) {
+        html += '<div class="arch-metric-grid" style="margin-top:8px;">';
+        if (hasScore) {
+          html += '<div class="arch-metric">'
+                + '<div class="arch-metric-val">' + esc(String(fc.projectedScore)) + '</div>'
+                + '<div class="arch-metric-lbl">Projected Score</div>'
+                + '</div>';
+        }
+        if (hasLevel) {
+          var pSev = fc.projectedLevel === 'risky'   ? 'severity-critical'
+                   : fc.projectedLevel === 'weak'    ? 'severity-high'
+                   : fc.projectedLevel === 'watch'   ? 'severity-medium'
+                   : fc.projectedLevel === 'healthy' ? 'severity-healthy' : 'severity-unknown';
+          html += '<div class="arch-metric">'
+                + '<div class="arch-metric-val ' + esc(pSev) + '">'
+                + esc(fc.projectedLevel.toUpperCase()) + '</div>'
+                + '<div class="arch-metric-lbl">Projected Level</div>'
+                + '</div>';
+        }
+        html += '</div>';
       }
 
       html += '</div>';
@@ -3277,22 +3548,8 @@
     function loadRepoEscalation(repoId) {
       var container = document.getElementById('repo-stability-content');
       if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/escalation', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          return r.json();
-        })
-        .then(function(d) {
-          if (!d) return;
-          container.innerHTML = buildStabilityHtml(d);
-        })
-        .catch(function() {
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'No operational instability detected.</p>';
-          }
-        });
+      var fc = _archForecastDataByRepoId[repoId] || null;
+      container.innerHTML = buildArchTrajectoryHtml(fc);
     }
 
     // ── Portfolio Forecast ────────────────────────────────────────────────────
@@ -3950,91 +4207,74 @@
         });
     }
 
-    // ── Operational Forecast ──────────────────────────────────────────────────
+    // ── Architecture Forecast summary ─────────────────────────────────────────
+    // fc = _archForecastDataByRepoId[repoId] || null
 
-    var FORECAST_TRAJECTORY_SEV = {
-      escalating:    'critical',
-      deteriorating: 'high',
-      volatile:      'medium',
-      recovering:    'healthy',
-      stable:        'neutral',
-      unknown:       'unknown',
-    };
+    function buildArchForecastSummaryHtml(fc) {
+      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                 + 'Architecture forecast unavailable until multiple architecture snapshots exist.</p>';
+      if (!fc || !fc.forecastLevel || fc.forecastLevel === 'unknown') return UNAVAIL;
 
-    function buildForecastHtml(data) {
-      if (!data || data.trajectory === 'unknown') {
-        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + 'Insufficient history to forecast trajectory.</p>';
-      }
+      var fl    = fc.forecastLevel;
+      var flSev = fl === 'critical'                  ? 'critical'
+                : fl === 'high'                      ? 'high'
+                : fl === 'medium' || fl === 'watch'  ? 'medium'
+                : fl === 'low' || fl === 'none' || fl === 'stable' ? 'healthy'
+                : 'unknown';
 
-      var trajSev = FORECAST_TRAJECTORY_SEV[data.trajectory] || 'unknown';
-      var fcastSev = data.forecastLevel || 'unknown';
       var html = '<div class="forecast-panel">';
-
       html += '<div class="forecast-badges">';
-      html += '<span class="forecast-badge severity-' + esc(trajSev) + '">'
-        + esc((data.trajectory || 'unknown').toUpperCase()) + '</span>';
-      if (data.forecastLevel && data.forecastLevel !== 'unknown') {
-        html += '<span class="forecast-badge severity-' + esc(fcastSev) + '">'
-          + esc(data.forecastLevel.toUpperCase() + ' FORECAST') + '</span>';
+      html += '<span class="forecast-badge severity-' + esc(flSev) + '">'
+            + esc(fl.toUpperCase() + ' FORECAST') + '</span>';
+
+      if (fc.interventionUrgency && fc.interventionUrgency !== 'none') {
+        html += '<span class="forecast-badge severity-medium">'
+              + esc(fc.interventionUrgency.toUpperCase() + ' URGENCY') + '</span>';
       }
       html += '</div>';
 
-      if (data.projectedRisk) {
-        html += '<div class="forecast-narrative">' + esc(data.projectedRisk) + '</div>';
+      if (fc.summary) {
+        html += '<div class="forecast-narrative">' + esc(fc.summary) + '</div>';
       }
 
-      if (data.confidence) {
-        var fcBadgeCls = 'confidence-badge conf-' + esc(data.confidence);
-        var fcLabel    = 'Forecast confidence: ' + esc(data.confidence.charAt(0).toUpperCase() + data.confidence.slice(1));
-        html += '<div class="forecast-confidence"><span class="' + fcBadgeCls + '" style="margin-right:6px;">'
-          + esc(data.confidence.toUpperCase()) + '</span>' + fcLabel + '</div>';
-      }
-
-      if (data.signals && data.signals.length) {
-        html += '<ul class="forecast-signals">'
-          + data.signals.map(function(s) {
-              return '<li class="forecast-signal">' + esc(s) + '</li>';
-            }).join('')
-          + '</ul>';
+      if (typeof fc.degradationRisk === 'number') {
+        html += '<div class="forecast-confidence">Degradation risk: '
+              + esc(String(fc.degradationRisk)) + '%</div>';
       }
 
       html += '</div>';
       return html;
     }
 
-    // ── Operational Confidence panel ─────────────────────────────────────────
+    // ── Forecast Confidence panel ─────────────────────────────────────────────
+    // fc = _archForecastDataByRepoId[repoId] || null
 
-    function buildConfidenceHtml(data) {
-      if (!data) {
-        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + 'Unable to load confidence data.</p>';
-      }
+    function buildArchConfidenceHtml(fc) {
+      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                 + 'Confidence data unavailable until multiple architecture snapshots exist.</p>';
+      if (!fc) return UNAVAIL;
 
-      var lvl    = data.confidenceLevel  || 'low';
-      var score  = data.confidenceScore  != null ? data.confidenceScore  : 0;
-      var badgeTxt = lvl === 'high' ? 'HIGH CONFIDENCE'
-                   : lvl === 'medium' ? 'MEDIUM CONFIDENCE'
-                   : 'LOW CONFIDENCE';
-      var badgeCls = 'confidence-badge conf-' + esc(lvl);
+      var cl = fc.confidenceLevel && fc.confidenceLevel !== 'unknown' ? fc.confidenceLevel : 'low';
+      var badgeTxt = cl === 'high'   ? 'HIGH CONFIDENCE'
+                   : cl === 'medium' ? 'MEDIUM CONFIDENCE'
+                   :                   'LOW CONFIDENCE';
+      var badgeCls = 'confidence-badge conf-' + esc(cl);
 
       var html = '<div class="confidence-panel">';
       html += '<div class="confidence-header">';
       html += '<span class="' + badgeCls + '">' + esc(badgeTxt) + '</span>';
-      html += '<span class="confidence-score">Score: ' + esc(String(score)) + ' / 100</span>';
+
+      if (typeof fc.snapshotCount === 'number') {
+        html += '<span class="confidence-score">'
+              + esc(String(fc.snapshotCount)) + ' snapshot'
+              + (fc.snapshotCount !== 1 ? 's' : '') + '</span>';
+      }
       html += '</div>';
 
-      if (data.summary) {
-        html += '<div class="confidence-summary">' + esc(data.summary) + '</div>';
-      }
-
-      if (data.factors && data.factors.length) {
-        html += '<ul class="confidence-factors">'
-          + data.factors.map(function(f) {
-              return '<li class="confidence-factor">' + esc(f) + '</li>';
-            }).join('')
-          + '</ul>';
-      }
+      var summary = cl === 'high'   ? 'High confidence in architecture forecast based on sufficient snapshot history.'
+                  : cl === 'medium' ? 'Forecast confidence is moderate. Additional snapshots will improve accuracy.'
+                  :                   'Additional architecture snapshots are needed to increase forecast confidence.';
+      html += '<div class="confidence-summary">' + esc(summary) + '</div>';
 
       html += '</div>';
       return html;
@@ -4128,31 +4368,137 @@
       return html;
     }
 
+    // ── Architecture Risk Profile ─────────────────────────────────────────────
+    // Renders the six-dimension architecture intelligence profile card.
+    // Uses the existing rms-panel / rms-dims / rms-dim CSS classes for layout.
+    // All inputs are plain objects (no DOM or cache dependency) — pure renderer.
+    //
+    // archCache  — from _archDataByRepoId[repoId]
+    // archData   — from _resolveOverviewArchData(repoId)
+    // fcData     — from _resolveOverviewFcData(repoId)
+    // intel      — from _repoIntelligenceById[String(repoId)]
+    function buildArchitectureRiskProfileHtml(archCache, archData, fcData, intel) {
+      var FALLBACK = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                  + 'Architecture Risk Profile unavailable — sync repository to generate architecture snapshot.</p>';
+
+      // Need at least a level or score to render the header meaningfully.
+      var level = (archData && archData.architectureHealthLevel && archData.architectureHealthLevel !== 'unknown'
+                    ? archData.architectureHealthLevel : null)
+               || (intel && intel.architectureHealthLevel ? intel.architectureHealthLevel : null);
+      var score = (archData && archData.architectureHealthScore != null) ? archData.architectureHealthScore
+                : (intel  && intel.architectureHealthScore  != null) ? intel.architectureHealthScore
+                : null;
+
+      if (!level && score == null) return FALLBACK;
+
+      var conf = (archCache && archCache.confidenceLevel) || 'low';
+
+      var LEVEL_SEV = {
+        healthy: 'severity-healthy', watch: 'severity-medium',
+        weak:    'severity-high',    risky: 'severity-critical',
+        unknown: 'severity-unknown'
+      };
+      var levelLabel = level ? (level.charAt(0).toUpperCase() + level.slice(1)) : 'Unknown';
+      var levelCls   = LEVEL_SEV[level] || 'severity-unknown';
+
+      // Snapshot existence — same precedence as Overview cards.
+      var snapExists = !!(intel && (
+        intel.hasArchitectureSnapshot === true
+        || (intel.hasArchitectureSnapshot !== false
+            && archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null))
+      ));
+
+      var archConf = computeArchitectureConfidence({
+        hasArchitectureSnapshot: snapExists,
+        architectureScore:       archData ? archData.architectureHealthScore : null,
+        forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+      });
+
+      // Dimension source values.
+      var apiLevel    = (archCache && archCache.apiLinkageLevel)        || null;
+      var implLevel   = (archCache && archCache.implementationLevel)    || null;
+      var couplingLvl = (archCache && archCache.couplingRisk)           || null;
+      var bndScore    = (archCache && archCache.boundaryHealthScore != null) ? archCache.boundaryHealthScore : null;
+      var bndViol     = (archCache && archCache.boundaryViolationCount != null) ? archCache.boundaryViolationCount : null;
+      var fcLevel     = fcData ? (fcData.forecastLevel || null) : null;
+
+      // Derive boundary level from score using the same thresholds as _archLevelFromScore.
+      var bndLevel = bndScore != null
+        ? (bndScore >= 85 ? 'healthy' : bndScore >= 70 ? 'watch' : bndScore >= 45 ? 'weak' : 'risky')
+        : null;
+
+      var FC_SEV = {
+        critical: 'severity-critical', high: 'severity-high',
+        medium: 'severity-medium',     watch: 'severity-medium',
+        low: 'severity-healthy',       stable: 'severity-healthy', none: 'severity-healthy'
+      };
+
+      function _badge(lv, cls) {
+        return '<span class="pf-badge ' + esc(cls) + '" style="font-size:0.67rem;">'
+             + esc(lv.toUpperCase()) + '</span>';
+      }
+      function _dash() {
+        return '<span class="rms-dim-val" style="color:var(--text-muted);">—</span>';
+      }
+
+      var dims = [
+        { name: 'API Linkage',
+          val: apiLevel  ? _badge(apiLevel,   LEVEL_SEV[apiLevel]   || 'severity-unknown') : _dash() },
+        { name: 'Implementation Completeness',
+          val: implLevel ? _badge(implLevel,  LEVEL_SEV[implLevel]  || 'severity-unknown') : _dash() },
+        { name: 'Coupling Risk',
+          val: couplingLvl ? _badge(couplingLvl, LEVEL_SEV[couplingLvl] || 'severity-unknown') : _dash() },
+        { name: 'Boundary Integrity',
+          val: bndLevel
+            ? '<span class="pf-badge ' + esc(LEVEL_SEV[bndLevel] || 'severity-unknown') + '" style="font-size:0.67rem;">'
+              + esc(bndLevel.toUpperCase())
+              + (bndViol != null ? ' &middot; ' + esc(String(bndViol)) + 'v' : '')
+              + '</span>'
+            : _dash() },
+        { name: 'Forecast Risk',
+          val: (fcLevel && fcLevel !== 'unknown')
+            ? _badge(fcLevel, FC_SEV[fcLevel] || 'severity-unknown')
+            : _dash() },
+        { name: 'Architecture Confidence',
+          val: _badge(archConf.label, archConf.cls) },
+      ];
+
+      var html = '<div class="rms-panel">';
+
+      // Header: overall score + level badge + confidence badge
+      html += '<div class="rms-header">';
+      if (score != null) {
+        html += '<span class="rms-score">' + esc(String(score))
+              + '<span class="rms-score-max"> / 100</span></span>';
+      }
+      html += '<span class="pf-badge ' + esc(levelCls) + '">' + esc(levelLabel.toUpperCase()) + '</span>';
+      html += '<span class="confidence-badge conf-' + esc(conf) + '">'
+           +  esc(conf.toUpperCase() + ' CONFIDENCE') + '</span>';
+      html += '</div>';
+
+      // Six architecture dimension rows
+      html += '<div class="rms-dims">';
+      dims.forEach(function(d) {
+        html += '<div class="rms-dim"><span>' + esc(d.name) + '</span>' + d.val + '</div>';
+      });
+      html += '</div>';
+
+      html += '</div>';
+      return html;
+    }
+
     function loadRepoMaturity(repoId) {
+      // Populates the Architecture Risk Profile from architecture intelligence caches.
+      // No maturity API call — all data comes from _archDataByRepoId (per-click) and
+      // _repoIntelligenceById (portfolio intel), both populated by loadRepoArchitecture.
       var container = document.getElementById('repo-maturity-content');
       if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/maturity', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          if (!r.ok) {
-            console.warn('[RepoMaturity] unexpected HTTP status:', r.status);
-            return null;
-          }
-          return r.json();
-        })
-        .then(function(d) {
-          var fallback = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-                       + 'Repository maturity unavailable until telemetry is synced.</p>';
-          if (container) container.innerHTML = d ? buildRepositoryMaturityHtml(d) : fallback;
-        })
-        .catch(function(err) {
-          console.warn('[RepoMaturity] failed to load:', err);
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-                                + 'Repository maturity unavailable until telemetry is synced.</p>';
-          }
-        });
+      container.innerHTML = buildArchitectureRiskProfileHtml(
+        _archDataByRepoId[repoId]              || {},
+        _resolveOverviewArchData(repoId),
+        _resolveOverviewFcData(repoId),
+        _repoIntelligenceById[String(repoId)]  || {}
+      );
     }
 
     function _buildMaturitySparklineSvg(scores) {
@@ -4279,280 +4625,262 @@
       return html;
     }
 
-    function loadRepoMaturityTrend(repoId) {
-      var container = document.getElementById('repo-maturity-trend-content');
-      if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/maturity-trend', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          if (!r.ok) {
-            console.warn('[RepoMaturityTrend] unexpected HTTP status:', r.status);
-            return null;
-          }
-          return r.json();
-        })
-        .then(function(d) {
-          var fallback = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-                       + 'Maturity trend unavailable until more snapshots are collected.</p>';
-          if (container) container.innerHTML = d ? buildRepositoryMaturityTrendHtml(d) : fallback;
-        })
-        .catch(function(err) {
-          console.warn('[RepoMaturityTrend] failed to load:', err);
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-                                + 'Maturity trend unavailable until more snapshots are collected.</p>';
-          }
-        });
-    }
+    // ── Architecture Risk Trend ───────────────────────────────────────────────
+    // Pure helper — no DOM or cache dependency.
+    // fcData  — from _archForecastDataByRepoId[repoId] (extended fields)
+    // archData — from _resolveOverviewArchData(repoId) (fallback level/score)
+    //
+    // scoreTrend mapping:
+    //   'volatile'  → Volatile     (severity-medium)
+    //   'degrading' → Deteriorating (severity-high)
+    //   'improving' → Improving    (severity-healthy)
+    //   'stable'    → Stable       (severity-neutral)
+    //   missing     → Unknown      (severity-unknown)
+    //
+    // forecastLevel mapping mirrors existing _flClass() in the Architecture tab.
+    function buildArchitectureRiskTrendHtml(fcData, archData) {
+      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                 + 'Architecture risk trend is unavailable until multiple architecture snapshots exist.</p>';
 
-    function buildPrHealthHtml(data) {
-      var label   = data.label   || 'unknown';
-      var score   = typeof data.score === 'number' ? data.score : null;
-      var conf    = data.confidenceLevel || 'low';
-      var reasons = Array.isArray(data.reasons) ? data.reasons : [];
+      // Must have at least some data to render the panel.
+      var hasFc    = !!(fcData && (fcData.forecastLevel || fcData.scoreTrend));
+      var hasArch  = !!(archData && (archData.architectureHealthLevel || archData.architectureHealthScore != null));
+      if (!hasFc && !hasArch) return UNAVAIL;
 
-      var LABEL_MAP = {
-        'none':    { text: 'No PR Activity', cls: 'severity-neutral'  },
-        'unknown': { text: 'Unknown',        cls: 'severity-unknown'  },
-        'healthy': { text: 'Healthy',        cls: 'severity-healthy'  },
-        'monitor': { text: 'Monitor',        cls: 'severity-medium'   },
-        'at-risk': { text: 'At Risk',        cls: 'severity-high'     },
-        'critical':{ text: 'Critical',       cls: 'severity-critical' },
-      };
-      var lm = LABEL_MAP[label] || LABEL_MAP['unknown'];
+      // ── Trend label from scoreTrend ────────────────────────────────────────
+      var st = fcData ? fcData.scoreTrend : null;
+      var trendLabel, trendCls;
+      if      (st === 'volatile')  { trendLabel = 'Volatile';      trendCls = 'severity-medium';  }
+      else if (st === 'degrading') { trendLabel = 'Deteriorating'; trendCls = 'severity-high';    }
+      else if (st === 'improving') { trendLabel = 'Improving';     trendCls = 'severity-healthy'; }
+      else if (st === 'stable')    { trendLabel = 'Stable';        trendCls = 'severity-neutral'; }
+      else                         { trendLabel = 'Unknown';       trendCls = 'severity-unknown'; }
 
-      if (label === 'none') {
-        return '<div class="pr-health-panel">'
-          + '<span class="pr-health-badge ' + esc(lm.cls) + '">' + esc(lm.text) + '</span>'
-          + '<p style="margin-top:8px;font-size:0.8rem;color:var(--text-muted);font-style:italic;">'
-          + 'No pull request activity found — nothing to assess.</p>'
-          + '</div>';
-      }
+      // ── Forecast risk badge ────────────────────────────────────────────────
+      var fl    = (fcData && fcData.forecastLevel && fcData.forecastLevel !== 'unknown') ? fcData.forecastLevel : null;
+      var flCls = fl === 'critical' ? 'severity-critical'
+                : fl === 'high'     ? 'severity-high'
+                : fl === 'medium' || fl === 'watch' ? 'severity-medium'
+                : fl === 'low' || fl === 'none' || fl === 'stable' ? 'severity-healthy'
+                : 'severity-unknown';
+      var flLabel = fl ? fl.toUpperCase() : 'UNKNOWN';
 
-      if (label === 'unknown') {
-        return '<div class="pr-health-panel">'
-          + '<span class="pr-health-badge ' + esc(lm.cls) + '">' + esc(lm.text) + '</span>'
-          + '<p style="margin-top:8px;font-size:0.8rem;color:var(--text-muted);font-style:italic;">'
-          + 'Pull request telemetry not yet available for this repository.</p>'
-          + '</div>';
-      }
+      // ── Confidence badge ───────────────────────────────────────────────────
+      var cl    = (fcData && fcData.confidenceLevel) || 'low';
+      var clCls = cl === 'high' ? 'conf-high' : cl === 'medium' ? 'conf-medium' : 'conf-low';
 
-      var scoreStr = score != null ? 'Score: ' + score + '/100' : '';
-      var confCls  = 'conf-' + esc(conf);
-      var reasonsHtml = '';
-      if (reasons.length > 0) {
-        var shown = reasons.slice(0, 3);
-        var extra = reasons.length - shown.length;
-        reasonsHtml = '<ul class="pr-health-reasons">'
-          + shown.map(function(r) { return '<li>' + esc(r) + '</li>'; }).join('')
-          + (extra > 0
-              ? '<li style="color:var(--text-muted);font-style:italic;">+' + extra + ' more</li>'
-              : '')
-          + '</ul>';
+      // ── Summary sentence ───────────────────────────────────────────────────
+      var projScore   = fcData ? fcData.projectedScore   : null;
+      var intervention = fcData ? (fcData.interventionUrgency || null) : null;
+      var summaryText;
+
+      if (st) {
+        var sParts = 'Architecture risk trend is ' + trendLabel.toLowerCase();
+        if (projScore != null) sParts += '; projected score is ' + projScore;
+        if (intervention && intervention !== 'none') sParts += ' and intervention urgency is ' + intervention;
+        summaryText = sParts + '.';
+      } else if (fl) {
+        summaryText = 'Architecture forecast indicates ' + fl + ' risk.';
+      } else if (hasArch) {
+        var hl = archData.architectureHealthLevel || 'unknown';
+        summaryText = 'Architecture health is currently ' + hl + '; no forecast trend data available.';
       } else {
-        reasonsHtml = '<p style="font-size:0.78rem;color:var(--text-muted);font-style:italic;margin-top:4px;">'
-          + 'No risk signals detected.</p>';
+        summaryText = 'Architecture risk trend is unavailable until multiple architecture snapshots exist.';
       }
 
-      return '<div class="pr-health-panel">'
-        + '<div class="pr-health-meta">'
-        + '<span class="pr-health-badge ' + esc(lm.cls) + '">' + esc(lm.text) + '</span>'
-        + '<span class="confidence-badge ' + confCls + '">' + esc(conf) + ' confidence</span>'
-        + (scoreStr ? '<span class="pr-health-score">' + esc(scoreStr) + '</span>' : '')
-        + '</div>'
-        + reasonsHtml
-        + '</div>';
-    }
+      var rfs  = fcData && Array.isArray(fcData.riskFactors)    ? fcData.riskFactors    : [];
+      var recs = fcData && Array.isArray(fcData.recommendations) ? fcData.recommendations : [];
 
-    function loadRepoPrHealth(repoId) {
-      var container = document.getElementById('repo-pr-health-content');
-      if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/pr-health', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          return r.json();
-        })
-        .then(function(d) {
-          if (!d) return;
-          if (container) container.innerHTML = buildPrHealthHtml(d);
-        })
-        .catch(function() {
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'Pull request health data unavailable.</p>';
+      var html = '<div class="rms-trend-panel">';
+
+      // Header
+      html += '<div class="rms-trend-header">'
+            + '<span class="pf-badge ' + esc(trendCls) + '">' + esc(trendLabel.toUpperCase()) + '</span>'
+            + '<span class="pf-badge ' + esc(flCls) + '" style="font-size:0.67rem;">Risk: ' + esc(flLabel) + '</span>'
+            + '<span class="confidence-badge ' + esc(clCls) + '">'
+            +   esc(cl.toUpperCase() + ' CONFIDENCE')
+            + '</span>'
+            + '</div>';
+
+      // Summary
+      html += '<p style="font-size:0.75rem;color:var(--text-secondary);margin:4px 0 8px;">'
+            + esc(summaryText) + '</p>';
+
+      // Architecture Trend Drivers
+      html += '<div class="rms-sublabel">Architecture Trend Drivers</div>';
+      if (rfs.length === 0) {
+        html += '<p style="font-size:0.75rem;color:var(--text-muted);margin:2px 0 6px;">'
+              + 'No architecture trend drivers detected.</p>';
+      } else {
+        rfs.slice(0, 5).forEach(function(rf) {
+          var rfText = typeof rf === 'string' ? rf : (rf.summary || rf.type || String(rf));
+          var rfSev  = typeof rf === 'object' && rf.severity ? rf.severity : null;
+          html += '<div class="rms-gap-row">';
+          if (rfSev) {
+            html += '<span class="pf-badge severity-' + esc(rfSev) + '" style="font-size:0.60rem;">'
+                  + esc(rfSev.toUpperCase()) + '</span> ';
           }
+          html += '<span>' + esc(rfText) + '</span></div>';
         });
+      }
+
+      // Architecture Trend Actions
+      html += '<div class="rms-sublabel" style="margin-top:10px;">Architecture Trend Actions</div>';
+      if (recs.length === 0) {
+        html += '<p style="font-size:0.75rem;color:var(--text-muted);margin:2px 0 6px;">'
+              + 'No trend-specific architecture actions recommended.</p>';
+      } else {
+        recs.slice(0, 5).forEach(function(r) {
+          var recText = typeof r === 'string' ? r : (r.text || r.recommendation || String(r));
+          html += '<div class="rms-gap-row"><span>' + esc(recText) + '</span></div>';
+        });
+      }
+
+      html += '</div>';
+      return html;
     }
 
-    function buildEngineeringVolatilityHtml(data) {
-      var level = data.volatilityLevel || 'low';
-      var score = typeof data.volatilityScore === 'number' ? data.volatilityScore : 0;
-      var conf  = data.confidenceLevel || 'low';
-      var reasons = Array.isArray(data.reasons) ? data.reasons : [];
+    function loadRepoMaturityTrend(repoId) {
+      var container = document.getElementById('repo-arch-risk-trend-content');
+      if (!container) return;
+      var fcData   = _archForecastDataByRepoId[repoId] || null;
+      var archData = _resolveOverviewArchData(repoId);
+      container.innerHTML = buildArchitectureRiskTrendHtml(fcData, archData);
+    }
 
-      var levelClass = {
-        low:      'severity-neutral',
-        medium:   'severity-medium',
-        high:     'severity-high',
-        critical: 'severity-critical',
-      }[level] || 'severity-neutral';
+    // ── Architecture Risk Drivers panel ───────────────────────────────────────
+    // fc = _archForecastDataByRepoId[repoId] || null
 
-      var confClass = {
-        high:   'conf-high',
-        medium: 'conf-medium',
-        low:    'conf-low',
-      }[conf] || 'conf-low';
+    function buildArchVolatilityHtml(fc) {
+      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                 + 'No architecture risk driver data available.</p>';
+      if (!fc) return UNAVAIL;
 
-      var badge = '<span class="ev-badge ' + levelClass + '">' + level.charAt(0).toUpperCase() + level.slice(1) + '</span>';
-      var confBadge = '<span class="confidence-badge ' + confClass + '">' + conf + ' confidence</span>';
-      var scoreTxt = '<span class="ev-score">Score: ' + score + ' / 100</span>';
+      var risk = typeof fc.degradationRisk === 'number' ? fc.degradationRisk : null;
+      var rfs  = Array.isArray(fc.riskFactors) ? fc.riskFactors : [];
+      var level = risk === null  ? 'low'
+                : risk >= 70    ? 'critical'
+                : risk >= 40    ? 'high'
+                : risk >= 20    ? 'medium'
+                :                 'low';
+
+      var levelCls = level === 'low'      ? 'severity-neutral'
+                   : level === 'medium'   ? 'severity-medium'
+                   : level === 'high'     ? 'severity-high'
+                   :                        'severity-critical';
+      var cl      = fc.confidenceLevel && fc.confidenceLevel !== 'unknown' ? fc.confidenceLevel : 'low';
+      var clCls   = 'confidence-badge conf-' + esc(cl);
+
+      var badge     = '<span class="ev-badge ' + levelCls + '">'
+                    + level.charAt(0).toUpperCase() + level.slice(1) + '</span>';
+      var confBadge = '<span class="' + clCls + '">' + esc(cl) + ' confidence</span>';
+      var scoreTxt  = risk !== null
+                    ? '<span class="ev-score">Degradation risk: ' + esc(String(risk)) + '%</span>'
+                    : '';
 
       var body;
-      if (!reasons.length || level === 'low') {
-        body = '<p class="ev-stable">Engineering behavior appears stable over recent snapshots.</p>';
+      if (rfs.length === 0 || level === 'low') {
+        body = '<p class="ev-stable">No significant architecture risk drivers detected.</p>';
       } else {
-        var capped = reasons.slice(0, 3);
         body = '<ul class="ev-reasons">'
-          + capped.map(function(r) { return '<li>' + r + '</li>'; }).join('')
-          + '</ul>';
+             + rfs.slice(0, 3).map(function(rf) {
+                 var t = typeof rf === 'string' ? rf : (rf.summary || rf.type || String(rf));
+                 return '<li>' + esc(t) + '</li>';
+               }).join('')
+             + '</ul>';
       }
 
       return '<div class="ev-panel">'
-        + '<div class="ev-meta">' + badge + confBadge + scoreTxt + '</div>'
-        + body
-        + '</div>';
-    }
-
-    function buildEvRiskNoteHtml(data) {
-      var level = data.volatilityLevel || 'low';
-      if (level === 'low') return '';
-      var levelClass = {
-        medium:   'severity-medium',
-        high:     'severity-high',
-        critical: 'severity-critical',
-      }[level] || 'severity-medium';
-      return '<div class="ev-risk-note ' + levelClass + '">'
-        + 'Engineering volatility detected across recent snapshots.'
-        + '</div>';
+           + '<div class="ev-meta">' + badge + confBadge + scoreTxt + '</div>'
+           + body
+           + '</div>';
     }
 
     function loadRepoEngineeringVolatility(repoId) {
-      var evContainer   = document.getElementById('repo-ev-content');
-      var riskContainer = document.getElementById('repo-ev-risk-note');
-      if (evContainer)   evContainer.innerHTML   = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      if (riskContainer) riskContainer.innerHTML = '';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/engineering-volatility', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          return r.json();
-        })
-        .then(function(d) {
-          if (!d) return;
-          if (evContainer)   evContainer.innerHTML   = buildEngineeringVolatilityHtml(d);
-          if (riskContainer) riskContainer.innerHTML = buildEvRiskNoteHtml(d);
-        })
-        .catch(function() {
-          console.warn('Engineering volatility data unavailable for repo', repoId);
-          if (evContainer) {
-            evContainer.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'Engineering volatility data unavailable.</p>';
-          }
-        });
+      var evContainer = document.getElementById('repo-ev-content');
+      if (!evContainer) return;
+      var fc = _archForecastDataByRepoId[repoId] || null;
+      evContainer.innerHTML = buildArchVolatilityHtml(fc);
     }
 
     function loadRepoConfidence(repoId) {
       var container = document.getElementById('repo-confidence-content');
       if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/confidence', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          return r.json();
-        })
-        .then(function(d) {
-          if (!d) return;
-          container.innerHTML = buildConfidenceHtml(d);
-        })
-        .catch(function() {
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'Confidence data unavailable.</p>';
-          }
-        });
+      var fc = _archForecastDataByRepoId[repoId] || null;
+      container.innerHTML = buildArchConfidenceHtml(fc);
     }
 
     function loadRepoForecast(repoId) {
       var container = document.getElementById('repo-forecast-content');
       if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/forecast', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          return r.json();
-        })
-        .then(function(d) {
-          if (!d) return;
-          container.innerHTML = buildForecastHtml(d);
-        })
-        .catch(function() {
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'Forecast unavailable.</p>';
-          }
-        });
+      var fc = _archForecastDataByRepoId[repoId] || null;
+      container.innerHTML = buildArchForecastSummaryHtml(fc);
     }
 
-    // ── Operational timeline ──────────────────────────────────────────────────
+    // ── Architecture timeline ──────────────────────────────────────────────────
+    // fc = _archForecastDataByRepoId[repoId] || null
 
-    function buildTimelineHtml(events) {
-      if (!events || !events.length) {
+    function buildArchTimelineHtml(fc) {
+      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+        + 'No architecture snapshots available yet.</p>';
+      if (!fc) return UNAVAIL;
+
+      var events = Array.isArray(fc.driftEvents) ? fc.driftEvents : [];
+
+      if (events.length === 0) {
+        var msg = fc.timelineSummary || 'No architecture events detected yet.';
         return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + 'No operational events detected yet.</p>';
+          + esc(msg) + '</p>';
       }
-      return '<div class="timeline-list">'
-        + events.map(function(ev) {
-            var badgeCls = 'timeline-badge severity-' + (ev.severity || 'unknown');
-            var badgeText = ev.severity === 'healthy' ? 'RECOVERY'
-                          : ev.severity === 'critical' ? 'CRITICAL'
-                          : ev.severity === 'high' ? 'HIGH'
-                          : ev.severity === 'medium' ? 'MEDIUM'
-                          : 'INFO';
-            var timeStr = ev.timestamp
-              ? new Date(ev.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-              : '—';
-            return '<div class="timeline-item">'
-              + '<span class="' + esc(badgeCls) + '">' + esc(badgeText) + '</span>'
-              + '<div class="timeline-content">'
-              + '<div class="timeline-title">' + esc(ev.title || '') + '</div>'
-              + '<div class="timeline-desc">' + esc(ev.description || '') + '</div>'
-              + '</div>'
-              + '<span class="timeline-time">' + esc(timeStr) + '</span>'
-              + '</div>';
-          }).join('')
-        + '</div>';
+
+      var TYPE_LABEL = {
+        score_drop:                'SCORE DROP',
+        score_gain:                'IMPROVEMENT',
+        level_degraded:            'DEGRADED',
+        level_improved:            'IMPROVED',
+        new_risk:                  'NEW RISK',
+        resolved_risk:             'RESOLVED',
+        coupling_growth:           'COUPLING',
+        api_regression:            'API REGRESSION',
+        implementation_regression: 'IMPL REGRESSION',
+      };
+
+      var SEV_CLASS = {
+        high:   'severity-high',
+        medium: 'severity-medium',
+        low:    'severity-healthy',
+      };
+
+      var html = '';
+      if (fc.timelineSummary) {
+        html += '<p style="font-size:0.82rem;color:var(--text-secondary);padding:4px 0 8px;">'
+              + esc(fc.timelineSummary) + '</p>';
+      }
+
+      html += '<div class="timeline-list">';
+      events.forEach(function(ev) {
+        var sevCls   = 'timeline-badge ' + (SEV_CLASS[ev.severity] || 'severity-unknown');
+        var badgeTxt = TYPE_LABEL[ev.type] || esc(String(ev.type || 'EVENT')).toUpperCase();
+        var timeStr  = ev.snapshotAt
+          ? new Date(ev.snapshotAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '—';
+        html += '<div class="timeline-item">'
+          + '<span class="' + esc(sevCls) + '">' + esc(badgeTxt) + '</span>'
+          + '<div class="timeline-content">'
+          + '<div class="timeline-desc">' + esc(ev.summary || '') + '</div>'
+          + '</div>'
+          + '<span class="timeline-time">' + esc(timeStr) + '</span>'
+          + '</div>';
+      });
+      html += '</div>';
+      return html;
     }
 
     function loadRepoTimeline(repoId) {
       var container = document.getElementById('repo-timeline-content');
       if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/events', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          return r.json();
-        })
-        .then(function(d) {
-          if (!d) return;
-          container.innerHTML = buildTimelineHtml(d.events || []);
-        })
-        .catch(function() {
-          if (container) {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'No operational events detected yet.</p>';
-          }
-        });
+      var fc = _archForecastDataByRepoId[repoId] || null;
+      container.innerHTML = buildArchTimelineHtml(fc);
     }
 
     // ── Architecture Intelligence ────────────────────────────────────────────
@@ -4984,13 +5312,17 @@
 
     function loadRepoArchitectureForecast(repoId) {
       var mySeq     = ++_archForecastRequestSeq;
+      // container may be null — the Architecture Forecast display panel was removed
+      // from the Architecture tab. The fetch still runs so _archForecastDataByRepoId
+      // is populated for the Forecast, Risk, and Timeline tabs.
       var container = document.getElementById('repo-arch-forecast-content');
-      if (!container) return;
 
-      if (_archForecastCacheByRepoId[repoId]) {
-        container.innerHTML = _archForecastCacheByRepoId[repoId];
-      } else {
-        container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+      if (container) {
+        if (_archForecastCacheByRepoId[repoId]) {
+          container.innerHTML = _archForecastCacheByRepoId[repoId];
+        } else {
+          container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+        }
       }
 
       fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture/forecast', { credentials: 'include' })
@@ -5000,32 +5332,81 @@
           return r.json().catch(function() { return null; });
         })
         .then(function(data) {
-          if (_archForecastRequestSeq !== mySeq || !container) return;
+          if (_archForecastRequestSeq !== mySeq) return;
           // Store raw forecast data for priority/overview card rendering.
           if (data && typeof data === 'object') {
-            var meta = data._meta || {};
+            var meta  = data._meta     || {};
+            var _traj = data.trajectory || {};
+            var _td   = data.timelineData || {};
             _archForecastDataByRepoId[repoId] = {
-              forecastLevel:   data.forecastLevel   || 'unknown',
-              degradationRisk: typeof data.degradationRisk === 'number' ? data.degradationRisk : 0,
-              confidenceLevel: data.confidenceLevel || 'unknown',
-              snapshotCount:   typeof meta.snapshotCount === 'number' ? meta.snapshotCount : 0,
+              // Core fields (used by overview cards and priority)
+              forecastLevel:       data.forecastLevel   || 'unknown',
+              degradationRisk:     typeof data.degradationRisk === 'number' ? data.degradationRisk : 0,
+              confidenceLevel:     data.confidenceLevel || 'unknown',
+              snapshotCount:       typeof meta.snapshotCount === 'number' ? meta.snapshotCount : 0,
+              // Extended fields for Architecture Risk Trend section
+              scoreTrend:          _traj.scoreTrend          || null,
+              projectedScore:      typeof _traj.projectedScore === 'number' ? _traj.projectedScore : null,
+              projectedLevel:      _traj.projectedLevel       || null,
+              interventionUrgency: _traj.interventionUrgency  || null,
+              riskFactors:         Array.isArray(data.riskFactors)    ? data.riskFactors    : [],
+              recommendations:     Array.isArray(data.recommendations) ? data.recommendations : [],
+              summary:             data.summary || '',
+              // Timeline fields for Architecture Timeline section
+              driftEvents:         Array.isArray(_td.driftEvents) ? _td.driftEvents : [],
+              timelineEntries:     Array.isArray(_td.timeline)    ? _td.timeline    : [],
+              timelineSummary:     _td.summary || '',
             };
           }
           var html = buildRepositoryArchitectureForecastHtml(data);
           _archForecastCacheByRepoId[repoId] = html;
-          container.innerHTML = html;
+          if (container) container.innerHTML = html;
           updateOverviewArchCards(repoId);
         })
         .catch(function(err) {
           console.warn('[arch-forecast] fetch failed:', err);
-          if (_archForecastRequestSeq !== mySeq || !container) return;
-          if (_archForecastCacheByRepoId[repoId]) {
-            container.innerHTML = _archForecastCacheByRepoId[repoId];
-          } else {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-              + 'Architecture forecast unavailable until multiple architecture snapshots are available.</p>';
+          if (_archForecastRequestSeq !== mySeq) return;
+          if (container) {
+            if (_archForecastCacheByRepoId[repoId]) {
+              container.innerHTML = _archForecastCacheByRepoId[repoId];
+            } else {
+              container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+                + 'Architecture forecast unavailable until multiple architecture snapshots are available.</p>';
+            }
           }
         });
+    }
+
+    // ── Architecture dimension normalizers ──────────────────────────────────────
+    // The per-repo architecture API uses different vocabulary than the shared
+    // LEVEL_SEV map (healthy/watch/weak/risky/unknown).  These helpers normalise
+    // raw API values once at cache-write time so every reader stays consistent.
+
+    // linkFrontendBackendApis: 'integrated' | 'partial' | 'weak' | 'unknown'
+    function _normArchLinkageLevel(raw) {
+      if (raw === 'integrated') return 'healthy';
+      if (raw === 'partial')    return 'watch';
+      return raw || null;   // 'weak', 'unknown', or null
+    }
+
+    // assessImplementationCompleteness: 'complete' | 'partial' | 'weak' | 'unknown'
+    function _normImplCompletenessLevel(raw) {
+      if (raw === 'complete') return 'healthy';
+      if (raw === 'partial')  return 'watch';
+      return raw || null;   // 'weak', 'unknown', or null
+    }
+
+    // buildImportDependencyGraph has no couplingLevel — derive it from couplingMetrics.
+    // Thresholds are intentionally conservative to avoid false positives.
+    function _deriveCouplingLevel(cm) {
+      if (!cm) return null;
+      var circular = typeof cm.circularDependencyCount === 'number' ? cm.circularDependencyCount : 0;
+      var avgOut   = typeof cm.averageOutDegree        === 'number' ? cm.averageOutDegree        : 0;
+      var fanOut   = Array.isArray(cm.highFanOutFiles) ? cm.highFanOutFiles.length : 0;
+      if (circular > 5 || avgOut > 8 || fanOut > 5) return 'risky';
+      if (circular > 2 || avgOut > 5 || fanOut > 2) return 'weak';
+      if (circular > 0 || avgOut > 3 || fanOut > 0) return 'watch';
+      return 'healthy';
     }
 
     function loadRepoArchitecture(repoId) {
@@ -5052,19 +5433,46 @@
         .then(function(data) {
           // Discard stale responses (user has since navigated to a different repo
           // or re-triggered the same repo's load).
-          if (_architectureRequestSeq !== mySeq || !container) return;
+          if (_architectureRequestSeq !== mySeq || !container) {
+            // Clear in-flight flag for stale responses so the card does not stay "Loading…".
+            delete _archFetchInFlightByRepoId[repoId];
+            return;
+          }
+
+          // Always clear the in-flight flag before updating the Overview so
+          // buildOverviewCardsHtml never renders "Architecture Loading…" after
+          // the fetch has resolved (success or failure).
+          delete _archFetchInFlightByRepoId[repoId];
 
           if (data && !data._warning) {
-            // Store raw architecture data for priority/overview card rendering.
+            // Store raw architecture data for priority/overview cards, risk panel, and risk profile.
+            var _apiLinkage  = data.apiLinkage                 || {};
+            var _implComp    = data.implementationCompleteness || {};
+            var _depGraph    = data.dependencyGraph            || {};
+            var _bndVerif    = data.boundaryVerification       || {};
+            var _metrics     = data.metrics                    || {};
             _archDataByRepoId[repoId] = {
-              architectureHealthLevel: data.architectureHealthLevel || 'unknown',
-              architectureHealthScore: data.architectureHealthScore != null ? data.architectureHealthScore : null,
-              confidenceLevel:         data.confidenceLevel         || 'unknown',
+              architectureHealthLevel:    data.architectureHealthLevel || 'unknown',
+              architectureHealthScore:    data.architectureHealthScore != null ? data.architectureHealthScore : null,
+              confidenceLevel:            data.confidenceLevel         || 'unknown',
+              // Active Architecture Risks fields
+              unresolvedApiCalls:         Array.isArray(_apiLinkage.unresolvedFrontendCalls) ? _apiLinkage.unresolvedFrontendCalls.length : 0,
+              implementationCompleteness: typeof _implComp.completenessScore === 'number' ? _implComp.completenessScore : null,
+              // FIX: depGraph has no couplingLevel — derive from couplingMetrics
+              couplingRisk:               _deriveCouplingLevel(_depGraph.couplingMetrics || null),
+              // Architecture Risk Profile dimension fields
+              // FIX: linkageLevel vocab ('integrated','partial') normalised to LEVEL_SEV keys
+              apiLinkageLevel:            _normArchLinkageLevel(_apiLinkage.linkageLevel || null),
+              // FIX: completenessLevel vocab ('complete','partial') normalised to LEVEL_SEV keys
+              implementationLevel:        _normImplCompletenessLevel(_implComp.completenessLevel || null),
+              boundaryHealthScore:        typeof _bndVerif.boundaryHealthScore === 'number' ? _bndVerif.boundaryHealthScore : null,
+              // FIX: violations count lives in boundaryVerification.violations[], not as a named scalar
+              boundaryViolationCount:     Array.isArray(_bndVerif.violations) ? _bndVerif.violations.length
+                                        : (typeof _metrics.boundaryViolationCount === 'number' ? _metrics.boundaryViolationCount : null),
             };
             // Clean success — cache the rendered HTML and display it.
             _architectureCacheByRepoId[repoId] = buildRepositoryArchitectureHtml(data);
             container.innerHTML = _architectureCacheByRepoId[repoId];
-            updateOverviewArchCards(repoId);
           } else if (_architectureCacheByRepoId[repoId]) {
             // Failed or warned fetch but a prior snapshot exists — keep it with a subtle note.
             container.innerHTML = _architectureCacheByRepoId[repoId]
@@ -5074,9 +5482,12 @@
             // No prior snapshot — show specific diagnostic.
             container.innerHTML = buildRepositoryArchitectureHtml(data);
           }
+          // Refresh Overview cards on every completion path so Loading… clears.
+          updateOverviewArchCards(repoId);
         })
         .catch(function(err) {
           console.warn('[architecture] fetch failed:', err);
+          delete _archFetchInFlightByRepoId[repoId];
           if (_architectureRequestSeq !== mySeq || !container) return;
 
           if (_architectureCacheByRepoId[repoId]) {
@@ -5087,6 +5498,7 @@
             container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
               + 'Unable to access repository files — a temporary error occurred.</p>';
           }
+          updateOverviewArchCards(repoId);
         });
     }
 
@@ -5492,18 +5904,48 @@
       });
     }
 
+    // Pure helper for the Architecture Confidence card.
+    // Accepts: { hasArchitectureSnapshot, architectureScore, forecastLevel }
+    // HIGH              — snapshot + score + forecast present (not unknown)
+    // MEDIUM            — snapshot + score, forecast missing/unknown
+    // LOW               — snapshot exists but score missing (partial data)
+    // INSUFFICIENT HISTORY — no architecture snapshot
+    function computeArchitectureConfidence(opts) {
+      var hasSnap     = !!(opts && opts.hasArchitectureSnapshot);
+      var hasScore    = opts != null && opts.architectureScore != null;
+      var fcLevel     = opts && opts.forecastLevel;
+      var hasForecast = !!(fcLevel && fcLevel !== 'unknown');
+
+      if (!hasSnap)              return { label: 'Insufficient History', cls: 'severity-neutral' };
+      if (hasScore && hasForecast) return { label: 'High',   cls: 'severity-healthy' };
+      if (hasScore)               return { label: 'Medium',  cls: 'severity-medium'  };
+      return                            { label: 'Low',    cls: 'severity-high'    };
+    }
+
     // Builds the inner HTML for the architecture-first overview card grid.
     // archData — from _resolveOverviewArchData(): portfolio intel merged with per-click cache.
-    //            null  → no data at all → "Coverage Gap".
+    //            null  → no data at all → "Architecture Loading…" (if fetch in flight) or "Coverage Gap".
     //            object with null fields → intel seen but no arch snapshot → "Coverage Gap".
     // fcData   — from _resolveOverviewFcData(): portfolio intel merged with per-click cache.
     //            null  → no forecast data → "Not Enough History".
-    // opState  — from operationalState(repo, aq).
-    function buildOverviewCardsHtml(repo, aq, archData, fcData, opState) {
-      // Card 1: Architecture Health
+    function buildOverviewCardsHtml(repo, aq, archData, fcData) {
+      // Read portfolio intel directly so cards use the authoritative source immediately.
+      var intel = _repoIntelligenceById[String(repo.id)] || {};
+
+      // Card 1: Architecture Health — source precedence:
+      //   a. intel.architectureHealthLevel / intel.architectureHealthScore  (portfolio intel, immediate)
+      //   b. per-click cache already loaded (merged into archData by _resolveOverviewArchData)
+      //   c. "Architecture Loading…" only when a per-click fetch is in flight AND no portfolio arch intel
+      //   d. "Coverage Gap" when no data exists (fetch done, nothing returned)
       var archCardVal, archCardCls;
+      var _hasIntel = !!(intel.architectureHealthLevel || intel.architectureHealthScore != null);
+      var _inFlight = !!_archFetchInFlightByRepoId[repo.id];
       if (!archData || (!archData.architectureHealthLevel && archData.architectureHealthScore == null)) {
-        archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium';
+        if (_inFlight && !_hasIntel) {
+          archCardVal = 'Architecture Loading…'; archCardCls = 'severity-neutral';
+        } else {
+          archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium';
+        }
       } else {
         var hl = archData.architectureHealthLevel || 'unknown';
         var hs = archData.architectureHealthScore != null ? ' · ' + archData.architectureHealthScore : '';
@@ -5514,7 +5956,7 @@
         else                       { archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium'; }
       }
 
-      // Card 2: Priority — consistent with table, uses real architecture data
+      // Card 2: Architectural Priority — consistent with table, uses real architecture data
       var ovPriKey = computeRepoPriority(repo, aq, archData, fcData);
       var ovPriVal = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' }[ovPriKey] || ovPriKey;
       var ovPriCls = { critical: 'severity-critical', elevated: 'severity-high', watch: 'severity-medium', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
@@ -5545,21 +5987,39 @@
       else if (ovGovLevel === 'healthy')  { ovGovVal = 'Healthy';    ovGovCls = 'severity-healthy'; }
       else                                { ovGovVal = 'Monitoring'; ovGovCls = 'severity-neutral'; }
 
-      // Card 5: Snapshot Coverage — true only when real arch data (score or level) is known
-      var hasSnap   = archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null);
-      var ovSnapVal = hasSnap ? 'Has Snapshot' : 'Needs History';
-      var ovSnapCls = hasSnap ? 'severity-healthy' : 'severity-medium';
+      // Card 5: Snapshot Coverage — source precedence:
+      //   a. intel.hasArchitectureSnapshot === true  → Has Snapshot
+      //   b. intel.hasArchitectureSnapshot === false → Needs History
+      //   c. archData has score or level (per-click cache) → Has Snapshot
+      //   d. otherwise → Needs History
+      var ovSnapVal, ovSnapCls;
+      if (intel.hasArchitectureSnapshot === true) {
+        ovSnapVal = 'Has Snapshot'; ovSnapCls = 'severity-healthy';
+      } else if (intel.hasArchitectureSnapshot === false) {
+        ovSnapVal = 'Needs History'; ovSnapCls = 'severity-medium';
+      } else {
+        var hasSnap = archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null);
+        ovSnapVal   = hasSnap ? 'Has Snapshot' : 'Needs History';
+        ovSnapCls   = hasSnap ? 'severity-healthy' : 'severity-medium';
+      }
 
-      // Card 6: Operational Status — compact legacy signal
-      var ovOpVal = opState ? (opState.text || 'Unknown') : 'Unknown';
-      var ovOpCls = opState ? (opState.cls  || 'severity-unknown') : 'severity-unknown';
+      // Card 6: Architecture Confidence — how complete/reliable is the arch intelligence?
+      // hasArchitectureSnapshot uses same precedence as Card 5 (Snapshot Coverage).
+      var _snapExists = intel.hasArchitectureSnapshot === true
+                     || (intel.hasArchitectureSnapshot !== false
+                         && archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null));
+      var conf = computeArchitectureConfidence({
+        hasArchitectureSnapshot: _snapExists,
+        architectureScore:       archData ? archData.architectureHealthScore : null,
+        forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+      });
 
-      return card('Architecture Health', archCardVal, archCardCls)
-        + card('Priority',            ovPriVal,    ovPriCls)
-        + card('Forecast',            ovFcVal,     ovFcCls)
-        + card('Governance',          ovGovVal,    ovGovCls)
-        + card('Snapshot Coverage',   ovSnapVal,   ovSnapCls)
-        + card('Operational Status',  ovOpVal,     ovOpCls);
+      return card('Architecture Health',    archCardVal, archCardCls)
+        + card('Architectural Priority',    ovPriVal,    ovPriCls)
+        + card('Forecast',                  ovFcVal,     ovFcCls)
+        + card('Governance',                ovGovVal,    ovGovCls)
+        + card('Snapshot Coverage',         ovSnapVal,   ovSnapCls)
+        + card('Architecture Confidence',   conf.label,  conf.cls);
     }
 
     // Returns the best-available archData for the Overview cards.
@@ -5617,21 +6077,58 @@
       };
     }
 
-    // Refreshes only the overview card grid for the currently selected repo.
+    // Refreshes the overview card grid AND the Architecture Risk Profile for the
+    // currently selected repo.
     // Called after loadRepoArchitecture / loadRepoArchitectureForecast resolve.
+    //
+    // IMPORTANT: the Architecture Risk Profile (repo-maturity-content) update
+    // must run BEFORE the repo-overview-arch-cards guard.  If the overview grid
+    // is absent (e.g. during a portfolio-API-triggered re-render race), the guard
+    // would return early and the Risk tab profile would never receive real data.
     function updateOverviewArchCards(repoId) {
       if (_selectedId !== repoId) return;   // stale — user navigated away
       var repo = _repos ? _repos.find(function(r) { return r.id === repoId; }) : null;
       if (!repo) return;
+
+      // ── Architecture Risk Profile (Risk tab) — must update regardless of
+      //    whether the Overview tab grid is currently in the DOM.
+      var maturityContainer = document.getElementById('repo-maturity-content');
+      if (maturityContainer) {
+        var _archCache = _archDataByRepoId[repoId]             || {};
+        var _archData  = _resolveOverviewArchData(repoId);
+        var _fcData    = _resolveOverviewFcData(repoId);
+        var _intel     = _repoIntelligenceById[String(repoId)] || {};
+        console.debug('[ArchRiskProfile] updateOverviewArchCards archCache for repo', repoId, _archCache);
+        maturityContainer.innerHTML = buildArchitectureRiskProfileHtml(
+          _archCache, _archData, _fcData, _intel
+        );
+      }
+
+      // ── Architecture Risk Trend (Risk tab) — update when forecast/arch data arrives.
+      var trendContainer = document.getElementById('repo-arch-risk-trend-content');
+      if (trendContainer) {
+        var _trendFcData   = _archForecastDataByRepoId[repoId] || null;
+        var _trendArchData = _resolveOverviewArchData(repoId);
+        trendContainer.innerHTML = buildArchitectureRiskTrendHtml(_trendFcData, _trendArchData);
+      }
+
+      // ── Forecast tab — refresh all 4 sections using the now-populated arch cache.
+      loadRepoForecast(repoId);
+      loadRepoEscalation(repoId);
+      loadRepoConfidence(repoId);
+      loadRepoEngineeringVolatility(repoId);
+
+      // ── Timeline tab — refresh using driftEvents now available in arch cache.
+      loadRepoTimeline(repoId);
+
+      // ── Overview card grid — guarded because the overview tab may not be rendered.
       var grid = document.getElementById('repo-overview-arch-cards');
-      if (!grid) return;                    // overview tab may not be active
-      var aq      = _attentionMap[repoId];
-      var opState = operationalState(repo, aq);
+      if (!grid) return;
+      var aq = _attentionMap[repoId];
       grid.innerHTML = buildOverviewCardsHtml(
         repo, aq,
         _resolveOverviewArchData(repoId),
-        _resolveOverviewFcData(repoId),
-        opState
+        _resolveOverviewFcData(repoId)
       );
     }
 
@@ -5648,7 +6145,6 @@
       }
 
       var aq       = _attentionMap[repo.id];
-      var opState  = operationalState(repo, aq);
       var syncTime = repo.lastSyncedAt ? new Date(repo.lastSyncedAt).toLocaleString() : 'Not synced yet';
       var exp      = repo.explanation || {};
 
@@ -5700,10 +6196,12 @@
                       : 'severity-unknown';
 
       // ── Architecture-first Overview Cards ────────────────────────────────────
-      // Initial render uses whatever is already in the raw data caches (instant
-      // if cached from a prior selection, "Loading…" if this is the first visit).
-      // loadRepoArchitecture / loadRepoArchitectureForecast call
-      // updateOverviewArchCards() on success to refresh with real data.
+      // Mark the per-click arch fetch as in-flight BEFORE building the initial
+      // overview so buildOverviewCardsHtml can show "Architecture Loading…" when
+      // no portfolio intel exists.  loadRepoArchitecture clears this flag on any
+      // completion (success / error / stale discard) and calls updateOverviewArchCards.
+      _archFetchInFlightByRepoId[repo.id] = true;
+
       var overviewCards =
         '<div class="repo-overview-name-lbl">Repository</div>'
         + '<div class="repo-overview-name">' + esc(repo.fullName) + '</div>'
@@ -5711,8 +6209,7 @@
         + buildOverviewCardsHtml(
             repo, aq,
             _resolveOverviewArchData(repo.id),
-            _resolveOverviewFcData(repo.id),
-            opState
+            _resolveOverviewFcData(repo.id)
           )
         + '</div>'
         + '<div class="overview-meta">Last synced: ' + esc(syncTime) + '</div>';
@@ -5732,39 +6229,34 @@
         + '</div>'
         + '<div class="repo-tab-panel active" data-panel="overview">'
         +   overviewCards
-        +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Operational Assessment</div>'
-        +   buildAssessmentHtml(repo)
-        +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Recommended Actions</div>'
-        +   buildActionsHtml(repo)
+        +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Architecture Assessment</div>'
+        +   buildArchitectureAssessmentHtml(repo)
+        +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Architecture Recommendations</div>'
+        +   buildArchitectureRecommendationsHtml(repo)
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="risk">'
-        +   buildExplanationHtml(exp)
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Repository Maturity</div>'
+        +   buildExplanationHtml(exp, repo.id)
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Architecture Risk Profile</div>'
         +   '<div id="repo-maturity-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:12px;">Maturity Trend</div>'
-        +   '<div id="repo-maturity-trend-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Pull Request Health</div>'
-        +   '<div id="repo-pr-health-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
-        +   '<div id="repo-ev-risk-note"></div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:12px;">Architecture Risk Trend</div>'
+        +   '<div id="repo-arch-risk-trend-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="forecast">'
-        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Operational Forecast</div>'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Architecture Forecast</div>'
         +   '<div id="repo-forecast-content"></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Stability</div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Architecture Direction</div>'
         +   '<div id="repo-stability-content"></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Operational Confidence</div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Forecast Confidence</div>'
         +   '<div id="repo-confidence-content"></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Engineering Volatility</div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Architecture Risk Drivers</div>'
         +   '<div id="repo-ev-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="timeline">'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Operational Timeline</div>'
+        +   '<div class="repo-detail-label section-secondary" style="margin-top:8px;">Architecture Timeline</div>'
         +   '<div id="repo-timeline-content"></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="architecture">'
-        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Architecture Forecast</div>'
-        +   '<div id="repo-arch-forecast-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading architecture forecast…</p></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:16px;">Architecture Intelligence</div>'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Architecture Intelligence</div>'
         +   '<div id="repo-architecture-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="remediation">'
@@ -5825,7 +6317,6 @@
       loadRepoConfidence(repo.id);
       loadRepoMaturity(repo.id);
       loadRepoMaturityTrend(repo.id);
-      loadRepoPrHealth(repo.id);
       loadRepoEngineeringVolatility(repo.id);
       loadRepoArchitecture(repo.id);
       loadRepoArchitectureForecast(repo.id);
@@ -6061,7 +6552,7 @@
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>ID</th><th>Repo</th><th>Priority</th><th>Attention</th><th>Reasons</th></tr></thead>'
+        + '<thead><tr><th>ID</th><th>Repo</th><th>Architectural Priority</th><th>Attention</th><th>Reasons</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 

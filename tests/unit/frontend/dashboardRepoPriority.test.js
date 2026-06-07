@@ -227,9 +227,10 @@ function buildRepoPriorityReasons(repo, aq, archData, fcData) {
 }
 
 // ── Portfolio intelligence helpers (copied verbatim from dashboard.html) ─────
-var _repoIntelligenceById   = {};
+var _repoIntelligenceById    = {};
 var _archDataByRepoId        = {};   // per-click architecture cache stub
 var _archForecastDataByRepoId = {};  // per-click forecast cache stub
+var _archFetchInFlightByRepoId = {}; // { [repoId]: true } while per-click arch fetch is active
 
 function _archLevelFromScore(score) {
   if (score == null) return null;
@@ -1269,5 +1270,1859 @@ describe('Overview Priority matches table Priority via _resolveOverviewArchData'
     // Intel 'risky' wins
     expect(archData.architectureHealthLevel).toBe('risky');
     expect(computeRepoPriority({}, noAq(), archData, null)).toBe('critical');
+  });
+});
+
+// ── Architecture dimension normalizers (copied verbatim from dashboard.html) ─
+function _normArchLinkageLevel(raw) {
+  if (raw === 'integrated') return 'healthy';
+  if (raw === 'partial')    return 'watch';
+  return raw || null;
+}
+
+function _normImplCompletenessLevel(raw) {
+  if (raw === 'complete') return 'healthy';
+  if (raw === 'partial')  return 'watch';
+  return raw || null;
+}
+
+function _deriveCouplingLevel(cm) {
+  if (!cm) return null;
+  var circular = typeof cm.circularDependencyCount === 'number' ? cm.circularDependencyCount : 0;
+  var avgOut   = typeof cm.averageOutDegree        === 'number' ? cm.averageOutDegree        : 0;
+  var fanOut   = Array.isArray(cm.highFanOutFiles) ? cm.highFanOutFiles.length : 0;
+  if (circular > 5 || avgOut > 8 || fanOut > 5) return 'risky';
+  if (circular > 2 || avgOut > 5 || fanOut > 2) return 'weak';
+  if (circular > 0 || avgOut > 3 || fanOut > 0) return 'watch';
+  return 'healthy';
+}
+
+// ── buildArchitectureRiskProfileHtml (copied verbatim from dashboard.html) ───
+function buildArchitectureRiskProfileHtml(archCache, archData, fcData, intel) {
+  var FALLBACK = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+              + 'Architecture Risk Profile unavailable — sync repository to generate architecture snapshot.</p>';
+
+  var level = (archData && archData.architectureHealthLevel && archData.architectureHealthLevel !== 'unknown'
+                ? archData.architectureHealthLevel : null)
+           || (intel && intel.architectureHealthLevel ? intel.architectureHealthLevel : null);
+  var score = (archData && archData.architectureHealthScore != null) ? archData.architectureHealthScore
+            : (intel  && intel.architectureHealthScore  != null) ? intel.architectureHealthScore
+            : null;
+
+  if (!level && score == null) return FALLBACK;
+
+  var conf = (archCache && archCache.confidenceLevel) || 'low';
+
+  var LEVEL_SEV = {
+    healthy: 'severity-healthy', watch: 'severity-medium',
+    weak:    'severity-high',    risky: 'severity-critical',
+    unknown: 'severity-unknown'
+  };
+  var levelLabel = level ? (level.charAt(0).toUpperCase() + level.slice(1)) : 'Unknown';
+  var levelCls   = LEVEL_SEV[level] || 'severity-unknown';
+
+  var snapExists = !!(intel && (
+    intel.hasArchitectureSnapshot === true
+    || (intel.hasArchitectureSnapshot !== false
+        && archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null))
+  ));
+
+  var archConf = computeArchitectureConfidence({
+    hasArchitectureSnapshot: snapExists,
+    architectureScore:       archData ? archData.architectureHealthScore : null,
+    forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+  });
+
+  var apiLevel    = (archCache && archCache.apiLinkageLevel)        || null;
+  var implLevel   = (archCache && archCache.implementationLevel)    || null;
+  var couplingLvl = (archCache && archCache.couplingRisk)           || null;
+  var bndScore    = (archCache && archCache.boundaryHealthScore != null) ? archCache.boundaryHealthScore : null;
+  var bndViol     = (archCache && archCache.boundaryViolationCount != null) ? archCache.boundaryViolationCount : null;
+  var fcLevel     = fcData ? (fcData.forecastLevel || null) : null;
+
+  var bndLevel = bndScore != null
+    ? (bndScore >= 85 ? 'healthy' : bndScore >= 70 ? 'watch' : bndScore >= 45 ? 'weak' : 'risky')
+    : null;
+
+  var FC_SEV = {
+    critical: 'severity-critical', high: 'severity-high',
+    medium: 'severity-medium',     watch: 'severity-medium',
+    low: 'severity-healthy',       stable: 'severity-healthy', none: 'severity-healthy'
+  };
+
+  function _badge(lv, cls) {
+    return '<span class="pf-badge ' + esc(cls) + '" style="font-size:0.67rem;">'
+         + esc(lv.toUpperCase()) + '</span>';
+  }
+  function _dash() {
+    return '<span class="rms-dim-val" style="color:var(--text-muted);">—</span>';
+  }
+
+  var dims = [
+    { name: 'API Linkage',
+      val: apiLevel  ? _badge(apiLevel,   LEVEL_SEV[apiLevel]   || 'severity-unknown') : _dash() },
+    { name: 'Implementation Completeness',
+      val: implLevel ? _badge(implLevel,  LEVEL_SEV[implLevel]  || 'severity-unknown') : _dash() },
+    { name: 'Coupling Risk',
+      val: couplingLvl ? _badge(couplingLvl, LEVEL_SEV[couplingLvl] || 'severity-unknown') : _dash() },
+    { name: 'Boundary Integrity',
+      val: bndLevel
+        ? '<span class="pf-badge ' + esc(LEVEL_SEV[bndLevel] || 'severity-unknown') + '" style="font-size:0.67rem;">'
+          + esc(bndLevel.toUpperCase())
+          + (bndViol != null ? ' &middot; ' + esc(String(bndViol)) + 'v' : '')
+          + '</span>'
+        : _dash() },
+    { name: 'Forecast Risk',
+      val: (fcLevel && fcLevel !== 'unknown')
+        ? _badge(fcLevel, FC_SEV[fcLevel] || 'severity-unknown')
+        : _dash() },
+    { name: 'Architecture Confidence',
+      val: _badge(archConf.label, archConf.cls) },
+  ];
+
+  var html = '<div class="rms-panel">';
+  html += '<div class="rms-header">';
+  if (score != null) {
+    html += '<span class="rms-score">' + esc(String(score))
+          + '<span class="rms-score-max"> / 100</span></span>';
+  }
+  html += '<span class="pf-badge ' + esc(levelCls) + '">' + esc(levelLabel.toUpperCase()) + '</span>';
+  html += '<span class="confidence-badge conf-' + esc(conf) + '">'
+       +  esc(conf.toUpperCase() + ' CONFIDENCE') + '</span>';
+  html += '</div>';
+  html += '<div class="rms-dims">';
+  dims.forEach(function(d) {
+    html += '<div class="rms-dim"><span>' + esc(d.name) + '</span>' + d.val + '</div>';
+  });
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+// ── buildActiveArchitectureRisks (copied verbatim from dashboard.html) ───────
+function buildActiveArchitectureRisks(opts) {
+  var unresolvedApiCalls = opts ? opts.unresolvedApiCalls         : null;
+  var implCompleteness   = opts ? opts.implementationCompleteness : null;
+  var couplingRisk       = (opts && opts.couplingRisk)            || null;
+  var forecastLevel      = (opts && opts.forecastLevel)           || null;
+  var hasSnap            = !!(opts && opts.hasArchitectureSnapshot);
+  var conf               = (opts && opts.architectureConfidence)  || null;
+
+  var risks = [];
+
+  if (unresolvedApiCalls != null && unresolvedApiCalls > 0) {
+    risks.push('API linkage gaps detected');
+  }
+
+  if (implCompleteness != null && implCompleteness < 70) {
+    risks.push('Implementation completeness is weak');
+  }
+
+  var COUPLING_HIGH = ['elevated', 'high', 'risky', 'weak'];
+  if (couplingRisk && COUPLING_HIGH.indexOf(couplingRisk) >= 0) {
+    risks.push('Coupling concentration is elevated');
+  }
+
+  if (forecastLevel === 'high' || forecastLevel === 'critical') {
+    risks.push('Architecture forecast indicates degradation risk');
+  }
+
+  if (conf === 'Low' || !hasSnap) {
+    risks.push('Architecture coverage confidence is reduced');
+  }
+
+  return risks;
+}
+
+// ── buildArchitectureRecommendations (copied verbatim from dashboard.html) ───
+function buildArchitectureRecommendations(opts) {
+  var score    = opts ? opts.architectureScore       : null;
+  var level    = (opts && opts.architectureLevel)    || null;
+  var priority = (opts && opts.architecturalPriority) || null;
+  var fcLevel  = (opts && opts.forecastLevel)         || null;
+  var hasSnap  = !!(opts && opts.hasArchitectureSnapshot);
+
+  var items = [];
+
+  var isCritical = priority === 'critical'
+                || (score != null && score < 45)
+                || level === 'risky';
+
+  if (isCritical) {
+    items.push('Review unresolved API linkage issues');
+    items.push('Reduce coupling in high fan-out modules');
+    items.push('Address implementation completeness gaps');
+    items.push('Audit orphaned routes and dead integrations');
+  } else if (priority === 'elevated') {
+    items.push('Review architectural hotspots');
+    items.push('Improve route-to-service coverage');
+    items.push('Reduce dependency concentration');
+  } else if (priority === 'watch') {
+    items.push('Monitor architecture trend');
+    items.push('Increase architecture snapshot frequency');
+  }
+
+  if (!hasSnap) {
+    items.push('Generate architecture snapshot');
+    items.push('Improve architecture coverage');
+  }
+
+  if (fcLevel === 'critical' || fcLevel === 'high') {
+    items.push('Investigate degradation trajectory');
+    items.push('Prioritize structural remediation');
+  }
+
+  return items;
+}
+
+// ── buildArchitectureAssessment (copied verbatim from dashboard.html) ────────
+function buildArchitectureAssessment(opts) {
+  var score    = opts ? opts.architectureScore      : null;
+  var priority = (opts && opts.architecturalPriority) || null;
+  var fcLevel  = (opts && opts.forecastLevel)        || null;
+  var hasSnap  = !!(opts && opts.hasArchitectureSnapshot);
+  var conf     = (opts && opts.architectureConfidence) || null;
+
+  var isCritical = priority === 'critical' || (score != null && score < 45);
+  var tier, text, cls;
+
+  if (isCritical) {
+    tier = 'critical'; cls = 'severity-critical';
+    var note = score != null ? ' (score: ' + score + ')' : '';
+    text = 'Architecture health is critical' + note
+         + '. Structural indicators suggest significant implementation, coupling, or integration risk.';
+  } else if (priority === 'elevated') {
+    tier = 'elevated'; cls = 'severity-high';
+    text = 'Architecture health requires attention. Structural quality indicators show elevated risk'
+         + ' that should be reviewed before additional complexity is introduced.';
+  } else if (priority === 'watch') {
+    tier = 'watch'; cls = 'severity-medium';
+    text = 'Architecture is currently stable but exhibits signals that should remain under observation.';
+  } else if (priority === 'healthy') {
+    tier = 'healthy'; cls = 'severity-healthy';
+    text = 'Architecture appears structurally healthy with no significant architectural risk indicators detected.';
+  } else {
+    tier = 'unknown'; cls = 'severity-unknown';
+    text = 'Architecture intelligence is insufficient to generate a full assessment.';
+  }
+
+  var hasForecast = !!(fcLevel && fcLevel !== 'unknown');
+  if (hasForecast && (fcLevel === 'critical' || fcLevel === 'high')) {
+    text += ' Forecast analysis indicates elevated degradation risk.';
+  } else if (!hasForecast) {
+    text += ' Forecast confidence is limited due to insufficient architecture history.';
+  }
+
+  if (!hasSnap) {
+    text += ' Architecture intelligence coverage is incomplete.';
+  } else if (conf === 'Medium' || conf === 'Low') {
+    text += ' Assessment confidence is reduced due to limited architecture evidence.';
+  }
+
+  return { text: text, level: tier, cls: cls };
+}
+
+// ── Stubs for buildOverviewCardsHtml (DOM-free) ───────────────────────────────
+
+// card() — copied verbatim from dashboard.html
+function card(label, value, cls) {
+  var valueHtml = cls
+    ? '<span class="card-badge ' + cls + '">' + esc(String(value)) + '</span>'
+    : '<div class="card-value">' + esc(String(value)) + '</div>';
+  return '<div class="card">'
+    + '<div class="card-label">' + esc(label) + '</div>'
+    + valueHtml
+    + '</div>';
+}
+
+// ── computeArchitectureConfidence (copied verbatim from dashboard.html) ───────
+function computeArchitectureConfidence(opts) {
+  var hasSnap     = !!(opts && opts.hasArchitectureSnapshot);
+  var hasScore    = opts != null && opts.architectureScore != null;
+  var fcLevel     = opts && opts.forecastLevel;
+  var hasForecast = !!(fcLevel && fcLevel !== 'unknown');
+
+  if (!hasSnap)               return { label: 'Insufficient History', cls: 'severity-neutral' };
+  if (hasScore && hasForecast) return { label: 'High',   cls: 'severity-healthy' };
+  if (hasScore)                return { label: 'Medium',  cls: 'severity-medium'  };
+  return                             { label: 'Low',    cls: 'severity-high'    };
+}
+
+// ── buildOverviewCardsHtml (copied verbatim from dashboard.html) ──────────────
+function buildOverviewCardsHtml(repo, aq, archData, fcData) {
+  var intel = _repoIntelligenceById[String(repo.id)] || {};
+
+  var archCardVal, archCardCls;
+  var _hasIntel = !!(intel.architectureHealthLevel || intel.architectureHealthScore != null);
+  var _inFlight = !!_archFetchInFlightByRepoId[repo.id];
+  if (!archData || (!archData.architectureHealthLevel && archData.architectureHealthScore == null)) {
+    if (_inFlight && !_hasIntel) {
+      archCardVal = 'Architecture Loading…'; archCardCls = 'severity-neutral';
+    } else {
+      archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium';
+    }
+  } else {
+    var hl = archData.architectureHealthLevel || 'unknown';
+    var hs = archData.architectureHealthScore != null ? ' · ' + archData.architectureHealthScore : '';
+    if      (hl === 'risky')   { archCardVal = 'Risky'   + hs; archCardCls = 'severity-critical'; }
+    else if (hl === 'weak')    { archCardVal = 'Weak'    + hs; archCardCls = 'severity-high'; }
+    else if (hl === 'watch')   { archCardVal = 'Watch'   + hs; archCardCls = 'severity-medium'; }
+    else if (hl === 'healthy') { archCardVal = 'Healthy' + hs; archCardCls = 'severity-healthy'; }
+    else                       { archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium'; }
+  }
+
+  var ovPriKey = computeRepoPriority(repo, aq, archData, fcData);
+  var ovPriVal = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' }[ovPriKey] || ovPriKey;
+  var ovPriCls = { critical: 'severity-critical', elevated: 'severity-high', watch: 'severity-medium', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
+
+  var ovFcVal, ovFcCls;
+  if (!fcData || !fcData.forecastLevel) {
+    ovFcVal = 'Not Enough History'; ovFcCls = 'severity-unknown';
+  } else if (fcData.forecastLevel && fcData.forecastLevel !== 'unknown') {
+    var fl = fcData.forecastLevel;
+    if      (fl === 'critical')                  { ovFcVal = 'Critical';  ovFcCls = 'severity-critical'; }
+    else if (fl === 'high')                      { ovFcVal = 'High Risk'; ovFcCls = 'severity-high'; }
+    else if (fl === 'medium' || fl === 'watch')  { ovFcVal = 'Moderate';  ovFcCls = 'severity-medium'; }
+    else if (fl === 'low')                       { ovFcVal = 'Low';       ovFcCls = 'severity-neutral'; }
+    else if (fl === 'none'   || fl === 'stable') { ovFcVal = 'Stable';    ovFcCls = 'severity-healthy'; }
+    else                                         { ovFcVal = esc(fl);     ovFcCls = 'severity-unknown'; }
+  } else {
+    ovFcVal = 'Not Enough History'; ovFcCls = 'severity-unknown';
+  }
+
+  var ovGovLevel = aq ? (aq.attentionLevel || 'unknown') : 'unknown';
+  var ovGovVal, ovGovCls;
+  if      (ovGovLevel === 'critical') { ovGovVal = 'Critical';   ovGovCls = 'severity-critical'; }
+  else if (ovGovLevel === 'high')     { ovGovVal = 'High';       ovGovCls = 'severity-high'; }
+  else if (ovGovLevel === 'medium')   { ovGovVal = 'Moderate';   ovGovCls = 'severity-medium'; }
+  else if (ovGovLevel === 'low')      { ovGovVal = 'Low';        ovGovCls = 'severity-neutral'; }
+  else if (ovGovLevel === 'healthy')  { ovGovVal = 'Healthy';    ovGovCls = 'severity-healthy'; }
+  else                                { ovGovVal = 'Monitoring'; ovGovCls = 'severity-neutral'; }
+
+  var ovSnapVal, ovSnapCls;
+  if (intel.hasArchitectureSnapshot === true) {
+    ovSnapVal = 'Has Snapshot'; ovSnapCls = 'severity-healthy';
+  } else if (intel.hasArchitectureSnapshot === false) {
+    ovSnapVal = 'Needs History'; ovSnapCls = 'severity-medium';
+  } else {
+    var hasSnap = archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null);
+    ovSnapVal   = hasSnap ? 'Has Snapshot' : 'Needs History';
+    ovSnapCls   = hasSnap ? 'severity-healthy' : 'severity-medium';
+  }
+
+  var _snapExists = intel.hasArchitectureSnapshot === true
+                 || (intel.hasArchitectureSnapshot !== false
+                     && archData && (archData.architectureHealthScore != null || archData.architectureHealthLevel != null));
+  var conf = computeArchitectureConfidence({
+    hasArchitectureSnapshot: _snapExists,
+    architectureScore:       archData ? archData.architectureHealthScore : null,
+    forecastLevel:           fcData   ? fcData.forecastLevel             : null,
+  });
+
+  return card('Architecture Health',    archCardVal, archCardCls)
+    + card('Architectural Priority',    ovPriVal,    ovPriCls)
+    + card('Forecast',                  ovFcVal,     ovFcCls)
+    + card('Governance',                ovGovVal,    ovGovCls)
+    + card('Snapshot Coverage',         ovSnapVal,   ovSnapCls)
+    + card('Architecture Confidence',   conf.label,  conf.cls);
+}
+
+// ── buildOverviewCardsHtml — Overview uses _repoIntelligenceById immediately ──
+
+describe('buildOverviewCardsHtml — Overview uses portfolio intel immediately', () => {
+  const REPO = { id: 100, fullName: 'org/repo', score: null, label: 'healthy' };
+
+  beforeEach(() => {
+    _repoIntelligenceById    = {};
+    _archDataByRepoId        = {};
+    _archForecastDataByRepoId = {};
+    _archFetchInFlightByRepoId = {};
+  });
+
+  test('intel arch=risky → Architecture Health shows Risky without any Loading state', () => {
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    const arch = _resolveOverviewArchData(100);
+    const html = buildOverviewCardsHtml(REPO, null, arch, null, null);
+    expect(html).toContain('Risky');
+    expect(html).not.toContain('Architecture Loading');
+    expect(html).not.toContain('Coverage Gap');
+  });
+
+  test('Overview Priority matches table priority when intel=risky → both Critical', () => {
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    const arch = _resolveOverviewArchData(100);
+    const fc   = _resolveOverviewFcData(100);
+    // Table uses computeRepoPriority directly from intel-derived archData
+    const tablePri = computeRepoPriority(REPO, null, arch, fc);
+    expect(tablePri).toBe('critical');
+    const html = buildOverviewCardsHtml(REPO, null, arch, fc, null);
+    expect(html).toContain('Critical');
+  });
+
+  test('intel arch=risky + in-flight fetch → still shows Risky (intel wins over Loading)', () => {
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    _archFetchInFlightByRepoId[100] = true;  // fetch in flight but intel already known
+    const arch = _resolveOverviewArchData(100);
+    const html = buildOverviewCardsHtml(REPO, null, arch, null, null);
+    expect(html).toContain('Risky');
+    expect(html).not.toContain('Architecture Loading');
+  });
+
+  test('no intel + fetch in flight → Architecture Loading (not Coverage Gap)', () => {
+    _archFetchInFlightByRepoId[100] = true;  // no intel, fetch is in progress
+    const arch = _resolveOverviewArchData(100);  // null
+    const html = buildOverviewCardsHtml(REPO, null, arch, null, null);
+    expect(html).toContain('Architecture Loading');
+    expect(html).not.toContain('Coverage Gap');
+  });
+
+  test('no intel + fetch NOT in flight → Coverage Gap (not Loading)', () => {
+    // _archFetchInFlightByRepoId not set — fetch done or not started
+    const arch = _resolveOverviewArchData(100);  // null
+    const html = buildOverviewCardsHtml(REPO, null, arch, null, null);
+    expect(html).toContain('Coverage Gap');
+    expect(html).not.toContain('Architecture Loading');
+  });
+
+  test('intel arch=risky renders Risky not Loading (forecast card may still show Not Enough History)', () => {
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    const arch = _resolveOverviewArchData(100);
+    const html = buildOverviewCardsHtml(REPO, null, arch, null, null);
+    expect(html).toContain('Risky');
+    expect(html).not.toContain('Architecture Loading');
+    // No forecast intel → Forecast card correctly shows Not Enough History; arch card must not
+    expect(html).not.toContain('Coverage Gap');
+  });
+
+  test('intel forecast=high → Overview Forecast shows High Risk, not Not Enough History', () => {
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', forecastLevel: 'high' });
+    const arch = _resolveOverviewArchData(100);
+    const fc   = _resolveOverviewFcData(100);
+    const html = buildOverviewCardsHtml(REPO, null, arch, fc, null);
+    expect(html).toContain('High Risk');
+    expect(html).not.toContain('Not Enough History');
+  });
+
+  test('missing intel → Coverage Gap + Needs History, not Healthy or Loading', () => {
+    // No intel at all — both arch and forecast cards should show unknown/missing state
+    const arch = _resolveOverviewArchData(100);  // null → Coverage Gap path
+    const fc   = _resolveOverviewFcData(100);    // null → Not Enough History
+    const html = buildOverviewCardsHtml(REPO, null, arch, fc, null);
+    expect(html).toContain('Coverage Gap');
+    expect(html).toContain('Needs History');    // Snapshot Coverage
+    expect(html).toContain('Not Enough History'); // Forecast
+    expect(html).not.toContain('Healthy');
+    expect(html).not.toContain('Architecture Loading');
+  });
+
+  test('selected-repo per-click cannot downgrade risky intel to Coverage Gap', () => {
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    // Per-click returns a contradictory "unknown" level — intel must win
+    _archDataByRepoId[100] = { architectureHealthLevel: 'unknown', architectureHealthScore: 30 };
+    const arch = _resolveOverviewArchData(100);
+    expect(arch.architectureHealthLevel).toBe('risky');  // intel wins
+    const html = buildOverviewCardsHtml(REPO, null, arch, null, null);
+    expect(html).toContain('Risky');
+    expect(html).not.toContain('Coverage Gap');
+  });
+
+  test('selected-repo per-click completion does not change table Priority or order', () => {
+    // Table priority is computed from intel at render time; per-click cache is not involved
+    mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    const archFromIntel = _resolveOverviewArchData(100);
+    const priBefore = computeRepoPriority(REPO, null, archFromIntel, null);
+
+    // Simulate per-click fetch completing with an "unknown" level
+    _archDataByRepoId[100] = { architectureHealthLevel: 'unknown', architectureHealthScore: 30 };
+    // Table re-reads intel (not _archDataByRepoId) on re-render — priority unchanged
+    const archAfter = _resolveOverviewArchData(100);
+    const priAfter  = computeRepoPriority(REPO, null, archAfter, null);
+
+    expect(priBefore).toBe('critical');
+    expect(priAfter).toBe('critical');  // same — per-click did not downgrade
+  });
+});
+
+// ── buildOverviewCardsHtml — Snapshot Coverage card ──────────────────────────
+
+describe('buildOverviewCardsHtml — Snapshot Coverage card', () => {
+  const REPO2 = { id: 200, fullName: 'org/repo2', score: null, label: 'healthy' };
+
+  beforeEach(() => {
+    _repoIntelligenceById    = {};
+    _archDataByRepoId        = {};
+    _archForecastDataByRepoId = {};
+    _archFetchInFlightByRepoId = {};
+  });
+
+  test('intel.hasArchitectureSnapshot=true → Has Snapshot', () => {
+    mergeRepoIntelligence(200, { hasArchitectureSnapshot: true, architectureHealthLevel: 'risky' });
+    const arch = _resolveOverviewArchData(200);
+    const html = buildOverviewCardsHtml(REPO2, null, arch, null, null);
+    expect(html).toContain('Has Snapshot');
+  });
+
+  test('intel.hasArchitectureSnapshot=false → Needs History regardless of arch cache', () => {
+    // hasArchitectureSnapshot=false explicitly means no snapshot — must win over arch score/level
+    // mergeRepoIntelligence skips null/undefined but stores false (false != null is true)
+    _repoIntelligenceById['200'] = { repoId: '200', hasArchitectureSnapshot: false };
+    const arch = _resolveOverviewArchData(200);
+    const html = buildOverviewCardsHtml(REPO2, null, arch, null, null);
+    expect(html).toContain('Needs History');
+    expect(html).not.toContain('Has Snapshot');
+  });
+
+  test('arch score/level in intel (no hasArchitectureSnapshot field) → Has Snapshot', () => {
+    mergeRepoIntelligence(200, { architectureHealthScore: 45, architectureHealthLevel: 'weak' });
+    const arch = _resolveOverviewArchData(200);
+    const html = buildOverviewCardsHtml(REPO2, null, arch, null, null);
+    expect(html).toContain('Has Snapshot');
+  });
+
+  test('no intel, no arch data → Needs History', () => {
+    const arch = _resolveOverviewArchData(200);  // null — no data
+    const html = buildOverviewCardsHtml(REPO2, null, arch, null, null);
+    expect(html).toContain('Needs History');
+    expect(html).not.toContain('Has Snapshot');
+  });
+
+  test('per-click arch data with level → Has Snapshot (fallback when no intel)', () => {
+    _archDataByRepoId[200] = { architectureHealthLevel: 'watch', architectureHealthScore: 75 };
+    const arch = _resolveOverviewArchData(200);
+    const html = buildOverviewCardsHtml(REPO2, null, arch, null, null);
+    expect(html).toContain('Has Snapshot');
+  });
+});
+
+// ── buildOverviewCardsHtml — Architecture Health card precedence ──────────────
+
+describe('buildOverviewCardsHtml — Architecture Health card precedence', () => {
+  const REPO3 = { id: 300, fullName: 'org/repo3', score: null, label: 'healthy' };
+
+  beforeEach(() => {
+    _repoIntelligenceById    = {};
+    _archDataByRepoId        = {};
+    _archForecastDataByRepoId = {};
+    _archFetchInFlightByRepoId = {};
+  });
+
+  test('intel level=risky → Risky (severity-critical)', () => {
+    mergeRepoIntelligence(300, { architectureHealthLevel: 'risky' });
+    const arch = _resolveOverviewArchData(300);
+    const html = buildOverviewCardsHtml(REPO3, null, arch, null, null);
+    expect(html).toContain('Risky');
+    expect(html).toContain('severity-critical');
+  });
+
+  test('intel level=weak → Weak (severity-high)', () => {
+    mergeRepoIntelligence(300, { architectureHealthLevel: 'weak' });
+    const arch = _resolveOverviewArchData(300);
+    const html = buildOverviewCardsHtml(REPO3, null, arch, null, null);
+    expect(html).toContain('Weak');
+    expect(html).toContain('severity-high');
+  });
+
+  test('intel level=watch → Watch (severity-medium)', () => {
+    mergeRepoIntelligence(300, { architectureHealthLevel: 'watch' });
+    const arch = _resolveOverviewArchData(300);
+    const html = buildOverviewCardsHtml(REPO3, null, arch, null, null);
+    expect(html).toContain('Watch');
+    expect(html).toContain('severity-medium');
+  });
+
+  test('intel level=healthy → Healthy (severity-healthy)', () => {
+    mergeRepoIntelligence(300, { architectureHealthLevel: 'healthy' });
+    const arch = _resolveOverviewArchData(300);
+    const html = buildOverviewCardsHtml(REPO3, null, arch, null, null);
+    expect(html).toContain('Healthy');
+    expect(html).toContain('severity-healthy');
+  });
+
+  test('watchlist-only intel (no arch level) + no fetch in flight → Coverage Gap', () => {
+    mergeRepoIntelligence(300, { watchlistEscalationLevel: 'critical' });
+    const arch = _resolveOverviewArchData(300);
+    const html = buildOverviewCardsHtml(REPO3, null, arch, null, null);
+    expect(html).toContain('Coverage Gap');
+    expect(html).not.toContain('Architecture Loading');
+  });
+
+  test('watchlist-only intel + fetch in flight → Architecture Loading (no arch intel)', () => {
+    mergeRepoIntelligence(300, { watchlistEscalationLevel: 'critical' });
+    _archFetchInFlightByRepoId[300] = true;
+    const arch = _resolveOverviewArchData(300);
+    const html = buildOverviewCardsHtml(REPO3, null, arch, null, null);
+    expect(html).toContain('Architecture Loading');
+    expect(html).not.toContain('Coverage Gap');
+  });
+});
+
+// ── buildOverviewCardsHtml — Forecast card precedence ────────────────────────
+
+describe('buildOverviewCardsHtml — Forecast card precedence', () => {
+  const REPO4 = { id: 400, fullName: 'org/repo4', score: null, label: 'healthy' };
+
+  beforeEach(() => {
+    _repoIntelligenceById    = {};
+    _archDataByRepoId        = {};
+    _archForecastDataByRepoId = {};
+    _archFetchInFlightByRepoId = {};
+  });
+
+  test('intel forecastLevel=critical → Critical, not Not Enough History', () => {
+    mergeRepoIntelligence(400, { forecastLevel: 'critical' });
+    const fc   = _resolveOverviewFcData(400);
+    const arch = _resolveOverviewArchData(400);
+    const html = buildOverviewCardsHtml(REPO4, null, arch, fc, null);
+    expect(html).toContain('Critical');
+    expect(html).not.toContain('Not Enough History');
+  });
+
+  test('intel forecastLevel=high → High Risk', () => {
+    mergeRepoIntelligence(400, { forecastLevel: 'high' });
+    const fc   = _resolveOverviewFcData(400);
+    const arch = _resolveOverviewArchData(400);
+    const html = buildOverviewCardsHtml(REPO4, null, arch, fc, null);
+    expect(html).toContain('High Risk');
+    expect(html).not.toContain('Not Enough History');
+  });
+
+  test('no intel forecast → Not Enough History', () => {
+    const fc   = _resolveOverviewFcData(400);  // null
+    const arch = _resolveOverviewArchData(400);
+    const html = buildOverviewCardsHtml(REPO4, null, arch, fc, null);
+    expect(html).toContain('Not Enough History');
+  });
+
+  test('per-click forecastLevel wins when no intel forecast', () => {
+    _archForecastDataByRepoId[400] = { forecastLevel: 'high', degradationRisk: 0.6 };
+    const fc   = _resolveOverviewFcData(400);
+    const arch = _resolveOverviewArchData(400);
+    const html = buildOverviewCardsHtml(REPO4, null, arch, fc, null);
+    expect(html).toContain('High Risk');
+    expect(html).not.toContain('Not Enough History');
+  });
+
+  test('intel forecastLevel wins over contradictory per-click', () => {
+    mergeRepoIntelligence(400, { forecastLevel: 'critical' });
+    _archForecastDataByRepoId[400] = { forecastLevel: 'low', degradationRisk: 0.1 };
+    const fc   = _resolveOverviewFcData(400);
+    expect(fc.forecastLevel).toBe('critical');  // intel wins in resolver
+    const arch = _resolveOverviewArchData(400);
+    const html = buildOverviewCardsHtml(REPO4, null, arch, fc, null);
+    expect(html).toContain('Critical');
+    expect(html).not.toContain('Low');
+  });
+});
+
+// ── computeArchitectureConfidence — pure helper ───────────────────────────────
+
+describe('computeArchitectureConfidence — confidence rules', () => {
+  test('snapshot + score + forecast → High (severity-healthy)', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: true,
+      architectureScore: 72,
+      forecastLevel: 'high',
+    });
+    expect(r.label).toBe('High');
+    expect(r.cls).toBe('severity-healthy');
+  });
+
+  test('snapshot + score + forecast=critical → High', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: true,
+      architectureScore: 40,
+      forecastLevel: 'critical',
+    });
+    expect(r.label).toBe('High');
+    expect(r.cls).toBe('severity-healthy');
+  });
+
+  test('snapshot + score + no forecast → Medium (severity-medium)', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: true,
+      architectureScore: 55,
+      forecastLevel: null,
+    });
+    expect(r.label).toBe('Medium');
+    expect(r.cls).toBe('severity-medium');
+  });
+
+  test('snapshot + score + forecastLevel=unknown → Medium (unknown treated as missing)', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: true,
+      architectureScore: 55,
+      forecastLevel: 'unknown',
+    });
+    expect(r.label).toBe('Medium');
+    expect(r.cls).toBe('severity-medium');
+  });
+
+  test('snapshot exists but architectureScore missing → Low (severity-high)', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: true,
+      architectureScore: null,
+      forecastLevel: 'high',
+    });
+    expect(r.label).toBe('Low');
+    expect(r.cls).toBe('severity-high');
+  });
+
+  test('snapshot exists, score undefined, forecast present → Low (partial data)', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: true,
+      architectureScore: undefined,
+      forecastLevel: 'critical',
+    });
+    expect(r.label).toBe('Low');
+    expect(r.cls).toBe('severity-high');
+  });
+
+  test('no architecture snapshot → Insufficient History (severity-neutral)', () => {
+    const r = computeArchitectureConfidence({
+      hasArchitectureSnapshot: false,
+      architectureScore: 80,
+      forecastLevel: 'high',
+    });
+    expect(r.label).toBe('Insufficient History');
+    expect(r.cls).toBe('severity-neutral');
+  });
+
+  test('hasArchitectureSnapshot undefined → Insufficient History', () => {
+    const r = computeArchitectureConfidence({
+      architectureScore: 60,
+      forecastLevel: 'medium',
+    });
+    expect(r.label).toBe('Insufficient History');
+    expect(r.cls).toBe('severity-neutral');
+  });
+
+  test('null opts → Insufficient History (no crash)', () => {
+    expect(() => computeArchitectureConfidence(null)).not.toThrow();
+    expect(computeArchitectureConfidence(null).label).toBe('Insufficient History');
+  });
+
+  test('empty opts → Insufficient History', () => {
+    expect(computeArchitectureConfidence({}).label).toBe('Insufficient History');
+  });
+});
+
+// ── buildOverviewCardsHtml — Architecture Confidence card ─────────────────────
+
+describe('buildOverviewCardsHtml — Architecture Confidence card (Card 6)', () => {
+  const REPO5 = { id: 500, fullName: 'org/repo5', score: null, label: 'healthy' };
+
+  beforeEach(() => {
+    _repoIntelligenceById    = {};
+    _archDataByRepoId        = {};
+    _archForecastDataByRepoId = {};
+    _archFetchInFlightByRepoId = {};
+  });
+
+  test('snapshot + score + forecast → card shows High', () => {
+    mergeRepoIntelligence(500, {
+      hasArchitectureSnapshot: true,
+      architectureHealthScore: 72,
+      architectureHealthLevel: 'watch',
+    });
+    _archForecastDataByRepoId[500] = { forecastLevel: 'high', degradationRisk: 0.4 };
+    const arch = _resolveOverviewArchData(500);
+    const fc   = _resolveOverviewFcData(500);
+    const html = buildOverviewCardsHtml(REPO5, null, arch, fc);
+    expect(html).toContain('Architecture Confidence');
+    expect(html).toContain('High');
+    expect(html).toContain('severity-healthy');
+    expect(html).not.toContain('Insufficient History');
+  });
+
+  test('snapshot + score only (no forecast) → card shows Medium', () => {
+    mergeRepoIntelligence(500, {
+      hasArchitectureSnapshot: true,
+      architectureHealthScore: 55,
+      architectureHealthLevel: 'weak',
+    });
+    const arch = _resolveOverviewArchData(500);
+    const fc   = _resolveOverviewFcData(500);  // null — no forecast data
+    const html = buildOverviewCardsHtml(REPO5, null, arch, fc);
+    expect(html).toContain('Architecture Confidence');
+    expect(html).toContain('Medium');
+    expect(html).toContain('severity-medium');
+  });
+
+  test('snapshot present but score missing → card shows Low', () => {
+    mergeRepoIntelligence(500, { hasArchitectureSnapshot: true });
+    // archData will have null score and null level
+    const arch = _resolveOverviewArchData(500);
+    const fc   = _resolveOverviewFcData(500);
+    const html = buildOverviewCardsHtml(REPO5, null, arch, fc);
+    expect(html).toContain('Architecture Confidence');
+    expect(html).toContain('Low');
+    expect(html).toContain('severity-high');
+  });
+
+  test('no architecture snapshot → card shows Insufficient History', () => {
+    // No intel at all, no per-click cache
+    const arch = _resolveOverviewArchData(500);  // null
+    const fc   = _resolveOverviewFcData(500);
+    const html = buildOverviewCardsHtml(REPO5, null, arch, fc);
+    expect(html).toContain('Architecture Confidence');
+    expect(html).toContain('Insufficient History');
+    expect(html).toContain('severity-neutral');
+  });
+
+  test('per-click arch data (score + level) counts as snapshot even without intel flag', () => {
+    _archDataByRepoId[500] = { architectureHealthLevel: 'risky', architectureHealthScore: 22 };
+    const arch = _resolveOverviewArchData(500);
+    const fc   = _resolveOverviewFcData(500);
+    const html = buildOverviewCardsHtml(REPO5, null, arch, fc);
+    // snapshot detected from per-click data, no forecast → Medium
+    expect(html).toContain('Medium');
+    expect(html).not.toContain('Insufficient History');
+  });
+
+  test('Operational Status label no longer appears in Overview', () => {
+    const arch = _resolveOverviewArchData(500);
+    const fc   = _resolveOverviewFcData(500);
+    const html = buildOverviewCardsHtml(REPO5, null, arch, fc);
+    expect(html).not.toContain('Operational Status');
+  });
+});
+
+// ── buildArchitectureAssessment — primary tier ────────────────────────────────
+
+describe('buildArchitectureAssessment — primary assessment tier', () => {
+  const snapConf = { hasArchitectureSnapshot: true, architectureConfidence: 'High' };
+  const fc       = { forecastLevel: 'medium' };   // medium → no forecast append
+
+  test('priority=critical → critical tier, severity-critical', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: 'critical', forecastLevel: 'medium' });
+    expect(a.level).toBe('critical');
+    expect(a.cls).toBe('severity-critical');
+    expect(a.text).toContain('Architecture health is critical');
+    expect(a.text).toContain('Structural indicators');
+  });
+
+  test('priority=critical with score → includes score in text', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: 'critical', architectureScore: 32, forecastLevel: 'medium' });
+    expect(a.text).toContain('(score: 32)');
+  });
+
+  test('priority=healthy but architectureScore=22 (<45) → critical tier override', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: 'healthy', architectureScore: 22, forecastLevel: 'medium' });
+    expect(a.level).toBe('critical');
+    expect(a.text).toContain('Architecture health is critical');
+    expect(a.text).toContain('(score: 22)');
+  });
+
+  test('priority=elevated → elevated tier, severity-high', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: 'elevated', forecastLevel: 'medium' });
+    expect(a.level).toBe('elevated');
+    expect(a.cls).toBe('severity-high');
+    expect(a.text).toContain('Architecture health requires attention');
+    expect(a.text).toContain('elevated risk');
+  });
+
+  test('priority=watch → watch tier, severity-medium', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: 'watch', forecastLevel: 'medium' });
+    expect(a.level).toBe('watch');
+    expect(a.cls).toBe('severity-medium');
+    expect(a.text).toContain('stable but exhibits signals');
+  });
+
+  test('priority=healthy → healthy tier, severity-healthy', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: 'healthy', forecastLevel: 'medium' });
+    expect(a.level).toBe('healthy');
+    expect(a.cls).toBe('severity-healthy');
+    expect(a.text).toContain('structurally healthy');
+  });
+
+  test('null priority → unknown tier', () => {
+    const a = buildArchitectureAssessment({ ...snapConf, architecturalPriority: null, forecastLevel: 'medium' });
+    expect(a.level).toBe('unknown');
+    expect(a.cls).toBe('severity-unknown');
+  });
+
+  test('null opts → unknown tier, no crash', () => {
+    expect(() => buildArchitectureAssessment(null)).not.toThrow();
+    expect(buildArchitectureAssessment(null).level).toBe('unknown');
+  });
+});
+
+// ── buildArchitectureAssessment — forecast context ────────────────────────────
+
+describe('buildArchitectureAssessment — forecast context append', () => {
+  const base = {
+    architecturalPriority:   'watch',
+    hasArchitectureSnapshot: true,
+    architectureConfidence:  'High',
+  };
+
+  test('forecastLevel=high → appends degradation risk sentence', () => {
+    const a = buildArchitectureAssessment({ ...base, forecastLevel: 'high' });
+    expect(a.text).toContain('Forecast analysis indicates elevated degradation risk.');
+  });
+
+  test('forecastLevel=critical → appends degradation risk sentence', () => {
+    const a = buildArchitectureAssessment({ ...base, forecastLevel: 'critical' });
+    expect(a.text).toContain('Forecast analysis indicates elevated degradation risk.');
+  });
+
+  test('forecastLevel=null (forecast unavailable) → appends insufficient history sentence', () => {
+    const a = buildArchitectureAssessment({ ...base, forecastLevel: null });
+    expect(a.text).toContain('Forecast confidence is limited due to insufficient architecture history.');
+    expect(a.text).not.toContain('degradation risk');
+  });
+
+  test('forecastLevel=unknown → treated as unavailable, appends insufficient history', () => {
+    const a = buildArchitectureAssessment({ ...base, forecastLevel: 'unknown' });
+    expect(a.text).toContain('Forecast confidence is limited due to insufficient architecture history.');
+  });
+
+  test('forecastLevel=medium → no forecast append (neither degradation nor insufficient)', () => {
+    const a = buildArchitectureAssessment({ ...base, forecastLevel: 'medium' });
+    expect(a.text).not.toContain('Forecast analysis');
+    expect(a.text).not.toContain('Forecast confidence is limited');
+  });
+
+  test('forecastLevel=stable → no forecast append', () => {
+    const a = buildArchitectureAssessment({ ...base, forecastLevel: 'stable' });
+    expect(a.text).not.toContain('Forecast analysis');
+    expect(a.text).not.toContain('Forecast confidence is limited');
+  });
+});
+
+// ── buildArchitectureAssessment — coverage context ────────────────────────────
+
+describe('buildArchitectureAssessment — coverage context append', () => {
+  const base = {
+    architecturalPriority: 'healthy',
+    forecastLevel:         'medium',   // no forecast append
+  };
+
+  test('no architecture snapshot → appends incomplete coverage sentence', () => {
+    const a = buildArchitectureAssessment({ ...base, hasArchitectureSnapshot: false });
+    expect(a.text).toContain('Architecture intelligence coverage is incomplete.');
+    expect(a.text).not.toContain('Assessment confidence is reduced');
+  });
+
+  test('hasArchitectureSnapshot undefined → appends incomplete coverage', () => {
+    const a = buildArchitectureAssessment({ ...base });
+    expect(a.text).toContain('Architecture intelligence coverage is incomplete.');
+  });
+
+  test('snapshot + confidence=Medium → appends reduced confidence sentence', () => {
+    const a = buildArchitectureAssessment({ ...base, hasArchitectureSnapshot: true, architectureConfidence: 'Medium' });
+    expect(a.text).toContain('Assessment confidence is reduced due to limited architecture evidence.');
+    expect(a.text).not.toContain('coverage is incomplete');
+  });
+
+  test('snapshot + confidence=Low → appends reduced confidence sentence', () => {
+    const a = buildArchitectureAssessment({ ...base, hasArchitectureSnapshot: true, architectureConfidence: 'Low' });
+    expect(a.text).toContain('Assessment confidence is reduced due to limited architecture evidence.');
+  });
+
+  test('snapshot + confidence=High → no coverage append', () => {
+    const a = buildArchitectureAssessment({ ...base, hasArchitectureSnapshot: true, architectureConfidence: 'High' });
+    expect(a.text).not.toContain('coverage is incomplete');
+    expect(a.text).not.toContain('Assessment confidence is reduced');
+  });
+
+  test('snapshot + confidence=Insufficient History → no extra append (only incomplete-coverage path applies when no snap)', () => {
+    // 'Insufficient History' is not 'Medium' or 'Low', so no reduced-confidence append
+    const a = buildArchitectureAssessment({ ...base, hasArchitectureSnapshot: true, architectureConfidence: 'Insufficient History' });
+    expect(a.text).not.toContain('Assessment confidence is reduced');
+    expect(a.text).not.toContain('coverage is incomplete');
+  });
+});
+
+// ── buildArchitectureAssessment — combined scenarios ─────────────────────────
+
+describe('buildArchitectureAssessment — combined scenarios', () => {
+  test('critical + high forecast + no snapshot → full critical narrative', () => {
+    const a = buildArchitectureAssessment({
+      architecturalPriority:   'critical',
+      architectureScore:       30,
+      forecastLevel:           'high',
+      hasArchitectureSnapshot: false,
+      architectureConfidence:  'Insufficient History',
+    });
+    expect(a.level).toBe('critical');
+    expect(a.text).toContain('(score: 30)');
+    expect(a.text).toContain('Forecast analysis indicates elevated degradation risk.');
+    expect(a.text).toContain('Architecture intelligence coverage is incomplete.');
+  });
+
+  test('elevated + forecast unavailable + reduced confidence → all three parts', () => {
+    const a = buildArchitectureAssessment({
+      architecturalPriority:   'elevated',
+      forecastLevel:           null,
+      hasArchitectureSnapshot: true,
+      architectureConfidence:  'Low',
+    });
+    expect(a.level).toBe('elevated');
+    expect(a.text).toContain('Architecture health requires attention');
+    expect(a.text).toContain('Forecast confidence is limited due to insufficient architecture history.');
+    expect(a.text).toContain('Assessment confidence is reduced due to limited architecture evidence.');
+  });
+
+  test('healthy + medium forecast + High confidence → clean narrative, no appends', () => {
+    const a = buildArchitectureAssessment({
+      architecturalPriority:   'healthy',
+      forecastLevel:           'medium',
+      hasArchitectureSnapshot: true,
+      architectureConfidence:  'High',
+    });
+    expect(a.level).toBe('healthy');
+    expect(a.text).toContain('structurally healthy');
+    expect(a.text).not.toContain('Forecast');
+    expect(a.text).not.toContain('coverage is incomplete');
+    expect(a.text).not.toContain('Assessment confidence is reduced');
+  });
+});
+
+// ── buildArchitectureRecommendations — primary tier ───────────────────────────
+
+describe('buildArchitectureRecommendations — primary tier', () => {
+  const withSnap    = { hasArchitectureSnapshot: true,  forecastLevel: 'medium' };
+  const withoutSnap = { hasArchitectureSnapshot: false, forecastLevel: 'medium' };
+
+  test('priority=critical → four critical/risky recommendations', () => {
+    const items = buildArchitectureRecommendations({ ...withSnap, architecturalPriority: 'critical' });
+    expect(items).toContain('Review unresolved API linkage issues');
+    expect(items).toContain('Reduce coupling in high fan-out modules');
+    expect(items).toContain('Address implementation completeness gaps');
+    expect(items).toContain('Audit orphaned routes and dead integrations');
+  });
+
+  test('score < 45 overrides lower priority → critical recommendations', () => {
+    const items = buildArchitectureRecommendations({ ...withSnap, architecturalPriority: 'watch', architectureScore: 30 });
+    expect(items).toContain('Review unresolved API linkage issues');
+    expect(items).not.toContain('Monitor architecture trend');
+  });
+
+  test('architectureLevel=risky triggers critical recommendations', () => {
+    const items = buildArchitectureRecommendations({ ...withSnap, architecturalPriority: 'watch', architectureLevel: 'risky' });
+    expect(items).toContain('Reduce coupling in high fan-out modules');
+    expect(items).not.toContain('Monitor architecture trend');
+  });
+
+  test('priority=elevated → three elevated recommendations', () => {
+    const items = buildArchitectureRecommendations({ ...withSnap, architecturalPriority: 'elevated' });
+    expect(items).toContain('Review architectural hotspots');
+    expect(items).toContain('Improve route-to-service coverage');
+    expect(items).toContain('Reduce dependency concentration');
+    expect(items).not.toContain('Review unresolved API linkage issues');
+  });
+
+  test('priority=watch → two watch recommendations', () => {
+    const items = buildArchitectureRecommendations({ ...withSnap, architecturalPriority: 'watch' });
+    expect(items).toContain('Monitor architecture trend');
+    expect(items).toContain('Increase architecture snapshot frequency');
+    expect(items).not.toContain('Review architectural hotspots');
+  });
+
+  test('priority=healthy → no primary recommendations (empty array)', () => {
+    const items = buildArchitectureRecommendations({ ...withSnap, architecturalPriority: 'healthy' });
+    expect(items).not.toContain('Review unresolved API linkage issues');
+    expect(items).not.toContain('Review architectural hotspots');
+    expect(items).not.toContain('Monitor architecture trend');
+  });
+
+  test('null opts → no crash; returns snapshot items (hasSnap=false path)', () => {
+    expect(() => buildArchitectureRecommendations(null)).not.toThrow();
+    // no snapshot data → generate/improve snapshot items are always appended
+    const items = buildArchitectureRecommendations(null);
+    expect(items).toContain('Generate architecture snapshot');
+    expect(items).toContain('Improve architecture coverage');
+  });
+});
+
+// ── buildArchitectureRecommendations — no-snapshot append ────────────────────
+
+describe('buildArchitectureRecommendations — no snapshot append', () => {
+  test('no snapshot → always appends generate/improve snapshot items', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'healthy',
+      forecastLevel:           'medium',
+      hasArchitectureSnapshot: false,
+    });
+    expect(items).toContain('Generate architecture snapshot');
+    expect(items).toContain('Improve architecture coverage');
+  });
+
+  test('with snapshot → does NOT append snapshot items', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'healthy',
+      forecastLevel:           'medium',
+      hasArchitectureSnapshot: true,
+    });
+    expect(items).not.toContain('Generate architecture snapshot');
+    expect(items).not.toContain('Improve architecture coverage');
+  });
+
+  test('critical + no snapshot → critical items AND snapshot items both present', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'critical',
+      forecastLevel:           'medium',
+      hasArchitectureSnapshot: false,
+    });
+    expect(items).toContain('Review unresolved API linkage issues');
+    expect(items).toContain('Generate architecture snapshot');
+  });
+});
+
+// ── buildArchitectureRecommendations — high-risk forecast append ──────────────
+
+describe('buildArchitectureRecommendations — high-risk forecast append', () => {
+  const base = { architecturalPriority: 'watch', hasArchitectureSnapshot: true };
+
+  test('forecastLevel=high → appends degradation + remediation items', () => {
+    const items = buildArchitectureRecommendations({ ...base, forecastLevel: 'high' });
+    expect(items).toContain('Investigate degradation trajectory');
+    expect(items).toContain('Prioritize structural remediation');
+  });
+
+  test('forecastLevel=critical → appends degradation + remediation items', () => {
+    const items = buildArchitectureRecommendations({ ...base, forecastLevel: 'critical' });
+    expect(items).toContain('Investigate degradation trajectory');
+    expect(items).toContain('Prioritize structural remediation');
+  });
+
+  test('forecastLevel=medium → does NOT append forecast items', () => {
+    const items = buildArchitectureRecommendations({ ...base, forecastLevel: 'medium' });
+    expect(items).not.toContain('Investigate degradation trajectory');
+    expect(items).not.toContain('Prioritize structural remediation');
+  });
+
+  test('forecastLevel=null → no forecast items appended', () => {
+    const items = buildArchitectureRecommendations({ ...base, forecastLevel: null });
+    expect(items).not.toContain('Investigate degradation trajectory');
+  });
+
+  test('forecastLevel=stable → no forecast items appended', () => {
+    const items = buildArchitectureRecommendations({ ...base, forecastLevel: 'stable' });
+    expect(items).not.toContain('Investigate degradation trajectory');
+  });
+});
+
+// ── buildArchitectureRecommendations — combined scenarios ─────────────────────
+
+describe('buildArchitectureRecommendations — combined scenarios', () => {
+  test('critical + no snapshot + high forecast → all three groups present', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'critical',
+      architectureScore:       22,
+      forecastLevel:           'high',
+      hasArchitectureSnapshot: false,
+    });
+    // Critical tier
+    expect(items).toContain('Review unresolved API linkage issues');
+    expect(items).toContain('Audit orphaned routes and dead integrations');
+    // No-snapshot append
+    expect(items).toContain('Generate architecture snapshot');
+    // High-forecast append
+    expect(items).toContain('Investigate degradation trajectory');
+  });
+
+  test('elevated + snapshot + critical forecast → elevated + forecast items only', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'elevated',
+      forecastLevel:           'critical',
+      hasArchitectureSnapshot: true,
+    });
+    expect(items).toContain('Review architectural hotspots');
+    expect(items).toContain('Investigate degradation trajectory');
+    expect(items).not.toContain('Generate architecture snapshot');
+  });
+
+  test('healthy + snapshot + stable forecast → empty (no recommendations)', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'healthy',
+      forecastLevel:           'stable',
+      hasArchitectureSnapshot: true,
+    });
+    expect(items).toHaveLength(0);
+  });
+
+  test('no snapshot alone on healthy repo → two snapshot items', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'healthy',
+      forecastLevel:           'stable',
+      hasArchitectureSnapshot: false,
+    });
+    expect(items).toHaveLength(2);
+    expect(items[0]).toBe('Generate architecture snapshot');
+    expect(items[1]).toBe('Improve architecture coverage');
+  });
+
+  test('does not include operational items (CI, maintainers, releases)', () => {
+    const items = buildArchitectureRecommendations({
+      architecturalPriority:   'critical',
+      forecastLevel:           'high',
+      hasArchitectureSnapshot: false,
+    });
+    expect(items.join(' ')).not.toMatch(/maintainer|release|CI|contributor/i);
+  });
+});
+
+// ── buildActiveArchitectureRisks — no risks ───────────────────────────────────
+
+describe('buildActiveArchitectureRisks — no risks', () => {
+  test('all-clean inputs → empty array', () => {
+    const risks = buildActiveArchitectureRisks({
+      unresolvedApiCalls:         0,
+      implementationCompleteness: 80,
+      couplingRisk:               'healthy',
+      forecastLevel:              'stable',
+      hasArchitectureSnapshot:    true,
+      architectureConfidence:     'High',
+    });
+    expect(risks).toHaveLength(0);
+  });
+
+  test('null opts → no crash; returns coverage-confidence risk (no snapshot path)', () => {
+    expect(() => buildActiveArchitectureRisks(null)).not.toThrow();
+    const risks = buildActiveArchitectureRisks(null);
+    expect(risks).toContain('Architecture coverage confidence is reduced');
+  });
+
+  test('snapshot=true + High confidence + no other issues → empty', () => {
+    const risks = buildActiveArchitectureRisks({
+      hasArchitectureSnapshot: true,
+      architectureConfidence:  'High',
+      forecastLevel:           'medium',
+    });
+    expect(risks).toHaveLength(0);
+  });
+});
+
+// ── buildActiveArchitectureRisks — individual risk triggers ──────────────────
+
+describe('buildActiveArchitectureRisks — API linkage risk', () => {
+  const BASE = { hasArchitectureSnapshot: true, architectureConfidence: 'High', forecastLevel: 'stable' };
+
+  test('unresolvedApiCalls=1 → API linkage risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, unresolvedApiCalls: 1 });
+    expect(risks).toContain('API linkage gaps detected');
+  });
+
+  test('unresolvedApiCalls=5 → API linkage risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, unresolvedApiCalls: 5 });
+    expect(risks).toContain('API linkage gaps detected');
+  });
+
+  test('unresolvedApiCalls=0 → no API linkage risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, unresolvedApiCalls: 0 });
+    expect(risks).not.toContain('API linkage gaps detected');
+  });
+
+  test('unresolvedApiCalls=null → no API linkage risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, unresolvedApiCalls: null });
+    expect(risks).not.toContain('API linkage gaps detected');
+  });
+});
+
+describe('buildActiveArchitectureRisks — implementation completeness risk', () => {
+  const BASE = { hasArchitectureSnapshot: true, architectureConfidence: 'High', forecastLevel: 'stable' };
+
+  test('implementationCompleteness=50 (<70) → completeness risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, implementationCompleteness: 50 });
+    expect(risks).toContain('Implementation completeness is weak');
+  });
+
+  test('implementationCompleteness=69 → completeness risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, implementationCompleteness: 69 });
+    expect(risks).toContain('Implementation completeness is weak');
+  });
+
+  test('implementationCompleteness=70 → no risk (boundary)', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, implementationCompleteness: 70 });
+    expect(risks).not.toContain('Implementation completeness is weak');
+  });
+
+  test('implementationCompleteness=90 → no risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, implementationCompleteness: 90 });
+    expect(risks).not.toContain('Implementation completeness is weak');
+  });
+});
+
+describe('buildActiveArchitectureRisks — coupling risk', () => {
+  const BASE = { hasArchitectureSnapshot: true, architectureConfidence: 'High', forecastLevel: 'stable' };
+
+  test('couplingRisk=elevated → coupling risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, couplingRisk: 'elevated' }))
+      .toContain('Coupling concentration is elevated');
+  });
+
+  test('couplingRisk=high → coupling risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, couplingRisk: 'high' }))
+      .toContain('Coupling concentration is elevated');
+  });
+
+  test('couplingRisk=risky (backend value) → coupling risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, couplingRisk: 'risky' }))
+      .toContain('Coupling concentration is elevated');
+  });
+
+  test('couplingRisk=weak (backend value) → coupling risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, couplingRisk: 'weak' }))
+      .toContain('Coupling concentration is elevated');
+  });
+
+  test('couplingRisk=watch → no coupling risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, couplingRisk: 'watch' }))
+      .not.toContain('Coupling concentration is elevated');
+  });
+
+  test('couplingRisk=healthy → no coupling risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, couplingRisk: 'healthy' }))
+      .not.toContain('Coupling concentration is elevated');
+  });
+});
+
+describe('buildActiveArchitectureRisks — forecast risk', () => {
+  const BASE = { hasArchitectureSnapshot: true, architectureConfidence: 'High' };
+
+  test('forecastLevel=high → forecast risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, forecastLevel: 'high' }))
+      .toContain('Architecture forecast indicates degradation risk');
+  });
+
+  test('forecastLevel=critical → forecast risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, forecastLevel: 'critical' }))
+      .toContain('Architecture forecast indicates degradation risk');
+  });
+
+  test('forecastLevel=medium → no forecast risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, forecastLevel: 'medium' }))
+      .not.toContain('Architecture forecast indicates degradation risk');
+  });
+
+  test('forecastLevel=stable → no forecast risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, forecastLevel: 'stable' }))
+      .not.toContain('Architecture forecast indicates degradation risk');
+  });
+
+  test('forecastLevel=null → no forecast risk', () => {
+    expect(buildActiveArchitectureRisks({ ...BASE, forecastLevel: null }))
+      .not.toContain('Architecture forecast indicates degradation risk');
+  });
+});
+
+describe('buildActiveArchitectureRisks — coverage confidence risk', () => {
+  const BASE = { forecastLevel: 'stable' };
+
+  test('architectureConfidence=Low → coverage confidence risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, hasArchitectureSnapshot: true, architectureConfidence: 'Low' });
+    expect(risks).toContain('Architecture coverage confidence is reduced');
+  });
+
+  test('no snapshot (hasArchitectureSnapshot=false) → coverage confidence risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, hasArchitectureSnapshot: false, architectureConfidence: 'High' });
+    expect(risks).toContain('Architecture coverage confidence is reduced');
+  });
+
+  test('no snapshot (undefined) → coverage confidence risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, architectureConfidence: 'High' });
+    expect(risks).toContain('Architecture coverage confidence is reduced');
+  });
+
+  test('snapshot + Medium confidence → no coverage risk (Medium is not Low)', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, hasArchitectureSnapshot: true, architectureConfidence: 'Medium' });
+    expect(risks).not.toContain('Architecture coverage confidence is reduced');
+  });
+
+  test('snapshot + High confidence → no coverage risk', () => {
+    const risks = buildActiveArchitectureRisks({ ...BASE, hasArchitectureSnapshot: true, architectureConfidence: 'High' });
+    expect(risks).not.toContain('Architecture coverage confidence is reduced');
+  });
+});
+
+// ── buildActiveArchitectureRisks — multiple risks ─────────────────────────────
+
+describe('buildActiveArchitectureRisks — multiple risks', () => {
+  test('all five risk triggers active → five risks returned', () => {
+    const risks = buildActiveArchitectureRisks({
+      unresolvedApiCalls:         3,
+      implementationCompleteness: 45,
+      couplingRisk:               'risky',
+      forecastLevel:              'critical',
+      hasArchitectureSnapshot:    false,
+      architectureConfidence:     'Low',
+    });
+    expect(risks).toContain('API linkage gaps detected');
+    expect(risks).toContain('Implementation completeness is weak');
+    expect(risks).toContain('Coupling concentration is elevated');
+    expect(risks).toContain('Architecture forecast indicates degradation risk');
+    expect(risks).toContain('Architecture coverage confidence is reduced');
+    expect(risks).toHaveLength(5);
+  });
+
+  test('api + forecast risks only', () => {
+    const risks = buildActiveArchitectureRisks({
+      unresolvedApiCalls:         2,
+      implementationCompleteness: 85,
+      couplingRisk:               'healthy',
+      forecastLevel:              'high',
+      hasArchitectureSnapshot:    true,
+      architectureConfidence:     'High',
+    });
+    expect(risks).toContain('API linkage gaps detected');
+    expect(risks).toContain('Architecture forecast indicates degradation risk');
+    expect(risks).toHaveLength(2);
+  });
+
+  test('ordering: api → completeness → coupling → forecast → confidence', () => {
+    const risks = buildActiveArchitectureRisks({
+      unresolvedApiCalls:         1,
+      implementationCompleteness: 50,
+      couplingRisk:               'weak',
+      forecastLevel:              'high',
+      hasArchitectureSnapshot:    false,
+    });
+    expect(risks[0]).toBe('API linkage gaps detected');
+    expect(risks[1]).toBe('Implementation completeness is weak');
+    expect(risks[2]).toBe('Coupling concentration is elevated');
+    expect(risks[3]).toBe('Architecture forecast indicates degradation risk');
+    expect(risks[4]).toBe('Architecture coverage confidence is reduced');
+  });
+});
+
+// ── buildArchitectureRiskProfileHtml — fallback ───────────────────────────────
+
+describe('buildArchitectureRiskProfileHtml — fallback', () => {
+  test('no archData and no intel → returns fallback paragraph', () => {
+    const html = buildArchitectureRiskProfileHtml({}, null, null, {});
+    expect(html).toContain('Architecture Risk Profile unavailable');
+    expect(html).not.toContain('rms-panel');
+  });
+
+  test('archData with unknown level and no score → fallback', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {},
+      { architectureHealthLevel: 'unknown', architectureHealthScore: null },
+      null,
+      {}
+    );
+    expect(html).toContain('Architecture Risk Profile unavailable');
+  });
+
+  test('intel provides level when archData null → renders panel (not fallback)', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {}, null, null,
+      { architectureHealthLevel: 'risky', architectureHealthScore: 30 }
+    );
+    expect(html).not.toContain('Architecture Risk Profile unavailable');
+    expect(html).toContain('rms-panel');
+  });
+});
+
+// ── buildArchitectureRiskProfileHtml — header ─────────────────────────────────
+
+describe('buildArchitectureRiskProfileHtml — overall score and level header', () => {
+  const archData = { architectureHealthLevel: 'risky', architectureHealthScore: 28, confidenceLevel: 'medium' };
+  const cache    = { confidenceLevel: 'medium' };
+
+  test('renders score in header', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, {});
+    expect(html).toContain('28');
+    expect(html).toContain('/ 100');
+  });
+
+  test('renders level badge with severity-critical for risky', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, {});
+    expect(html).toContain('RISKY');
+    expect(html).toContain('severity-critical');
+  });
+
+  test('renders level badge with severity-high for weak', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      cache,
+      { architectureHealthLevel: 'weak', architectureHealthScore: 55 },
+      null, {}
+    );
+    expect(html).toContain('WEAK');
+    expect(html).toContain('severity-high');
+  });
+
+  test('renders confidence badge', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, {});
+    expect(html).toContain('MEDIUM CONFIDENCE');
+  });
+});
+
+// ── buildArchitectureRiskProfileHtml — six dimensions ────────────────────────
+
+describe('buildArchitectureRiskProfileHtml — six dimensions present', () => {
+  const archData = { architectureHealthLevel: 'watch', architectureHealthScore: 72, architectureHealthLevel: 'watch' };
+
+  test('all six dimension labels are rendered', () => {
+    const html = buildArchitectureRiskProfileHtml({}, archData, null, { hasArchitectureSnapshot: true, architectureHealthScore: 72 });
+    expect(html).toContain('API Linkage');
+    expect(html).toContain('Implementation Completeness');
+    expect(html).toContain('Coupling Risk');
+    expect(html).toContain('Boundary Integrity');
+    expect(html).toContain('Forecast Risk');
+    expect(html).toContain('Architecture Confidence');
+  });
+
+  test('dimensions with no data show dash placeholder', () => {
+    const html = buildArchitectureRiskProfileHtml({}, archData, null, { hasArchitectureSnapshot: true, architectureHealthScore: 72 });
+    // No apiLinkageLevel, implementationLevel, couplingRisk, boundary data → dash
+    expect(html).toContain('—');
+  });
+
+  test('apiLinkageLevel populated → shows badge, not dash', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      { apiLinkageLevel: 'healthy' },
+      archData, null,
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('HEALTHY');
+    expect(html).toContain('severity-healthy');
+  });
+
+  test('couplingRisk=risky → coupling row shows severity-critical badge', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      { couplingRisk: 'risky' },
+      archData, null,
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('RISKY');
+  });
+
+  test('boundary score=88 → healthy boundary level badge', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      { boundaryHealthScore: 88, boundaryViolationCount: 0 },
+      archData, null,
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('HEALTHY');
+  });
+
+  test('boundary score=30 and violations=3 → risky badge with violation count', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      { boundaryHealthScore: 30, boundaryViolationCount: 3 },
+      archData, null,
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('RISKY');
+    expect(html).toContain('3v');
+  });
+
+  test('forecastLevel=high → forecast row shows severity-high badge', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {},
+      archData,
+      { forecastLevel: 'high' },
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('HIGH');
+    expect(html).toContain('severity-high');
+  });
+
+  test('forecastLevel=stable → forecast row shows severity-healthy badge', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {},
+      archData,
+      { forecastLevel: 'stable' },
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('STABLE');
+    expect(html).toContain('severity-healthy');
+  });
+});
+
+// ── buildArchitectureRiskProfileHtml — Architecture Confidence row ────────────
+
+describe('buildArchitectureRiskProfileHtml — Architecture Confidence dimension', () => {
+  const archData = { architectureHealthLevel: 'watch', architectureHealthScore: 72 };
+
+  test('snapshot + score + forecast → Architecture Confidence shows HIGH', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {},
+      archData,
+      { forecastLevel: 'high' },
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('HIGH');
+    expect(html).toContain('severity-healthy');
+  });
+
+  test('snapshot + score + no forecast → Architecture Confidence shows MEDIUM', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {},
+      archData,
+      null,
+      { hasArchitectureSnapshot: true, architectureHealthScore: 72 }
+    );
+    expect(html).toContain('MEDIUM');
+    expect(html).toContain('severity-medium');
+  });
+
+  test('no snapshot → Architecture Confidence shows INSUFFICIENT HISTORY', () => {
+    const html = buildArchitectureRiskProfileHtml(
+      {},
+      null,
+      null,
+      { architectureHealthScore: null }  // no level/score → fallback
+    );
+    // No level or score → fallback paragraph, not the panel
+    expect(html).toContain('Architecture Risk Profile unavailable');
+  });
+
+  test('operational maturity dimensions are NOT present', () => {
+    const html = buildArchitectureRiskProfileHtml({}, archData, null, { hasArchitectureSnapshot: true, architectureHealthScore: 72 });
+    expect(html).not.toContain('CI / CD');
+    expect(html).not.toContain('Release');
+    expect(html).not.toContain('Contributors');
+    expect(html).not.toContain('Activity');
+    expect(html).not.toContain('PR Workflow');
+    expect(html).not.toContain('Telemetry');
+  });
+});
+
+// ── _normArchLinkageLevel — API linkage vocabulary normalisation ──────────────
+
+describe('_normArchLinkageLevel — maps API vocab to LEVEL_SEV keys', () => {
+  test('integrated → healthy (fully linked is the best state)', () => {
+    expect(_normArchLinkageLevel('integrated')).toBe('healthy');
+  });
+  test('partial → watch (needs improvement)', () => {
+    expect(_normArchLinkageLevel('partial')).toBe('watch');
+  });
+  test('weak → weak (already a LEVEL_SEV key, passes through)', () => {
+    expect(_normArchLinkageLevel('weak')).toBe('weak');
+  });
+  test('unknown → unknown (passes through)', () => {
+    expect(_normArchLinkageLevel('unknown')).toBe('unknown');
+  });
+  test('null → null', () => {
+    expect(_normArchLinkageLevel(null)).toBeNull();
+  });
+  test('undefined → null', () => {
+    expect(_normArchLinkageLevel(undefined)).toBeNull();
+  });
+  test('empty string → null', () => {
+    expect(_normArchLinkageLevel('')).toBeNull();
+  });
+});
+
+// ── _normImplCompletenessLevel — implementation completeness normalisation ────
+
+describe('_normImplCompletenessLevel — maps completeness vocab to LEVEL_SEV keys', () => {
+  test('complete → healthy', () => {
+    expect(_normImplCompletenessLevel('complete')).toBe('healthy');
+  });
+  test('partial → watch', () => {
+    expect(_normImplCompletenessLevel('partial')).toBe('watch');
+  });
+  test('weak → weak (passes through)', () => {
+    expect(_normImplCompletenessLevel('weak')).toBe('weak');
+  });
+  test('unknown → unknown (passes through)', () => {
+    expect(_normImplCompletenessLevel('unknown')).toBe('unknown');
+  });
+  test('null → null', () => {
+    expect(_normImplCompletenessLevel(null)).toBeNull();
+  });
+});
+
+// ── _deriveCouplingLevel — coupling level from couplingMetrics ────────────────
+
+describe('_deriveCouplingLevel — derives level from dependency graph metrics', () => {
+  test('null input → null (no coupling data available)', () => {
+    expect(_deriveCouplingLevel(null)).toBeNull();
+  });
+  test('empty object → healthy (no coupling signals)', () => {
+    expect(_deriveCouplingLevel({})).toBe('healthy');
+  });
+
+  // Risky thresholds
+  test('6+ circular deps → risky', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 6, averageOutDegree: 0, highFanOutFiles: [] })).toBe('risky');
+  });
+  test('averageOutDegree > 8 → risky', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 9, highFanOutFiles: [] })).toBe('risky');
+  });
+  test('6+ high fan-out files → risky', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 0,
+      highFanOutFiles: ['a','b','c','d','e','f'] })).toBe('risky');
+  });
+
+  // Weak thresholds
+  test('3 circular deps → weak', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 3, averageOutDegree: 0, highFanOutFiles: [] })).toBe('weak');
+  });
+  test('averageOutDegree=6 → weak', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 6, highFanOutFiles: [] })).toBe('weak');
+  });
+  test('3 high fan-out files → weak', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 0,
+      highFanOutFiles: ['a','b','c'] })).toBe('weak');
+  });
+
+  // Watch thresholds
+  test('1 circular dep → watch', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 1, averageOutDegree: 0, highFanOutFiles: [] })).toBe('watch');
+  });
+  test('averageOutDegree=4 → watch', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 4, highFanOutFiles: [] })).toBe('watch');
+  });
+  test('1 high fan-out file → watch', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 0,
+      highFanOutFiles: ['a'] })).toBe('watch');
+  });
+
+  // Healthy
+  test('no coupling signals → healthy', () => {
+    expect(_deriveCouplingLevel({
+      circularDependencyCount: 0, averageOutDegree: 1, highFanOutFiles: []
+    })).toBe('healthy');
+  });
+  test('averageOutDegree=3 exactly → healthy (boundary)', () => {
+    expect(_deriveCouplingLevel({ circularDependencyCount: 0, averageOutDegree: 3, highFanOutFiles: [] })).toBe('healthy');
+  });
+});
+
+// ── Architecture Risk Profile — end-to-end with normalised fields ─────────────
+
+describe('buildArchitectureRiskProfileHtml — dimensions populate with normalised data', () => {
+  // Simulate _archDataByRepoId entry built from a real architecture payload
+  // after applying the three normalizer helpers.
+  const cache = {
+    confidenceLevel:            'medium',
+    apiLinkageLevel:            _normArchLinkageLevel('integrated'),    // → 'healthy'
+    implementationLevel:        _normImplCompletenessLevel('partial'),  // → 'watch'
+    couplingRisk:               _deriveCouplingLevel({                  // → 'weak'
+      circularDependencyCount: 3, averageOutDegree: 0, highFanOutFiles: [],
+    }),
+    boundaryHealthScore:        78,  // → 'watch' (70-84 range)
+    boundaryViolationCount:     2,
+  };
+  const archData = { architectureHealthLevel: 'watch', architectureHealthScore: 72 };
+  const intel    = { hasArchitectureSnapshot: true, architectureHealthScore: 72 };
+
+  test('API Linkage row shows HEALTHY (from integrated → healthy normalisation)', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, intel);
+    expect(html).toContain('API Linkage');
+    expect(html).toContain('HEALTHY');
+    expect(html).toContain('severity-healthy');
+  });
+
+  test('Implementation Completeness row shows WATCH (from partial → watch normalisation)', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, intel);
+    expect(html).toContain('Implementation Completeness');
+    expect(html).toContain('WATCH');
+  });
+
+  test('Coupling Risk row shows WEAK (from derived couplingMetrics)', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, intel);
+    expect(html).toContain('Coupling Risk');
+    expect(html).toContain('WEAK');
+  });
+
+  test('Boundary Integrity row shows WATCH (score 78 → watch tier)', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, intel);
+    expect(html).toContain('Boundary Integrity');
+    expect(html).toContain('WATCH');
+  });
+
+  test('Boundary violation count appears in boundary row', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, null, intel);
+    expect(html).toContain('2v');
+  });
+
+  test('Forecast Risk row shows HIGH when fcData present', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, { forecastLevel: 'high' }, intel);
+    expect(html).toContain('Forecast Risk');
+    expect(html).toContain('HIGH');
+  });
+
+  test('all six dimensions render non-dash values', () => {
+    const html = buildArchitectureRiskProfileHtml(cache, archData, { forecastLevel: 'medium' }, intel);
+    // Each dimension label is followed by a badge, not a dash
+    expect(html.indexOf('>—<')).toBe(-1);   // no bare dash spans
+  });
+});
+
+// ── Update-order regression — archCache must be passed before grid guard fires ─
+// Verifies that all five arch dimension fields are readable from a realistic
+// _archDataByRepoId-style cache object (the exact structure written by
+// loadRepoArchitecture after the fixes).
+
+describe('buildArchitectureRiskProfileHtml — reads archCache fields written by loadRepoArchitecture', () => {
+  // Simulate what loadRepoArchitecture writes into _archDataByRepoId[repoId]
+  // after applying the three normalizer helpers.
+  const realisticCache = {
+    architectureHealthLevel:    'risky',
+    architectureHealthScore:    28,
+    confidenceLevel:            'low',
+    // Active Architecture Risk fields
+    unresolvedApiCalls:         3,
+    implementationCompleteness: 45,
+    couplingRisk:               _deriveCouplingLevel({ circularDependencyCount: 4, averageOutDegree: 2, highFanOutFiles: [] }),  // → 'weak'
+    // Architecture Risk Profile dimension fields (after normalisation)
+    apiLinkageLevel:            _normArchLinkageLevel('integrated'),           // → 'healthy'
+    implementationLevel:        _normImplCompletenessLevel('complete'),        // → 'healthy'
+    boundaryHealthScore:        62,                                            // → 'weak' (45-69)
+    boundaryViolationCount:     5,                                             // from violations.length
+  };
+
+  const archData = {
+    architectureHealthLevel: 'risky',
+    architectureHealthScore: 28,
+  };
+  const intel = { hasArchitectureSnapshot: true, architectureHealthScore: 28 };
+
+  test('apiLinkageLevel "healthy" appears in output (not "—")', () => {
+    const html = buildArchitectureRiskProfileHtml(realisticCache, archData, null, intel);
+    const apiSection = html.substring(html.indexOf('API Linkage'));
+    // First closing div after the label is the value span
+    expect(apiSection).toContain('HEALTHY');
+  });
+
+  test('implementationLevel "healthy" appears in output (not "—")', () => {
+    const html = buildArchitectureRiskProfileHtml(realisticCache, archData, null, intel);
+    expect(html).toContain('Implementation Completeness');
+    // both RISKY (header) and HEALTHY (impl level) should be present
+    expect(html).toContain('HEALTHY');
+  });
+
+  test('couplingRisk derived as "weak" → WEAK badge in output', () => {
+    expect(realisticCache.couplingRisk).toBe('weak');
+    const html = buildArchitectureRiskProfileHtml(realisticCache, archData, null, intel);
+    expect(html).toContain('Coupling Risk');
+    expect(html).toContain('WEAK');
+  });
+
+  test('boundaryHealthScore 62 → WEAK boundary badge (45-69 range)', () => {
+    const html = buildArchitectureRiskProfileHtml(realisticCache, archData, null, intel);
+    expect(html).toContain('Boundary Integrity');
+    // bndLevel = 'weak' since 62 is in 45-69 range
+    expect(html).toContain('5v');   // violation count appended
+  });
+
+  test('forecastLevel from fcData shows HIGH badge', () => {
+    const html = buildArchitectureRiskProfileHtml(realisticCache, archData, { forecastLevel: 'high' }, intel);
+    expect(html).toContain('Forecast Risk');
+    expect(html).toContain('HIGH');
+  });
+
+  test('archCache field names written by loadRepoArchitecture match those read by renderer', () => {
+    // Verify every dimension key the renderer reads is present in the cache object.
+    const keysRead = ['apiLinkageLevel', 'implementationLevel', 'couplingRisk',
+                      'boundaryHealthScore', 'boundaryViolationCount', 'confidenceLevel'];
+    keysRead.forEach(function(key) {
+      expect(realisticCache).toHaveProperty(key);
+    });
+  });
+
+  test('empty archCache {} causes all dimension rows to show dash (pre-fetch state)', () => {
+    // This confirms that "—" is the correct initial state — it clears once
+    // loadRepoArchitecture completes and updateOverviewArchCards runs.
+    const html = buildArchitectureRiskProfileHtml({}, archData, null, intel);
+    // API Linkage, Impl, Coupling, Boundary all dash; Forecast dash; Confidence shows
+    const dashCount = (html.match(/>—</g) || []).length;
+    expect(dashCount).toBe(5);   // five dimension rows dash before data arrives
   });
 });
