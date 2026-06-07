@@ -305,7 +305,12 @@ describe('buildRepositoryArchitectureSnapshot — topFindings', () => {
 
   test('unresolved frontend API appears in topFindings', () => {
     const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
-    const found = r.topFindings.find(function(f) { return f.type === 'unresolved_frontend_calls'; });
+    // After deduplication the high-severity unresolved_frontend_api entry survives;
+    // match by message content rather than by the internal type key.
+    const found = r.topFindings.find(function(f) {
+      return f.summary && f.summary.indexOf('frontend API call') !== -1 &&
+             f.summary.indexOf('no matching backend route') !== -1;
+    });
     expect(found).toBeDefined();
   });
 
@@ -574,5 +579,191 @@ describe('buildRepositoryArchitectureSnapshot — module composition', () => {
   test('metrics.totalEdges matches dependencyGraph.couplingMetrics.totalEdges', () => {
     const r = buildRepositoryArchitectureSnapshot({ files: backendOnlyFiles() });
     expect(r.metrics.totalEdges).toBe(r.dependencyGraph.couplingMetrics.totalEdges);
+  });
+});
+
+// Files with a method mismatch: backend GET route, frontend POST call to same path.
+function methodMismatchFiles() {
+  return [
+    makeFile('routes/data.js',  "app.get('/api/data', (req,res) => res.json({ ok: true }));"),
+    makeFile('src/app.jsx',
+      "export default function App() {\n" +
+      "  fetch('/api/data', { method: 'POST' }).then(r=>r.json());\n" +
+      "  return <div/>;\n" +
+      "}"),
+    makeFile('tests/stub.test.js', "test('x', () => {});"),
+  ];
+}
+
+// ── Recommendations deduplication ────────────────────────────────────────────
+
+describe('buildRepositoryArchitectureSnapshot — recommendations deduplication (regression)', () => {
+  // Regression for user-reported bug: orphaned-route recommendation appeared twice,
+  // once from linkFrontendBackendApis and once from verifyArchitectureBoundaries.
+  // After the action-oriented rewrite, Group A/B/C still share a semantic key —
+  // only one rec per group must survive after _mergeRecommendations.
+
+  test('Group B: orphaned backend route appears exactly once in recommendations', () => {
+    // unresolvedFrontendFiles has 1 orphaned backend route (/api/health).
+    // linkage emits "...without frontend consumers...where appropriate",
+    // boundary emits "...without frontend consumers...internal-only".
+    // Both share semantic key orphaned_backend_route — only one should survive.
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    const orphanedRecs = r.recommendations.filter(function(rec) {
+      return /without frontend consumer/i.test(rec);
+    });
+    expect(orphanedRecs).toHaveLength(1);
+  });
+
+  test('Group B: linkage wording survives (not boundary wording)', () => {
+    // Linkage is placed first after the concat-order fix, so its wording wins.
+    // Linkage marker: "where appropriate" (unique to linkage).
+    // Boundary marker: "internal-only" (unique to boundary).
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    const hasLinkageWording = r.recommendations.some(function(rec) {
+      return /where appropriate/i.test(rec);
+    });
+    const hasBoundaryWording = r.recommendations.some(function(rec) {
+      return /internal-only/i.test(rec);
+    });
+    expect(hasLinkageWording).toBe(true);
+    expect(hasBoundaryWording).toBe(false);
+  });
+
+  test('Group A: unresolved frontend API rec appears exactly once in recommendations', () => {
+    // linkage, boundary, and completeness all emit Group A recs.
+    // All new strings contain "unresolved frontend API call" — only one should survive.
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    const unresolvedRecs = r.recommendations.filter(function(rec) {
+      return /unresolved frontend api call/i.test(rec);
+    });
+    expect(unresolvedRecs).toHaveLength(1);
+  });
+
+  test('Group A: linkage wording survives over boundary and completeness phrasings', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    // Linkage marker: "obsolete calls" (unique to linkage — boundary uses "dead calls",
+    // completeness uses "for all").
+    const hasLinkageWording = r.recommendations.some(function(rec) {
+      return /obsolete calls/i.test(rec);
+    });
+    // Boundary marker: "remove dead calls" (unique to boundary).
+    const hasBoundaryWording = r.recommendations.some(function(rec) {
+      return /remove dead calls/i.test(rec);
+    });
+    // Completeness marker: "for all unresolved" (unique to completeness).
+    const hasCompletenessWording = r.recommendations.some(function(rec) {
+      return /for all unresolved/i.test(rec);
+    });
+    expect(hasLinkageWording).toBe(true);
+    expect(hasBoundaryWording).toBe(false);
+    expect(hasCompletenessWording).toBe(false);
+  });
+
+  test('Group C: method mismatch rec appears exactly once in recommendations', () => {
+    // linkage and boundary both emit Group C recs.
+    const r = buildRepositoryArchitectureSnapshot({ files: methodMismatchFiles() });
+    const mismatchRecs = r.recommendations.filter(function(rec) {
+      return /method mismatch/i.test(rec);
+    });
+    expect(mismatchRecs).toHaveLength(1);
+  });
+
+  test('Group C: linkage wording survives over boundary phrasing', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: methodMismatchFiles() });
+    // Linkage marker: "resolve HTTP method mismatches" (unique to linkage).
+    const hasLinkageWording = r.recommendations.some(function(rec) {
+      return /resolve http method mismatch/i.test(rec);
+    });
+    // Boundary marker: "align frontend call methods" (unique to boundary).
+    const hasBoundaryWording = r.recommendations.some(function(rec) {
+      return /align frontend call methods/i.test(rec);
+    });
+    expect(hasLinkageWording).toBe(true);
+    expect(hasBoundaryWording).toBe(false);
+  });
+
+  test('no semantic duplicate recommendations — each semantic group appears at most once', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    const recs = r.recommendations;
+
+    const groupACounts = recs.filter(function(rec) {
+      return /unresolved frontend api call/i.test(rec);
+    }).length;
+    const groupBCounts = recs.filter(function(rec) {
+      return /without frontend consumer/i.test(rec);
+    }).length;
+    const groupCCounts = recs.filter(function(rec) {
+      return /method mismatch/i.test(rec);
+    }).length;
+
+    expect(groupACounts).toBeLessThanOrEqual(1);
+    expect(groupBCounts).toBeLessThanOrEqual(1);
+    expect(groupCCounts).toBeLessThanOrEqual(1);
+  });
+
+  test('all three Group semantics collapse with a combined fixture', () => {
+    // This fixture has an unresolved call, an orphaned route, and a method mismatch all at once.
+    const files = [
+      // Backend: GET /api/health (orphaned), GET /api/data (wrong method from frontend)
+      makeFile('routes/health.js', "app.get('/api/health', (req,res) => res.json({ ok: true }));"),
+      makeFile('routes/data.js',   "app.get('/api/data', (req,res) => res.json({ v: 1 }));"),
+      // Frontend: POST /api/data (method mismatch), GET /api/ghost (unresolved)
+      makeFile('src/app.jsx',
+        "export default function App() {\n" +
+        "  fetch('/api/ghost').then(r=>r.json());\n" +
+        "  fetch('/api/data', { method: 'POST' }).then(r=>r.json());\n" +
+        "  return <div/>;\n" +
+        "}"),
+      makeFile('tests/stub.test.js', "test('x', () => {});"),
+    ];
+    const r = buildRepositoryArchitectureSnapshot({ files });
+
+    const groupA = r.recommendations.filter(function(rec) {
+      return /unresolved frontend api call/i.test(rec);
+    });
+    const groupB = r.recommendations.filter(function(rec) {
+      return /without frontend consumer/i.test(rec);
+    });
+    const groupC = r.recommendations.filter(function(rec) {
+      return /method mismatch/i.test(rec);
+    });
+
+    expect(groupA).toHaveLength(1);
+    expect(groupB).toHaveLength(1);
+    expect(groupC).toHaveLength(1);
+  });
+});
+
+// ── Top findings deduplication ────────────────────────────────────────────────
+
+describe('buildRepositoryArchitectureSnapshot — topFindings deduplication', () => {
+  test('no duplicate summaries when the same message is emitted from two steps', () => {
+    // unresolvedFrontendFiles triggers Step 2 (unresolved_frontend_calls, medium)
+    // and Step 4 via assessImplementationCompleteness (unresolved_frontend_api, high).
+    // Both produce the identical human-readable summary — dedup must collapse them to one.
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    const normalized = r.topFindings.map(function(f) {
+      return (f.summary || '').trim().toLowerCase();
+    });
+    expect(new Set(normalized).size).toBe(normalized.length);
+  });
+
+  test('highest severity survives deduplication — high beats medium', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: unresolvedFrontendFiles() });
+    const found = r.topFindings.find(function(f) {
+      return f.summary && f.summary.indexOf('frontend API call') !== -1 &&
+             f.summary.indexOf('no matching backend route') !== -1;
+    });
+    expect(found).toBeDefined();
+    expect(found.severity).toBe('high');
+  });
+
+  test('distinct findings from different sources both survive', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: boundaryViolationFiles() });
+    const normalized = r.topFindings.map(function(f) {
+      return (f.summary || '').trim().toLowerCase();
+    });
+    expect(new Set(normalized).size).toBe(normalized.length);
   });
 });

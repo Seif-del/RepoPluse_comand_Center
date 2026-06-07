@@ -2164,6 +2164,157 @@ describe('repoRoutes GET /:id/architecture', () => {
     await getArchitectureHandler(req, res, next);
     expect(res.status).toHaveBeenCalledWith(404);
   });
+
+  // ── topFindings deduplication in cache responses (regression) ─────────────
+  // Root cause: the DB snapshot was stored before the builder-level dedup fix
+  // was deployed. The route now deduplicates at read-time so both fresh-cache
+  // and stale-cache responses are always clean.
+
+  it('fresh cache: deduplicates topFindings with identical summaries — high severity survives', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString(); // 1 min ago — fresh
+    const snapWithDups = Object.assign({}, MOCK_SNAPSHOT, {
+      topFindings: [
+        // Exact duplicate visible in production UI (19 unresolved frontend API calls)
+        { type: 'unresolved_frontend_calls', severity: 'medium', summary: '19 frontend API calls have no matching backend route.' },
+        { type: 'unresolved_frontend_api',   severity: 'high',   summary: '19 frontend API calls have no matching backend route.' },
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDups, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(Array.isArray(body.topFindings)).toBe(true);
+    expect(body.topFindings).toHaveLength(1);
+    expect(body.topFindings[0].severity).toBe('high');
+    expect(body.topFindings[0].summary).toBe('19 frontend API calls have no matching backend route.');
+  });
+
+  it('fresh cache: deduplicates topFindings — medium entry removed, high entry kept', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const snapWithDups = Object.assign({}, MOCK_SNAPSHOT, {
+      topFindings: [
+        { type: 'unresolved_frontend_calls', severity: 'medium', summary: '19 frontend API calls have no matching backend route.' },
+        { type: 'unresolved_frontend_api',   severity: 'high',   summary: '19 frontend API calls have no matching backend route.' },
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDups, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    const mediumEntry = body.topFindings.find(function(f) { return f.severity === 'medium'; });
+    expect(mediumEntry).toBeUndefined();
+  });
+
+  it('fresh cache: distinct topFindings survive unchanged', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const snapWithDistinct = Object.assign({}, MOCK_SNAPSHOT, {
+      topFindings: [
+        { type: 'boundary_violation',        severity: 'high',   summary: 'Frontend imports backend module.' },
+        { type: 'unresolved_frontend_calls', severity: 'medium', summary: '3 frontend API calls have no matching backend route.' },
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDistinct, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.topFindings).toHaveLength(2);
+  });
+
+  it('stale cache (GitHub error): deduplicates topFindings in fallback response', async () => {
+    const snapshotAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(); // 7 h ago — stale
+    const snapWithDups = Object.assign({}, MOCK_SNAPSHOT, {
+      topFindings: [
+        { type: 'unresolved_frontend_calls', severity: 'medium', summary: '5 frontend API calls have no matching backend route.' },
+        { type: 'unresolved_frontend_api',   severity: 'high',   summary: '5 frontend API calls have no matching backend route.' },
+      ],
+    });
+    fetchRepositoryFiles.mockRejectedValue(new Error('GitHub rate limit'));
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDups, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toMatchObject({ hit: true, stale: true });
+    expect(Array.isArray(body.topFindings)).toBe(true);
+    expect(body.topFindings).toHaveLength(1);
+    expect(body.topFindings[0].severity).toBe('high');
+  });
+
+  // ── recommendations deduplication in cache responses (regression) ─────────
+  // UI regression: "44 backend route candidates have no frontend match" and
+  // "44 backend routes have no frontend counterpart" both appeared because the
+  // stale DB snapshot was built before the dedup fix. The route must apply
+  // semantic dedup (with preferred-wording upgrade) at read time.
+
+  it('fresh cache: deduplicates recommendations — boundary + linkage collapse to linkage wording', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const BOUNDARY = '44 backend route candidates have no frontend match — audit for unused or internal-only endpoints.';
+    const LINKAGE  = '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.';
+    // Stale-cache order: boundary appears BEFORE linkage in the stored array.
+    const snapWithDups = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [BOUNDARY, LINKAGE],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDups, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(Array.isArray(body.recommendations)).toBe(true);
+    expect(body.recommendations).toHaveLength(1);
+    expect(body.recommendations[0]).toBe(LINKAGE);
+  });
+
+  it('fresh cache: boundary wording is removed after preferred-wording upgrade', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const BOUNDARY = '44 backend route candidates have no frontend match — audit for unused or internal-only endpoints.';
+    const LINKAGE  = '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.';
+    const snapWithDups = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [BOUNDARY, LINKAGE],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDups, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.recommendations).not.toContain(BOUNDARY);
+  });
+
+  it('fresh cache: distinct recommendations survive unchanged', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const snapDistinct = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [
+        'Add unit tests for services lacking test coverage.',
+        'Review boundary violations to improve layering.',
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapDistinct, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.recommendations).toHaveLength(2);
+  });
+
+  it('stale cache: deduplicates recommendations with preferred-wording upgrade', async () => {
+    const snapshotAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(); // 7 h stale
+    const BOUNDARY = '3 frontend API calls have no matching backend route — verify routes are defined or remove dead calls.';
+    const LINKAGE  = '3 frontend API calls have no matching backend route — confirm the route is defined or remove the dead call.';
+    const snapWithDups = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [BOUNDARY, LINKAGE],
+    });
+    fetchRepositoryFiles.mockRejectedValue(new Error('GitHub rate limit'));
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapWithDups, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toMatchObject({ hit: true, stale: true });
+    expect(body.recommendations).toHaveLength(1);
+    expect(body.recommendations[0]).toBe(LINKAGE);
+  });
 });
 
 // ── GET /:id/architecture/forecast ────────────────────────────────────────────
