@@ -330,6 +330,145 @@ describe('extractRouteApiStructure — fetch template literals', () => {
     const call = r.frontendApiCalls.find(c => c.path === '/api/users/:param/posts/:param');
     expect(call).toBeDefined();
   });
+
+  test('fetch template literal with method option extracts method', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/app.js', 'fetch(`/api/users/${id}`, { method: \'PUT\' })')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/users/:param');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('PUT');
+  });
+});
+
+// ── fetch multi-line and nested options ───────────────────────────────────────
+
+describe('extractRouteApiStructure — fetch multi-line options', () => {
+  test('multi-line fetch with method: POST extracts correct path and method', () => {
+    const src = [
+      "const res = await fetch('/api/repos/register', {",
+      "  method: 'POST',",
+      "  credentials: 'include',",
+      "});",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/app.html', src)] });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/register');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('POST');
+  });
+
+  test('multi-line fetch with nested headers object extracts method', () => {
+    const src = [
+      "const res = await fetch('/api/repos/register', {",
+      "  method:      'POST',",
+      "  credentials: 'include',",
+      "  headers:     { 'Content-Type': 'application/json' },",
+      "  body:        JSON.stringify({ url }),",
+      "});",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/app.html', src)] });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/register');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('POST');
+  });
+
+  test('path does not contain options block content', () => {
+    const src = [
+      "const res = await fetch('/api/repos/register', {",
+      "  method: 'POST',",
+      "});",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/app.html', src)] });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/register');
+    expect(call).toBeDefined();
+    expect(call.path).toBe('/api/repos/register');
+    expect(call.path).not.toContain('{');
+    expect(call.path).not.toContain("'POST'");
+  });
+
+  test('single-quoted options do not capture across surrounding single-quoted strings', () => {
+    // Regression: old FETCH_RE would backtrack past closing ' and capture into later code
+    const src = [
+      "const res = await fetch('/api/repos/register', {",
+      "  method: 'POST',",
+      "  headers: { 'Content-Type': 'application/json' },",
+      "  body: JSON.stringify({ url }),",
+      "});",
+      "if (res.ok) {",
+      "  showBanner(`done`, 'success');",
+      "}",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/app.html', src)] });
+    const calls = r.frontendApiCalls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0].path).toBe('/api/repos/register');
+    expect(calls[0].method).toBe('POST');
+  });
+
+  test('double-quoted fetch URL is extracted', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/app.js', 'fetch("/api/users", { method: "DELETE" })')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/users');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('DELETE');
+  });
+
+  test('two consecutive fetch calls both extracted without cross-contamination', () => {
+    const src = [
+      "const a = await fetch('/api/repos', { credentials: 'include' });",
+      "const b = await fetch('/api/repos/register', {",
+      "  method: 'POST',",
+      "  headers: { 'Content-Type': 'application/json' },",
+      "  body: JSON.stringify({ url }),",
+      "});",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/app.html', src)] });
+    const calls = r.frontendApiCalls;
+    expect(calls).toHaveLength(2);
+    const get = calls.find(c => c.path === '/api/repos');
+    const post = calls.find(c => c.path === '/api/repos/register');
+    expect(get).toBeDefined();
+    expect(get.method).toBe('GET');
+    expect(post).toBeDefined();
+    expect(post.method).toBe('POST');
+  });
+
+  test('manage-repos.html pattern: clean paths, correct methods, no garbage', () => {
+    // Exact pattern from frontend/manage-repos.html that previously produced a malformed
+    // path containing the entire options block and surrounding code.
+    const src = [
+      "const res1 = await fetch('/api/repos', { credentials: 'include' });",
+      "const res2 = await fetch('/api/repos/register', {",
+      "  method:      'POST',",
+      "  credentials: 'include',",
+      "  headers:     { 'Content-Type': 'application/json' },",
+      "  body:        JSON.stringify({ url }),",
+      "});",
+      "if (res2.status === 401) {",
+      "  window.location.href = '/auth/github';",
+      "  return;",
+      "}",
+      "const data = await res2.json();",
+      "if (res2.ok && data.ok) {",
+      "  showBanner(`\"${data.repo.fullName}\" registered.`, 'success');",
+      "}",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/manage-repos.html', src)] });
+    const calls = r.frontendApiCalls;
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.path).not.toContain('{');
+      expect(c.path).not.toContain("'POST'");
+      expect(c.path).not.toContain('success');
+    }
+    const getCall  = calls.find(c => c.path === '/api/repos');
+    const postCall = calls.find(c => c.path === '/api/repos/register');
+    expect(getCall).toBeDefined();
+    expect(getCall.method).toBe('GET');
+    expect(postCall).toBeDefined();
+    expect(postCall.method).toBe('POST');
+  });
 });
 
 // ── axios calls ───────────────────────────────────────────────────────────────

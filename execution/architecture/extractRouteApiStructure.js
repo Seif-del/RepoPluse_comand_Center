@@ -284,10 +284,20 @@ function _extractNextRoutes(filePath, src) {
 
 // ── Frontend API call extraction ──────────────────────────────────────────────
 
-// fetch('/path')  or  fetch(`/path`)
-// Optionally followed by ,{ method: 'POST' }
-const FETCH_RE = /\bfetch\s*\(\s*(['"`])((?:\\.|[^\\])*?)\1(?:\s*,\s*\{([^}]*?)\})?\s*\)/gs;
-const FETCH_TMPL_RE = /\bfetch\s*\(\s*`((?:\\.|[^`])*?)`(?:\s*,\s*\{([^}]*?)\})?\s*\)/gs;
+// fetch('/path') and fetch("/path")
+// Split by quote type so the URL capture cannot cross its own closing delimiter.
+// The old unified FETCH_RE used [^\\] (not-backslash) in the URL group, which allowed
+// regex backtracking to extend the captured path past closing quotes and into surrounding
+// code — producing garbage multi-line "paths" from nearby string literals.
+const FETCH_SQ_RE  = /\bfetch\s*\(\s*'((?:\\.|[^'\\])*)'/gs;
+const FETCH_DQ_RE  = /\bfetch\s*\(\s*"((?:\\.|[^"\\])*)"/gs;
+// fetch(`/path/${expr}`) — backtick already excluded by [^`\\], no cross-boundary risk.
+const FETCH_TMPL_RE = /\bfetch\s*\(\s*`((?:\\.|[^`\\])*)`/gs;
+// HTTP method from the options block immediately following a fetch URL.
+// Anchored at ^ so it only fires when options open directly after the closing quote.
+// (?:[^{}]|\{[^{}]*\})* handles one level of brace nesting (e.g. headers: { ... })
+// between the opening brace and the method: property.
+const FETCH_OPTS_RE = /^\s*,\s*\{(?:[^{}]|\{[^{}]*\})*?method\s*:\s*['"`]([A-Za-z]+)['"`]/s;
 
 // axios.METHOD('/path')  apiClient.METHOD('/path')
 const AXIOS_RE = /\b(axios|apiClient)\s*\.\s*(get|post|put|delete|patch|head|options)\s*\(\s*(['"`])((?:\\.|[^\\])*?)\3/gis;
@@ -310,24 +320,37 @@ function _extractFrontendCalls(filePath, src) {
 
   let m;
 
-  // fetch with string literal
-  FETCH_RE.lastIndex = 0;
-  while ((m = FETCH_RE.exec(stripped)) !== null) {
-    const rawPath = m[2];
-    const opts    = m[3] || '';
+  // fetch with single-quoted URL
+  FETCH_SQ_RE.lastIndex = 0;
+  while ((m = FETCH_SQ_RE.exec(stripped)) !== null) {
+    const rawPath = m[1];
     if (!rawPath.startsWith('/')) continue;
-    const method = _extractMethod(opts) || 'GET';
+    const rest   = stripped.slice(m.index + m[0].length);
+    const mo     = FETCH_OPTS_RE.exec(rest);
+    const method = mo ? mo[1].toUpperCase() : 'GET';
     calls.push({ method, path: _normRoutePath(rawPath), file: filePath, client: 'fetch' });
   }
 
-  // fetch with template literal
+  // fetch with double-quoted URL
+  FETCH_DQ_RE.lastIndex = 0;
+  while ((m = FETCH_DQ_RE.exec(stripped)) !== null) {
+    const rawPath = m[1];
+    if (!rawPath.startsWith('/')) continue;
+    const rest   = stripped.slice(m.index + m[0].length);
+    const mo     = FETCH_OPTS_RE.exec(rest);
+    const method = mo ? mo[1].toUpperCase() : 'GET';
+    calls.push({ method, path: _normRoutePath(rawPath), file: filePath, client: 'fetch' });
+  }
+
+  // fetch with template literal URL
   FETCH_TMPL_RE.lastIndex = 0;
   while ((m = FETCH_TMPL_RE.exec(stripped)) !== null) {
     const rawPath = m[1];
-    const opts    = m[2] || '';
     if (!rawPath.startsWith('/')) continue;
-    const method = _extractMethod(opts) || 'GET';
-    const path = _normRoutePath(_normTemplateParams(rawPath));
+    const rest   = stripped.slice(m.index + m[0].length);
+    const mo     = FETCH_OPTS_RE.exec(rest);
+    const method = mo ? mo[1].toUpperCase() : 'GET';
+    const path   = _normRoutePath(_normTemplateParams(rawPath));
     calls.push({ method, path, file: filePath, client: 'fetch' });
   }
 
