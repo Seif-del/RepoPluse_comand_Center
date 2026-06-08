@@ -446,3 +446,151 @@ describe('fetchRepositoryFiles — diagnostic logging', () => {
     expect(allLogged).not.toContain(VALID_TOKEN);
   });
 });
+
+// ── Test file exclusion ───────────────────────────────────────────────────────
+
+describe('fetchRepositoryFiles — test file exclusion', () => {
+  function singleFileFetchFn(filePath, content) {
+    return makeFetchFn({
+      tree:     [makeBlob(filePath, 'a')],
+      contents: { [filePath]: makeContentEntry(content) },
+    });
+  }
+
+  it('excludes files in tests/ directory', async () => {
+    const fetchFn = singleFileFetchFn('tests/unit/foo.test.js', "fetch('/api/ghost')");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  it('excludes files in test/ directory', async () => {
+    const fetchFn = singleFileFetchFn('test/foo.spec.ts', "it('test', () => {})");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  it('excludes files in src/__tests__/ directory', async () => {
+    const fetchFn = singleFileFetchFn('src/__tests__/thing.test.jsx', "test('x', () => {})");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  it('excludes *.test.tsx files anywhere in the tree', async () => {
+    const fetchFn = singleFileFetchFn('src/app.test.tsx', "it('test', () => {})");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  it('excludes *.spec.js files anywhere in the tree', async () => {
+    const fetchFn = singleFileFetchFn('src/app.spec.js', "it('test', () => {})");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  it('includes src/app.js (not a test file)', async () => {
+    const fetchFn = singleFileFetchFn('src/app.js', "fetch('/api/users')");
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('src/app.js');
+  });
+
+  it('includes frontend/dashboard.html', async () => {
+    const fetchFn = singleFileFetchFn('frontend/dashboard.html', '<html><body></body></html>');
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('frontend/dashboard.html');
+  });
+
+  it('includes backend/routes/repoRoutes.js', async () => {
+    const fetchFn = singleFileFetchFn('backend/routes/repoRoutes.js', "router.get('/summary', getSummary);");
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('backend/routes/repoRoutes.js');
+  });
+
+  it('excludes all test files and keeps all production files in a mixed tree', async () => {
+    const production = [
+      'src/app.js',
+      'frontend/dashboard.html',
+      'backend/routes/repoRoutes.js',
+    ];
+    const testFiles = [
+      'tests/unit/foo.test.js',
+      'test/integration/bar.spec.ts',
+      'src/__tests__/baz.test.tsx',
+      'src/utils.test.js',
+    ];
+    const allPaths  = production.concat(testFiles);
+    const tree      = allPaths.map(p => makeBlob(p, 'a'));
+    const contents  = Object.fromEntries(allPaths.map(p => [p, makeContentEntry('content')]));
+    const fetchFn   = makeFetchFn({ tree, contents });
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(production.length);
+    expect(files.map(f => f.path).sort()).toEqual(production.slice().sort());
+  });
+});
+
+// ── Regression: test file fixture paths do not contaminate architecture ────────
+
+describe('fetchRepositoryFiles — regression: test fixture paths excluded from architecture', () => {
+  const { extractRouteApiStructure } = require('../../../../execution/architecture/extractRouteApiStructure');
+
+  it('fetch("/api/ghost") inside a *.test.js file produces no unresolved API calls', async () => {
+    const fetchFn = makeFetchFn({
+      tree: [
+        makeBlob('tests/unit/buildSnapshot.test.js', 'a'),
+        makeBlob('backend/routes/health.js', 'b'),
+      ],
+      contents: {
+        'tests/unit/buildSnapshot.test.js': makeContentEntry(
+          "makeFile('src/app.jsx', \"export default function App() { fetch('/api/ghost').then(r=>r.json()); }\")"
+        ),
+        'backend/routes/health.js': makeContentEntry(
+          "app.get('/api/health', (req, res) => res.json({ ok: true }));"
+        ),
+      },
+    });
+
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+
+    // The test file must not appear in the returned files
+    expect(files.map(f => f.path)).not.toContain('tests/unit/buildSnapshot.test.js');
+    expect(files.map(f => f.path)).toContain('backend/routes/health.js');
+
+    // When those files reach the architecture extractor, /api/ghost is absent
+    const structure = extractRouteApiStructure({ files });
+    expect(structure.unresolvedApiCalls.find(u => u.path === '/api/ghost')).toBeUndefined();
+    expect(structure.frontendApiCalls.find(c => c.path === '/api/ghost')).toBeUndefined();
+  });
+
+  it('POST /api/data fixture inside a *.test.js file produces no unresolved API calls', async () => {
+    const fetchFn = makeFetchFn({
+      tree: [
+        makeBlob('tests/unit/methodMismatch.test.js', 'a'),
+        makeBlob('backend/routes/data.js', 'b'),
+      ],
+      contents: {
+        'tests/unit/methodMismatch.test.js': makeContentEntry(
+          "makeFile('src/app.jsx', \"fetch('/api/data', { method: 'POST' }).then(r=>r.json());\")"
+        ),
+        'backend/routes/data.js': makeContentEntry(
+          "app.get('/api/data', (req, res) => res.json({ ok: true }));"
+        ),
+      },
+    });
+
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+
+    expect(files.map(f => f.path)).not.toContain('tests/unit/methodMismatch.test.js');
+
+    // POST /api/data must not appear as an unresolved frontend call
+    const structure = extractRouteApiStructure({ files });
+    expect(structure.unresolvedApiCalls.find(u => u.path === '/api/data' && u.method === 'POST')).toBeUndefined();
+    expect(structure.frontendApiCalls.find(c => c.path === '/api/data' && c.method === 'POST')).toBeUndefined();
+  });
+});

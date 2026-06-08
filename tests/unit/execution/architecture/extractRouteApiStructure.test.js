@@ -693,6 +693,205 @@ describe('extractRouteApiStructure — non-mutation', () => {
   });
 });
 
+// ── Mount prefix resolution ───────────────────────────────────────────────────
+
+describe('extractRouteApiStructure — mount prefix resolution', () => {
+
+  test('detects app.use("/api/repos", repoRoutes) and resolves router GET to prefixed path', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', "router.get('/summary', getSummary);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/repos/summary' && rt.method === 'GET');
+    expect(route).toBeDefined();
+  });
+
+  test('router.get("/") resolves to mount prefix with no trailing slash', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', "router.get('/', listRepos);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/repos' && rt.method === 'GET');
+    expect(route).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos/')).toBeUndefined();
+  });
+
+  test('router.get("/:id/architecture") resolves to /api/repos/:id/architecture', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', "router.get('/:id/architecture', getArch);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/repos/:id/architecture');
+    expect(route).toBeDefined();
+  });
+
+  test('portfolioRoutes router.get("/architecture") resolves to /api/portfolio/architecture', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const portfolioRoutes = require('./routes/portfolioRoutes');",
+          "app.use('/api/portfolio', portfolioRoutes);",
+        ].join('\n')),
+        makeFile('routes/portfolioRoutes.js', "router.get('/architecture', getPortfolioArch);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/portfolio/architecture' && rt.method === 'GET');
+    expect(route).toBeDefined();
+  });
+
+  test('server-level app.get routes are NOT given a mount prefix', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+          "app.get('/summary', getSummary);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', "router.get('/attention', getAttention);"),
+      ],
+    });
+    // /summary lives in server.js (not in the mounted router), so it stays as /summary
+    const serverRoute = r.backendRoutes.find(rt => rt.path === '/summary' && rt.method === 'GET');
+    expect(serverRoute).toBeDefined();
+    // no false double-prefix
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos/summary')).toBeUndefined();
+  });
+
+  test('resolved paths contain no double slashes', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', "router.get('/attention', getAttention);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.file === 'routes/repoRoutes.js' && rt.method === 'GET');
+    expect(route).toBeDefined();
+    expect(route.path).not.toContain('//');
+  });
+
+  test('frontend /api/repos/summary is no longer unresolved after prefix fix', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', "router.get('/summary', getSummary);"),
+        makeFile('frontend/dashboard.html', "fetch('/api/repos/summary')"),
+      ],
+    });
+    expect(r.unresolvedApiCalls.find(u => u.path === '/api/repos/summary')).toBeUndefined();
+  });
+
+  test('multiple mounted routers: all prefixed routes resolve correctly', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "const portfolioRoutes = require('./routes/portfolioRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+          "app.use('/api/portfolio', portfolioRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', [
+          "router.get('/attention', getAttention);",
+          "router.post('/sync', syncRepos);",
+        ].join('\n')),
+        makeFile('routes/portfolioRoutes.js', "router.get('/architecture', getPortfolioArch);"),
+        makeFile('frontend/dashboard.html', [
+          "fetch('/api/repos/attention')",
+          "fetch('/api/repos/sync', { method: 'POST' })",
+          "fetch('/api/portfolio/architecture')",
+        ].join('\n')),
+      ],
+    });
+    expect(r.unresolvedApiCalls.find(u => u.path === '/api/repos/attention')).toBeUndefined();
+    expect(r.unresolvedApiCalls.find(u => u.path === '/api/repos/sync')).toBeUndefined();
+    expect(r.unresolvedApiCalls.find(u => u.path === '/api/portfolio/architecture')).toBeUndefined();
+  });
+
+  test('simulates previous false-positive dashboard calls: all now resolved', () => {
+    // Mirrors the actual RepoPulse server.js + repoRoutes + portfolioRoutes structure
+    const serverSrc = [
+      "const repoRoutes = require('./routes/repoRoutes');",
+      "const portfolioRoutes = require('./routes/portfolioRoutes');",
+      "app.use('/api/repos', repoRoutes);",
+      "app.use('/api/portfolio', portfolioRoutes);",
+      "app.get('/summary', getSummary);",
+    ].join('\n');
+
+    const repoRoutesSrc = [
+      "router.get('/', listRepos);",
+      "router.get('/summary', getRepoSummary);",
+      "router.get('/attention', getAttention);",
+      "router.post('/sync', syncRepos);",
+      "router.post('/register', registerRepo);",
+    ].join('\n');
+
+    const portfolioRoutesSrc = [
+      "router.get('/forecast', getForecast);",
+      "router.get('/history', getHistory);",
+      "router.get('/architecture', getPortfolioArch);",
+      "router.get('/governance', getGovernance);",
+      "router.get('/watchlists', getWatchlists);",
+    ].join('\n');
+
+    const dashboardFetches = [
+      "fetch('/api/repos')",
+      "fetch('/api/repos/summary')",
+      "fetch('/api/repos/attention')",
+      "fetch('/api/repos/sync', { method: 'POST' })",
+      "fetch('/api/repos/register', { method: 'POST' })",
+      "fetch('/api/portfolio/forecast')",
+      "fetch('/api/portfolio/history')",
+      "fetch('/api/portfolio/architecture')",
+      "fetch('/api/portfolio/governance')",
+      "fetch('/api/portfolio/watchlists')",
+      "fetch('/summary')",
+    ].join('\n');
+
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', serverSrc),
+        makeFile('routes/repoRoutes.js', repoRoutesSrc),
+        makeFile('routes/portfolioRoutes.js', portfolioRoutesSrc),
+        makeFile('frontend/dashboard.html', dashboardFetches),
+      ],
+    });
+
+    const unresolved = r.unresolvedApiCalls.map(u => u.path);
+    expect(unresolved).not.toContain('/api/repos');
+    expect(unresolved).not.toContain('/api/repos/summary');
+    expect(unresolved).not.toContain('/api/repos/attention');
+    expect(unresolved).not.toContain('/api/repos/sync');
+    expect(unresolved).not.toContain('/api/repos/register');
+    expect(unresolved).not.toContain('/api/portfolio/forecast');
+    expect(unresolved).not.toContain('/api/portfolio/history');
+    expect(unresolved).not.toContain('/api/portfolio/architecture');
+    expect(unresolved).not.toContain('/api/portfolio/governance');
+    expect(unresolved).not.toContain('/api/portfolio/watchlists');
+    expect(unresolved).not.toContain('/summary');
+    expect(r.unresolvedApiCalls).toHaveLength(0);
+  });
+});
+
 // ── Output shape ──────────────────────────────────────────────────────────────
 
 describe('extractRouteApiStructure — output shape', () => {

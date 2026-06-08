@@ -68,6 +68,19 @@ function _isSecret(filePath) {
   return SECRET_PATTERNS.some(function(re) { return re.test(filePath); });
 }
 
+// Test-file patterns — matches paths that belong to unit/integration test suites.
+// These files contain fixture source-code strings that the architecture extractor
+// would otherwise scan as real frontend calls, producing false unresolved findings.
+const TEST_FILE_PATTERNS = [
+  /^(?:tests?|__tests__)\//,   // starts with tests/, test/, or __tests__/
+  /\/__tests__\//,             // /__tests__/ anywhere in path
+  /\.(?:test|spec)\.[jt]sx?$/, // *.test.js/jsx/ts/tsx  *.spec.js/jsx/ts/tsx
+];
+
+function _isTestFile(filePath) {
+  return TEST_FILE_PATTERNS.some(function(re) { return re.test(filePath); });
+}
+
 function _language(filePath) {
   return LANGUAGE_MAP[_ext(filePath)] || null;
 }
@@ -172,6 +185,7 @@ async function fetchRepositoryFiles(params) {
     .filter(function(item) { return item.type === 'blob'; })
     .filter(function(item) { return _isSupported(item.path); })
     .filter(function(item) { return !_isSecret(item.path); })
+    .filter(function(item) { return !_isTestFile(item.path); })
     .slice(0, MAX_FILES);
 
   // ── Stage 3: fetch content for each file (resilient) ─────────────────────────

@@ -160,6 +160,74 @@ function _extractExpressRoutes(filePath, src) {
   return { routes, handlers };
 }
 
+// ── Mount-prefix resolution ───────────────────────────────────────────────────
+// Parses `const routerVar = require('./relative/path')` assignments so each
+// routerVar can be traced back to its source file path.  Combined with the
+// app.use('/prefix', routerVar) entries already captured in routeHandlers, this
+// lets us rewrite router-relative paths (e.g. /summary) to their full
+// prefixed form (e.g. /api/repos/summary) before any matching takes place.
+
+// Matches:  const foo = require('./path')  (const / let / var)
+const REQUIRE_ASSIGN_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*(['"`])((?:\\.|[^\\])*?)\2\s*\)/g;
+
+function _extractRequireAssignments(src) {
+  const stripped = _stripComments(src);
+  const assignments = [];
+  let m;
+  REQUIRE_ASSIGN_RE.lastIndex = 0;
+  while ((m = REQUIRE_ASSIGN_RE.exec(stripped)) !== null) {
+    assignments.push({ varName: m[1], requirePath: m[3] });
+  }
+  return assignments;
+}
+
+// Resolve a relative require path (./foo or ../foo) against the file that
+// contains the require() call.  Returns a repo-relative path with .js appended
+// when no extension is present, or null for non-relative requires.
+function _resolveRequirePath(fromFilePath, requirePath) {
+  if (!requirePath.startsWith('./') && !requirePath.startsWith('../')) return null;
+  const lastSlash = fromFilePath.lastIndexOf('/');
+  const fromDir = lastSlash >= 0 ? fromFilePath.substring(0, lastSlash) : '';
+  const combined = fromDir ? fromDir + '/' + requirePath : requirePath;
+  const parts = combined.split('/');
+  const resolved = [];
+  for (const part of parts) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { if (resolved.length) resolved.pop(); continue; }
+    resolved.push(part);
+  }
+  let path = resolved.join('/');
+  if (path && !path.match(/\.[^/]+$/)) path += '.js';
+  return path || null;
+}
+
+// Build a Map<routerFilePath, mountPrefix> by cross-referencing:
+//   1. require assignments extracted from every file
+//   2. app.use(prefix, routerVar) entries already in routeHandlers
+function _buildMountPrefixMap(normalizedFiles, routeHandlers) {
+  const varToFile = new Map(); // 'sourceFile:varName' → resolvedFilePath
+  for (const f of normalizedFiles) {
+    for (const { varName, requirePath } of _extractRequireAssignments(f.content)) {
+      const resolved = _resolveRequirePath(f.path, requirePath);
+      if (resolved) varToFile.set(f.path + ':' + varName, resolved);
+    }
+  }
+  const map = new Map(); // routerFilePath → mountPrefix
+  for (const handler of routeHandlers) {
+    const routerFile = varToFile.get(handler.file + ':' + handler.routerName);
+    if (routerFile) map.set(routerFile, handler.mountPath);
+  }
+  return map;
+}
+
+// Combine a mount prefix with a router-relative path.
+// router.get('/')  + /api/repos → /api/repos  (no trailing slash)
+// router.get('/x') + /api/repos → /api/repos/x
+function _joinRoutePaths(prefix, routerPath) {
+  if (routerPath === '/') return prefix;
+  return prefix + routerPath;
+}
+
 // ── Next.js route discovery ───────────────────────────────────────────────────
 
 // Exported HTTP method handlers in app/api route files
@@ -419,6 +487,20 @@ function extractRouteApiStructure(params) {
     // Frontend API calls
     const calls = _extractFrontendCalls(f.path, f.content);
     for (const c of calls) frontendCalls.push(c);
+  }
+
+  // Prepend app.use() mount prefixes to router-file routes so that
+  // /summary (router-relative) becomes /api/repos/summary (full path),
+  // matching the full paths extracted from frontend fetch() calls.
+  const mountPrefixMap = _buildMountPrefixMap(normalized, routeHandlers);
+  if (mountPrefixMap.size > 0) {
+    for (let i = 0; i < backendRoutes.length; i++) {
+      const prefix = mountPrefixMap.get(backendRoutes[i].file);
+      if (prefix) {
+        backendRoutes[i] = Object.assign({}, backendRoutes[i],
+          { path: _joinRoutePaths(prefix, backendRoutes[i].path) });
+      }
+    }
   }
 
   // Sort deterministically

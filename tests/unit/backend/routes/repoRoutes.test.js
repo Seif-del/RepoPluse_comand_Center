@@ -2243,13 +2243,15 @@ describe('repoRoutes GET /:id/architecture', () => {
     expect(body.topFindings[0].severity).toBe('high');
   });
 
-  // ── recommendations deduplication in cache responses (regression) ─────────
+  // ── recommendations deduplication + normalization in cache responses ─────────
   // UI regression: "44 backend route candidates have no frontend match" and
   // "44 backend routes have no frontend counterpart" both appeared because the
   // stale DB snapshot was built before the dedup fix. The route must apply
-  // semantic dedup (with preferred-wording upgrade) at read time.
+  // semantic dedup (with preferred-wording upgrade) AND read-time wording
+  // normalization at read time. After dedup picks the preferred old linkage
+  // wording, the normalizer converts it to the modern action-oriented string.
 
-  it('fresh cache: deduplicates recommendations — boundary + linkage collapse to linkage wording', async () => {
+  it('fresh cache: deduplicates recommendations — boundary + linkage collapse, then normalized to new wording', async () => {
     const snapshotAt = new Date(Date.now() - 60_000).toISOString();
     const BOUNDARY = '44 backend route candidates have no frontend match — audit for unused or internal-only endpoints.';
     const LINKAGE  = '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.';
@@ -2264,7 +2266,10 @@ describe('repoRoutes GET /:id/architecture', () => {
     const body = res.json.mock.calls[0][0];
     expect(Array.isArray(body.recommendations)).toBe(true);
     expect(body.recommendations).toHaveLength(1);
-    expect(body.recommendations[0]).toBe(LINKAGE);
+    // Dedup picks the preferred old linkage wording; normalizer converts to new wording
+    expect(body.recommendations[0]).toBe(
+      'Review backend routes without frontend consumers and retire unused endpoints where appropriate.'
+    );
   });
 
   it('fresh cache: boundary wording is removed after preferred-wording upgrade', async () => {
@@ -2298,7 +2303,7 @@ describe('repoRoutes GET /:id/architecture', () => {
     expect(body.recommendations).toHaveLength(2);
   });
 
-  it('stale cache: deduplicates recommendations with preferred-wording upgrade', async () => {
+  it('stale cache: deduplicates recommendations with preferred-wording upgrade, then normalizes to new wording', async () => {
     const snapshotAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(); // 7 h stale
     const BOUNDARY = '3 frontend API calls have no matching backend route — verify routes are defined or remove dead calls.';
     const LINKAGE  = '3 frontend API calls have no matching backend route — confirm the route is defined or remove the dead call.';
@@ -2313,7 +2318,146 @@ describe('repoRoutes GET /:id/architecture', () => {
     const body = res.json.mock.calls[0][0];
     expect(body._cache).toMatchObject({ hit: true, stale: true });
     expect(body.recommendations).toHaveLength(1);
-    expect(body.recommendations[0]).toBe(LINKAGE);
+    // Dedup picks the preferred old linkage wording; normalizer converts to new wording
+    expect(body.recommendations[0]).toBe(
+      'Verify corresponding backend routes exist for unresolved frontend API calls, or remove obsolete calls.'
+    );
+  });
+
+  // ── recommendation wording normalization in cache responses (regression) ─────
+  // Root cause: stale DB snapshots contain pre-rewrite recommendation strings from
+  // commit 489dcaf. The dedup preferred-upgrade fires only when a second occurrence
+  // exists — stale snapshots with only old wording bypass it. normalizeRecommendationArray
+  // is applied after dedup in _withDedupedFindings to cover this gap.
+
+  it('fresh cache: old linkage unresolved-call wording normalized to new action-oriented text', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const snapOldWording = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [
+        '19 frontend API calls have no matching backend route — confirm the route is defined or remove the dead call.',
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapOldWording, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toMatchObject({ hit: true, stale: false });
+    expect(body.recommendations).toHaveLength(1);
+    expect(body.recommendations[0]).toBe(
+      'Verify corresponding backend routes exist for unresolved frontend API calls, or remove obsolete calls.'
+    );
+    expect(body.recommendations[0]).not.toContain('confirm the route is defined');
+  });
+
+  it('fresh cache: old linkage orphaned-route wording normalized to new action-oriented text', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const snapOldWording = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [
+        '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.',
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapOldWording, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toMatchObject({ hit: true, stale: false });
+    expect(body.recommendations).toHaveLength(1);
+    expect(body.recommendations[0]).toBe(
+      'Review backend routes without frontend consumers and retire unused endpoints where appropriate.'
+    );
+    expect(body.recommendations[0]).not.toContain('no frontend counterpart');
+  });
+
+  it('stale cache: old wording normalized in fallback response for both UI-observed strings', async () => {
+    const snapshotAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+    const snapOldWording = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [
+        '19 frontend API calls have no matching backend route — confirm the route is defined or remove the dead call.',
+        '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.',
+      ],
+    });
+    fetchRepositoryFiles.mockRejectedValue(new Error('GitHub rate limit'));
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapOldWording, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body._cache).toMatchObject({ hit: true, stale: true });
+    expect(body.recommendations).toHaveLength(2);
+    expect(body.recommendations[0]).toBe(
+      'Verify corresponding backend routes exist for unresolved frontend API calls, or remove obsolete calls.'
+    );
+    expect(body.recommendations[1]).toBe(
+      'Review backend routes without frontend consumers and retire unused endpoints where appropriate.'
+    );
+    const joined = body.recommendations.join(' ');
+    expect(joined).not.toContain('confirm the route is defined');
+    expect(joined).not.toContain('no frontend counterpart');
+  });
+
+  it('fresh cache: already-modern recommendation strings pass through unchanged', async () => {
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const modernRec = 'Verify corresponding backend routes exist for unresolved frontend API calls, or remove obsolete calls.';
+    const snapModern = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [modernRec],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapModern, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.recommendations[0]).toBe(modernRec);
+  });
+
+  it('fresh cache: normalization + dedup — old-only snapshot returns new wording for all three old strings', async () => {
+    // Simulates stale DB snapshot with ONLY old linkage wording. No second occurrence
+    // means dedup preferred-upgrade never fires — normalization must handle it alone.
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const snapOldOnly = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [
+        '19 frontend API calls have no matching backend route — confirm the route is defined or remove the dead call.',
+        '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.',
+        'Overall API linkage is weak — consider documenting the API contract to ensure frontend and backend stay in sync.',
+      ],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapOldOnly, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    expect(body.recommendations).toHaveLength(3);
+    expect(body.recommendations[0]).toBe(
+      'Verify corresponding backend routes exist for unresolved frontend API calls, or remove obsolete calls.'
+    );
+    expect(body.recommendations[1]).toBe(
+      'Review backend routes without frontend consumers and retire unused endpoints where appropriate.'
+    );
+    expect(body.recommendations[2]).toBe(
+      'Document the API contract and align frontend calls with backend routes to improve full-stack linkage.'
+    );
+  });
+
+  it('fresh cache: dedup + normalization — cross-source duplicates collapse and surviving old wording is normalized', async () => {
+    // Verifies normalization does not break deduplication behavior.
+    // Two old-wording strings for Group B: dedup collapses them, then normalize converts.
+    const snapshotAt = new Date(Date.now() - 60_000).toISOString();
+    const BOUNDARY = '44 backend route candidates have no frontend match — audit for unused or internal-only endpoints.';
+    const LINKAGE  = '44 backend routes have no frontend counterpart — these may be internal APIs, webhooks, or unused endpoints worth reviewing.';
+    const snapBoth = Object.assign({}, MOCK_SNAPSHOT, {
+      recommendations: [BOUNDARY, LINKAGE],
+    });
+    const db  = makeArchitectureDb({ snapshotRows: [{ snapshot: snapBoth, snapshotAt }] });
+    const req = makeReq({ params: { id: '7' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getArchitectureHandler(req, res, next);
+    const body = res.json.mock.calls[0][0];
+    // Dedup collapses to one entry (preferred-upgrade picks LINKAGE); normalize converts
+    expect(body.recommendations).toHaveLength(1);
+    expect(body.recommendations[0]).toBe(
+      'Review backend routes without frontend consumers and retire unused endpoints where appropriate.'
+    );
   });
 });
 

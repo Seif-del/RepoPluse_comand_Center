@@ -29,19 +29,30 @@ const { buildRemediationRecommendations }        = require('../../execution/arch
 const { predictChangeRisk }                      = require('../../execution/architecture/predictChangeRisk');
 const { deduplicateTopFindings }         = require('../../execution/architecture/deduplicateTopFindings');
 const { deduplicateRecommendations }     = require('../../execution/architecture/deduplicateRecommendations');
+const { normalizeRecommendationArray }   = require('../../execution/architecture/normalizeRecommendationWording');
 
-// Apply semantic dedup to both topFindings and recommendations when serving a
+// Apply semantic dedup and read-time wording normalization when serving a
 // snapshot from the DB. This corrects cached snapshots that were built before
-// the dedup fix was deployed — the 6-hour cache would otherwise serve stale
-// data with duplicate bullets verbatim.
+// the dedup or action-oriented-phrasing fixes were deployed.
+//
+// Order of operations:
+//   1. deduplicateTopFindings   — collapse cross-source duplicate findings
+//   2. deduplicateRecommendations — collapse cross-source duplicate recs,
+//      upgrading to the preferred (linkage-sourced) wording when possible
+//   3. normalizeRecommendationArray — convert any surviving pre-rewrite strings
+//      to modern action-oriented wording (handles the case where only the old
+//      wording is present and dedup's preferred-upgrade never fires)
 function _withDedupedFindings(snap) {
   if (!snap) return snap;
   const result = Object.assign({}, snap);
   if (Array.isArray(snap.topFindings) && snap.topFindings.length > 1) {
     result.topFindings = deduplicateTopFindings(snap.topFindings);
   }
-  if (Array.isArray(snap.recommendations) && snap.recommendations.length > 1) {
-    result.recommendations = deduplicateRecommendations(snap.recommendations);
+  if (Array.isArray(snap.recommendations)) {
+    const deduped = snap.recommendations.length > 1
+      ? deduplicateRecommendations(snap.recommendations)
+      : snap.recommendations.slice();
+    result.recommendations = normalizeRecommendationArray(deduped);
   }
   return result;
 }
