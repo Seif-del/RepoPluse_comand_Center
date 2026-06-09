@@ -22,7 +22,7 @@
 
 const GITHUB_API          = 'https://api.github.com';
 const MAX_FILES           = 300;
-const MAX_FILE_SIZE_BYTES = 200 * 1024;
+const MAX_FILE_SIZE_BYTES = 400 * 1024;
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',

@@ -308,14 +308,71 @@ describe('fetchRepositoryFiles — blob fetch resilience', () => {
     expect(debug.skippedFileCount).toBe(1);
   });
 
-  it('skips files larger than 200 KB after decoding', async () => {
-    const largeContent = 'x'.repeat(201 * 1024);
+  it('skips files larger than 400 KB after decoding', async () => {
+    const largeContent = 'x'.repeat(401 * 1024);
     const fetchFn = makeFetchFn({
       tree:     [makeBlob('large.js', 'a')],
       contents: { 'large.js': makeContentEntry(largeContent) },
     });
     const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
     expect(files).toHaveLength(0);
+  });
+});
+
+// ── File size limit (400 KB) ──────────────────────────────────────────────────
+
+describe('fetchRepositoryFiles — file size limit (400 KB)', () => {
+  it('includes a 368 KB HTML file (representative of frontend/dashboard.html)', async () => {
+    const content = 'x'.repeat(368 * 1024);
+    const fetchFn = makeFetchFn({
+      tree:     [makeBlob('frontend/dashboard.html', 'a')],
+      contents: { 'frontend/dashboard.html': makeContentEntry(content) },
+    });
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('frontend/dashboard.html');
+    expect(files[0].sizeBytes).toBe(368 * 1024);
+  });
+
+  it('includes a file at exactly the 400 KB boundary', async () => {
+    const content = 'x'.repeat(400 * 1024);
+    const fetchFn = makeFetchFn({
+      tree:     [makeBlob('app.js', 'a')],
+      contents: { 'app.js': makeContentEntry(content) },
+    });
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(1);
+  });
+
+  it('excludes a file at 401 KB (exceeds 400 KB limit)', async () => {
+    const content = 'x'.repeat(401 * 1024);
+    const fetchFn = makeFetchFn({
+      tree:     [makeBlob('huge.js', 'a')],
+      contents: { 'huge.js': makeContentEntry(content) },
+    });
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(0);
+  });
+
+  it('still excludes test files even when they are well under the 400 KB limit', async () => {
+    const content = 'x'.repeat(50 * 1024);
+    const fetchFn = makeFetchFn({
+      tree:     [makeBlob('tests/unit/example.test.js', 'a')],
+      contents: { 'tests/unit/example.test.js': makeContentEntry(content) },
+    });
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  it('includes normal production JS and HTML files regardless of the limit increase', async () => {
+    const paths = ['backend/routes/repoRoutes.js', 'frontend/manage-repos.html', 'src/index.ts'];
+    const tree     = paths.map(p => makeBlob(p, 'a'));
+    const contents = Object.fromEntries(paths.map(p => [p, makeContentEntry('content')]));
+    const fetchFn  = makeFetchFn({ tree, contents });
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(paths.length);
+    expect(files).toHaveLength(paths.length);
   });
 });
 
