@@ -72,6 +72,8 @@ function _unknownResult() {
   return {
     recommendationLevel: 'unknown',
     remediationScore:    0,
+    rawRemediationScore: 0,
+    scoreCapApplied:     false,
     confidenceLevel:     'low',
     summary:             'Insufficient data — no usable intelligence sources provided.',
     recommendations:     [],
@@ -518,6 +520,10 @@ function _remediationScore(recs) {
   );
 }
 
+function _rawRemediationScore(recs) {
+  return recs.reduce(function(s, r) { return s + _priScore(r.priority); }, 0);
+}
+
 function _recommendationLevel(score) {
   if (score >= 75) return 'critical';
   if (score >= 50) return 'high';
@@ -621,6 +627,8 @@ function buildRemediationRecommendations(input) {
     return {
       recommendationLevel: 'none',
       remediationScore:    0,
+      rawRemediationScore: 0,
+      scoreCapApplied:     false,
       confidenceLevel,
       summary:             'No remediation required — no actionable recommendations identified (' + confidenceLevel + ' confidence).',
       recommendations:     [],
@@ -631,6 +639,8 @@ function buildRemediationRecommendations(input) {
   }
 
   const remediationScore    = _remediationScore(final);
+  const rawRemediationScore = _rawRemediationScore(final);
+  const scoreCapApplied     = rawRemediationScore > 100;
   const recommendationLevel = _recommendationLevel(remediationScore);
   const actionPlan          = _actionPlan(final);
   const priorities          = _priorities(final);
@@ -640,6 +650,8 @@ function buildRemediationRecommendations(input) {
   return {
     recommendationLevel,
     remediationScore,
+    rawRemediationScore,
+    scoreCapApplied,
     confidenceLevel,
     summary,
     recommendations: final,
