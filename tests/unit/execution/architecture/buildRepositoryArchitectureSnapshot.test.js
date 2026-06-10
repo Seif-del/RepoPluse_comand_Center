@@ -521,6 +521,37 @@ describe('buildRepositoryArchitectureSnapshot — determinism', () => {
   });
 });
 
+// ── historicalLinkedEndpoints — cumulative disconnected detection ─────────────
+
+describe('buildRepositoryArchitectureSnapshot — historicalLinkedEndpoints', () => {
+  test('historicalLinkedEndpoints raises disconnectedApiCount for a route absent from previousLinkedEndpoints', () => {
+    // Full-stack files produce a linked /api/users endpoint.
+    // Simulate a second backend route that was linked in an older snapshot but
+    // is now orphaned — it should be disconnected, not unlinked.
+    const files = [
+      makeFile('routes/api.js',
+        "app.get('/api/users', handler);\n" +
+        "app.get('/api/reports', handler);"),
+      makeFile('src/app.js',
+        "fetch('/api/users').then(r=>r.json());"),
+      makeFile('tests/stub.test.js', "test('x', () => {});"),
+    ];
+    const withHistory = buildRepositoryArchitectureSnapshot({
+      files,
+      previousLinkedEndpoints:   [],
+      historicalLinkedEndpoints: [{ method: 'GET', path: '/api/reports' }],
+    });
+    const withoutHistory = buildRepositoryArchitectureSnapshot({
+      files,
+      previousLinkedEndpoints:   [],
+      historicalLinkedEndpoints: [],
+    });
+    expect(withHistory.metrics.disconnectedApiCount).toBeGreaterThan(0);
+    expect(withoutHistory.metrics.disconnectedApiCount).toBe(0);
+    expect(withHistory.metrics.unlinkedApiCount).toBeLessThan(withoutHistory.metrics.unlinkedApiCount);
+  });
+});
+
 // ── Non-mutation ──────────────────────────────────────────────────────────────
 
 describe('buildRepositoryArchitectureSnapshot — non-mutation', () => {

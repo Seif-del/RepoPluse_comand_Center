@@ -985,7 +985,7 @@ router.get('/:id/architecture', async (req, res, next) => {
          JOIN repositories r ON r.id = s.repo_id
          WHERE s.repo_id = $1 AND r.user_id = $2 AND r.is_active = true
          ORDER BY s.snapshot_at DESC
-         LIMIT 1`,
+         LIMIT 10`,
         [repoId, req.user.userId]
       ),
     ]);
@@ -998,6 +998,8 @@ router.get('/:id/architecture', async (req, res, next) => {
     let defaultBranch = 'main';
 
     // ── Stage 2: serve fresh cache immediately ────────────────────────────────
+    // rows[0] is always the most recent snapshot (ORDER BY DESC); remaining rows
+    // form the history window used for cumulative disconnected-API detection.
     const cachedRow = snapResult.rows[0] || null;
     if (cachedRow) {
       const ageMs = Date.now() - new Date(cachedRow.snapshotAt).getTime();
@@ -1096,12 +1098,23 @@ router.get('/:id/architecture', async (req, res, next) => {
     }
 
     // ── Stage 5: run architecture analysis pipeline ───────────────────────────
+    // Build a cumulative union of linkedEndpoints across all prior snapshots so
+    // _classifyOrphanedRoute can detect routes that were ever linked, not just
+    // those linked in the immediately previous snapshot.
+    const historicalLinkedEndpoints = snapResult.rows.flatMap(function(row) {
+      const snap = row.snapshot;
+      return (snap && snap.apiLinkage && Array.isArray(snap.apiLinkage.linkedEndpoints))
+        ? snap.apiLinkage.linkedEndpoints
+        : [];
+    });
+
     const snapshot = buildRepositoryArchitectureSnapshot({
       repoId,
       repoName:               repo.fullName,
       defaultBranch,
       snapshotAt:             new Date().toISOString(),
       files,
+      historicalLinkedEndpoints,
       previousLinkedEndpoints: cachedRow
         ? ((cachedRow.snapshot.apiLinkage || {}).linkedEndpoints || [])
         : [],

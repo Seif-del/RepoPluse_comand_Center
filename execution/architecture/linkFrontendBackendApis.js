@@ -293,12 +293,18 @@ function linkFrontendBackendApis(params) {
   const backendRoutes    = (params && Array.isArray(params.backendRoutes))    ? params.backendRoutes    : [];
   const frontendApiCalls = (params && Array.isArray(params.frontendApiCalls)) ? params.frontendApiCalls : [];
 
-  // Build a set of param-masked METHOD:path keys from the previous snapshot's linked
-  // endpoints. Used to classify orphaned routes as 'disconnected' vs 'unlinked'.
-  const prevLinkedRaw = (params && Array.isArray(params.previousLinkedEndpoints))
-    ? params.previousLinkedEndpoints : [];
+  // Build a set of param-masked METHOD:path keys used to classify orphaned routes as
+  // 'disconnected' vs 'unlinked'.  historicalLinkedEndpoints (union across all prior
+  // snapshots) takes precedence when non-empty; otherwise falls back to
+  // previousLinkedEndpoints (immediate previous snapshot — legacy behaviour).
+  const historicalRaw = (params && Array.isArray(params.historicalLinkedEndpoints) &&
+                         params.historicalLinkedEndpoints.length > 0)
+    ? params.historicalLinkedEndpoints
+    : (params && Array.isArray(params.previousLinkedEndpoints))
+      ? params.previousLinkedEndpoints
+      : [];
   const prevLinkedSet = new Set(
-    prevLinkedRaw.map(function(e) {
+    historicalRaw.map(function(e) {
       return e.method.toUpperCase() + ':' + _paramMask(_normPath(e.path));
     })
   );

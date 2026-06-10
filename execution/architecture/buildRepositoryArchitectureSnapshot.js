@@ -216,6 +216,8 @@ function buildRepositoryArchitectureSnapshot(params) {
   const files         = (params && Array.isArray(params.files)) ? params.files : [];
   const previousLinkedEndpoints = (params && Array.isArray(params.previousLinkedEndpoints))
     ? params.previousLinkedEndpoints : [];
+  const historicalLinkedEndpoints = (params && Array.isArray(params.historicalLinkedEndpoints))
+    ? params.historicalLinkedEndpoints : null;
 
   // ── Stage 1 ─────────────────────────────────────────────────────────────────
   const inventory = buildRepositoryStructureInventory({ files });
@@ -228,10 +230,11 @@ function buildRepositoryArchitectureSnapshot(params) {
 
   // ── Stage 4 ─────────────────────────────────────────────────────────────────
   const apiLinkage = linkFrontendBackendApis({
-    backendRoutes:          routeApiStructure.backendRoutes,
-    frontendApiCalls:       routeApiStructure.frontendApiCalls,
-    endpointInventory:      routeApiStructure.endpointInventory,
+    backendRoutes:             routeApiStructure.backendRoutes,
+    frontendApiCalls:          routeApiStructure.frontendApiCalls,
+    endpointInventory:         routeApiStructure.endpointInventory,
     previousLinkedEndpoints,
+    historicalLinkedEndpoints: historicalLinkedEndpoints !== null ? historicalLinkedEndpoints : undefined,
   });
 
   // ── Stage 5 ─────────────────────────────────────────────────────────────────

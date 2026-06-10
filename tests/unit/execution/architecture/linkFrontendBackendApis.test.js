@@ -962,3 +962,81 @@ describe('linkFrontendBackendApis — classification-aware scoring', () => {
   });
 
 });
+
+// ── historicalLinkedEndpoints — cumulative disconnected detection ─────────────
+
+describe('linkFrontendBackendApis — historicalLinkedEndpoints', () => {
+  function histEp(method, path) { return { method: method.toUpperCase(), path }; }
+
+  test('route in history but not in previousLinkedEndpoints is classified disconnected', () => {
+    // The route was linked two snapshots ago (history) but absent from the
+    // immediate previous snapshot (previousLinkedEndpoints is empty).
+    const r = linkFrontendBackendApis({
+      backendRoutes:              [bRoute('GET', '/api/reports')],
+      frontendApiCalls:           [],
+      endpointInventory:          [],
+      previousLinkedEndpoints:    [],
+      historicalLinkedEndpoints:  [histEp('GET', '/api/reports')],
+    });
+    const rt = r.orphanedBackendRoutes.find(function(x) { return x.path === '/api/reports'; });
+    expect(rt).toBeDefined();
+    expect(rt.orphanType).toBe('disconnected');
+  });
+
+  test('historicalLinkedEndpoints takes precedence over previousLinkedEndpoints', () => {
+    // previousLinkedEndpoints claims the route was linked; historicalLinkedEndpoints
+    // does NOT include it — the cumulative view should win (no disconnected signal).
+    const r = linkFrontendBackendApis({
+      backendRoutes:              [bRoute('GET', '/api/reports')],
+      frontendApiCalls:           [],
+      endpointInventory:          [],
+      previousLinkedEndpoints:    [histEp('GET', '/api/reports')],
+      historicalLinkedEndpoints:  [],   // empty → falls back to previousLinkedEndpoints
+    });
+    // empty historicalLinkedEndpoints → fallback applies → previousLinkedEndpoints used
+    const rt = r.orphanedBackendRoutes[0];
+    expect(rt.orphanType).toBe('disconnected');
+  });
+
+  test('absent historicalLinkedEndpoints falls back to previousLinkedEndpoints', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:           [bRoute('GET', '/api/widgets')],
+      frontendApiCalls:        [],
+      endpointInventory:       [],
+      previousLinkedEndpoints: [histEp('GET', '/api/widgets')],
+      // historicalLinkedEndpoints not provided
+    });
+    const rt = r.orphanedBackendRoutes[0];
+    expect(rt.orphanType).toBe('disconnected');
+  });
+
+  test('cumulative history spanning multiple prior snapshots catches long-gone route', () => {
+    // Simulate three prior snapshots each contributing one endpoint to the union.
+    const history = [
+      histEp('GET',  '/api/alpha'),
+      histEp('POST', '/api/beta'),
+      histEp('DELETE', '/api/gamma'),
+    ];
+    const r = linkFrontendBackendApis({
+      backendRoutes:              [bRoute('GET', '/api/alpha'), bRoute('POST', '/api/beta'), bRoute('DELETE', '/api/gamma')],
+      frontendApiCalls:           [],
+      endpointInventory:          [],
+      previousLinkedEndpoints:    [],
+      historicalLinkedEndpoints:  history,
+    });
+    expect(r.coverage.disconnectedApiCount).toBe(3);
+    expect(r.coverage.unlinkedApiCount).toBe(0);
+  });
+
+  test('param-masked historical endpoint matches param-variant current route', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:              [bRoute('GET', '/api/repos/:id/snapshot')],
+      frontendApiCalls:           [],
+      endpointInventory:          [],
+      previousLinkedEndpoints:    [],
+      historicalLinkedEndpoints:  [histEp('GET', '/api/repos/:repoId/snapshot')],
+    });
+    const rt = r.orphanedBackendRoutes[0];
+    expect(rt.orphanType).toBe('disconnected');
+  });
+});
