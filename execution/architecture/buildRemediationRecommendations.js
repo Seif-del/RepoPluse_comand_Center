@@ -77,6 +77,25 @@ function _versionBoundaryContext(versionContext) {
   return { boundaryCount, suppressedIntervals, affectsConfidence: boundaryCount > 0 };
 }
 
+function _adjustedConfidence(base, vbc) {
+  if (!_isObj(vbc) || !vbc.affectsConfidence) return base;
+  if (base === 'high')   return 'medium';
+  if (base === 'medium') return 'low';
+  return 'low';
+}
+
+function _confidenceReasons(vbc) {
+  const reasons = [];
+  if (_isObj(vbc) && vbc.affectsConfidence) {
+    const n = _safeNum(vbc.boundaryCount);
+    reasons.push(
+      n + ' version ' + (n === 1 ? 'boundary' : 'boundaries') +
+      ' suppressed historical score comparison' + (n === 1 ? '.' : 's.')
+    );
+  }
+  return reasons;
+}
+
 function _unknownResult() {
   return {
     recommendationLevel:    'unknown',
@@ -84,6 +103,7 @@ function _unknownResult() {
     rawRemediationScore:    0,
     scoreCapApplied:        false,
     confidenceLevel:        'low',
+    confidenceReasons:      [],
     versionBoundaryContext: { boundaryCount: 0, suppressedIntervals: 0, affectsConfidence: false },
     summary:                'Insufficient data — no usable intelligence sources provided.',
     recommendations:        [],
@@ -618,7 +638,10 @@ function buildRemediationRecommendations(input) {
   const sources = _usableSources(input);
   if (sources === 0) return _unknownResult();
 
-  const confidenceLevel = _confidenceLevel(sources);
+  const confidenceLevel    = _confidenceLevel(sources);
+  const vbc                = _versionBoundaryContext(input.versionContext);
+  const adjustedConfidence = _adjustedConfidence(confidenceLevel, vbc);
+  const confidenceReasons  = _confidenceReasons(vbc);
 
   const allRecs = [].concat(
     _govRecs(input.governance),
@@ -639,13 +662,14 @@ function buildRemediationRecommendations(input) {
       remediationScore:       0,
       rawRemediationScore:    0,
       scoreCapApplied:        false,
-      confidenceLevel,
-      versionBoundaryContext: _versionBoundaryContext(input.versionContext),
-      summary:                'No remediation required — no actionable recommendations identified (' + confidenceLevel + ' confidence).',
+      confidenceLevel:        adjustedConfidence,
+      confidenceReasons,
+      versionBoundaryContext: vbc,
+      summary:                'No remediation required — no actionable recommendations identified (' + adjustedConfidence + ' confidence).',
       recommendations:        [],
       actionPlan:             _emptyActionPlan(),
       priorities:             _emptyPriorities(),
-      estimatedImpact:        _emptyImpact(confidenceLevel),
+      estimatedImpact:        _emptyImpact(adjustedConfidence),
     };
   }
 
@@ -655,16 +679,17 @@ function buildRemediationRecommendations(input) {
   const recommendationLevel = _recommendationLevel(remediationScore);
   const actionPlan          = _actionPlan(final);
   const priorities          = _priorities(final);
-  const estimatedImpact     = _estimatedImpact(final, confidenceLevel);
-  const summary             = _summary(recommendationLevel, remediationScore, final, confidenceLevel);
+  const estimatedImpact     = _estimatedImpact(final, adjustedConfidence);
+  const summary             = _summary(recommendationLevel, remediationScore, final, adjustedConfidence);
 
   return {
     recommendationLevel,
     remediationScore,
     rawRemediationScore,
     scoreCapApplied,
-    confidenceLevel,
-    versionBoundaryContext: _versionBoundaryContext(input.versionContext),
+    confidenceLevel:        adjustedConfidence,
+    confidenceReasons,
+    versionBoundaryContext: vbc,
     summary,
     recommendations: final,
     actionPlan,

@@ -1194,6 +1194,125 @@ describe('versionBoundaryContext output', () => {
     });
     expect(withVC.remediationScore).toBe(base.remediationScore);
     expect(withVC.recommendationLevel).toBe(base.recommendationLevel);
-    expect(withVC.confidenceLevel).toBe(base.confidenceLevel);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 21. Confidence adjustment from version boundaries
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('confidence adjustment from version boundaries', () => {
+  // ── helpers to hit each base confidence tier ─────────────────────────────
+  // high   = 4+ usable sources
+  // medium = 2–3 usable sources
+  // low    = 1 usable source
+
+  function highBaseInput(vc) {
+    // 4 sources: governance + forecast + regression + couplingAlert
+    return {
+      governance:   makeGovernance('critical', 10),
+      forecast:     makeForecast('critical', 90),
+      regression:   makeRegression('critical', 80),
+      couplingAlert: makeCoupling('critical', { circularDependencyDelta: 2, boundaryViolationDelta: 3 }),
+      versionContext: vc,
+    };
+  }
+
+  function mediumBaseInput(vc) {
+    // 2 sources: governance + forecast
+    return {
+      governance:   makeGovernance('critical', 10),
+      forecast:     makeForecast('critical', 90),
+      versionContext: vc,
+    };
+  }
+
+  function lowBaseInput(vc) {
+    // 1 source: governance only
+    return {
+      governance:   makeGovernance('critical', 10),
+      versionContext: vc,
+    };
+  }
+
+  it('no versionContext → confidenceReasons is empty', () => {
+    const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+    expect(r.confidenceReasons).toEqual([]);
+  });
+
+  it('boundaryCount 0 → confidenceReasons is empty and confidenceLevel unchanged', () => {
+    const r = buildRemediationRecommendations(mediumBaseInput({ boundaryCount: 0, suppressedIntervals: 0 }));
+    expect(r.confidenceReasons).toEqual([]);
+    expect(r.confidenceLevel).toBe('medium');
+  });
+
+  it('high base confidence with boundary → downgraded to medium', () => {
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.confidenceLevel).toBe('medium');
+  });
+
+  it('medium base confidence with boundary → downgraded to low', () => {
+    const r = buildRemediationRecommendations(mediumBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.confidenceLevel).toBe('low');
+  });
+
+  it('low base confidence with boundary → stays low', () => {
+    const r = buildRemediationRecommendations(lowBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.confidenceLevel).toBe('low');
+  });
+
+  it('confidenceReasons has one entry when affectsConfidence is true', () => {
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.confidenceReasons).toHaveLength(1);
+  });
+
+  it('singular reason text: "1 version boundary suppressed historical score comparison."', () => {
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.confidenceReasons[0]).toBe('1 version boundary suppressed historical score comparison.');
+  });
+
+  it('plural reason text: "3 version boundaries suppressed historical score comparisons."', () => {
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 3, suppressedIntervals: 3 }));
+    expect(r.confidenceReasons[0]).toBe('3 version boundaries suppressed historical score comparisons.');
+  });
+
+  it('estimatedImpact.confidence reflects the adjusted confidence', () => {
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.estimatedImpact.confidence).toBe('medium');
+  });
+
+  it('summary text includes the adjusted confidence level', () => {
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(r.summary).toContain('medium confidence');
+    expect(r.summary).not.toContain('high confidence');
+  });
+
+  it('no-recs path: confidenceLevel adjusted and confidenceReasons populated', () => {
+    // watchlistItem counts as 1 usable source (low base) + force 4 sources with boundaries
+    const r = buildRemediationRecommendations(highBaseInput({ boundaryCount: 2, suppressedIntervals: 2 }));
+    // Even in normal path with recs, verify both fields
+    expect(r.confidenceLevel).toBe('medium');
+    expect(r.confidenceReasons).toHaveLength(1);
+  });
+
+  it('unknown result path includes confidenceReasons: []', () => {
+    const r = buildRemediationRecommendations({});
+    expect(r.confidenceReasons).toEqual([]);
+  });
+
+  it('remediationScore and rawRemediationScore unchanged by boundary adjustment', () => {
+    const base = buildRemediationRecommendations(highBaseInput(null));
+    const adj  = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    expect(adj.remediationScore).toBe(base.remediationScore);
+    expect(adj.rawRemediationScore).toBe(base.rawRemediationScore);
+    expect(adj.scoreCapApplied).toBe(base.scoreCapApplied);
+  });
+
+  it('recommendation priorities unchanged by boundary adjustment', () => {
+    const base = buildRemediationRecommendations(highBaseInput(null));
+    const adj  = buildRemediationRecommendations(highBaseInput({ boundaryCount: 1, suppressedIntervals: 1 }));
+    const basePri = base.recommendations.map(r => r.priority);
+    const adjPri  = adj.recommendations.map(r => r.priority);
+    expect(adjPri).toEqual(basePri);
   });
 });
