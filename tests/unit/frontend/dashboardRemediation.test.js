@@ -66,6 +66,27 @@ function buildRepoRemediationHtml(data) {
   }
   h += '</div>';
 
+  if (data.rawRemediationScore != null && data.scoreCapApplied) {
+    h += '<div style="font-size:0.71rem;color:var(--text-muted);margin:-2px 0 5px;">'
+      + 'Raw score: ' + esc(String(data.rawRemediationScore)) + ' → capped at 100'
+      + '</div>';
+  }
+
+  if (Array.isArray(data.confidenceReasons) && data.confidenceReasons.length > 0) {
+    data.confidenceReasons.forEach(function(reason) {
+      h += '<div style="font-size:0.71rem;color:var(--text-muted);margin-bottom:3px;">'
+        + esc(String(reason)) + '</div>';
+    });
+  }
+
+  var vbc = data.versionBoundaryContext || {};
+  if (vbc.affectsConfidence) {
+    h += '<div style="font-size:0.71rem;color:var(--text-muted);margin-bottom:8px;">'
+      + 'Version Boundaries: ' + esc(String(vbc.boundaryCount  || 0))
+      + ' · Suppressed Comparisons: ' + esc(String(vbc.suppressedIntervals || 0))
+      + '</div>';
+  }
+
   if (data.summary) {
     h += '<p style="font-size:0.83rem;color:var(--text-secondary);line-height:1.45;margin:0 0 8px;">'
       + esc(data.summary) + '</p>';
@@ -530,5 +551,136 @@ describe('buildRepoRemediationHtml — estimated impact sub-panel', () => {
     expect(html).toContain('Estimated Impact');
     expect(html).toContain('low');
     expect(html).not.toContain('architectureImpact');
+  });
+});
+
+describe('buildRepoRemediationHtml — score cap note', () => {
+  test('shows raw score and cap note when scoreCapApplied is true', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'critical',
+      remediationScore: 100,
+      rawRemediationScore: 115,
+      scoreCapApplied: true,
+      recommendations: [],
+    });
+    expect(html).toContain('Raw score: 115');
+    expect(html).toContain('capped at 100');
+  });
+
+  test('omits cap note when scoreCapApplied is false', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      remediationScore: 75,
+      rawRemediationScore: 75,
+      scoreCapApplied: false,
+      recommendations: [],
+    });
+    expect(html).not.toContain('capped at 100');
+  });
+
+  test('omits cap note when scoreCapApplied is absent (older response)', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      remediationScore: 75,
+      recommendations: [],
+    });
+    expect(html).not.toContain('capped at 100');
+  });
+
+  test('omits cap note when rawRemediationScore is absent even if scoreCapApplied true', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'critical',
+      remediationScore: 100,
+      scoreCapApplied: true,
+      recommendations: [],
+    });
+    expect(html).not.toContain('capped at 100');
+  });
+});
+
+describe('buildRepoRemediationHtml — confidenceReasons', () => {
+  test('renders confidence reason text when confidenceReasons has entries', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      confidenceReasons: ['1 version boundary suppressed historical score comparison.'],
+    });
+    expect(html).toContain('1 version boundary suppressed historical score comparison.');
+  });
+
+  test('renders multiple confidence reasons', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      confidenceReasons: ['First reason.', 'Second reason.'],
+    });
+    expect(html).toContain('First reason.');
+    expect(html).toContain('Second reason.');
+  });
+
+  test('omits reason section when confidenceReasons is empty array', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      confidenceReasons: [],
+    });
+    expect(html).not.toContain('version boundary');
+  });
+
+  test('omits reason section when confidenceReasons is absent (older response)', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+    });
+    expect(html).not.toContain('version boundary');
+  });
+
+  test('escapes XSS in confidenceReasons', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      confidenceReasons: ['<script>alert(1)</script>'],
+    });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('buildRepoRemediationHtml — version boundary context', () => {
+  test('shows Version Boundaries and Suppressed Comparisons when affectsConfidence is true', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      versionBoundaryContext: { affectsConfidence: true, boundaryCount: 2, suppressedIntervals: 2 },
+    });
+    expect(html).toContain('Version Boundaries: 2');
+    expect(html).toContain('Suppressed Comparisons: 2');
+  });
+
+  test('omits version boundary section when affectsConfidence is false', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      versionBoundaryContext: { affectsConfidence: false, boundaryCount: 1, suppressedIntervals: 1 },
+    });
+    expect(html).not.toContain('Version Boundaries');
+  });
+
+  test('omits version boundary section when versionBoundaryContext is absent (older response)', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+    });
+    expect(html).not.toContain('Version Boundaries');
+  });
+
+  test('falls back to 0 for missing boundaryCount and suppressedIntervals', () => {
+    const html = buildRepoRemediationHtml({
+      recommendationLevel: 'high',
+      recommendations: [],
+      versionBoundaryContext: { affectsConfidence: true },
+    });
+    expect(html).toContain('Version Boundaries: 0');
+    expect(html).toContain('Suppressed Comparisons: 0');
   });
 });

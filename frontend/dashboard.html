@@ -5560,6 +5560,27 @@
       }
       h += '</div>';
 
+      if (data.rawRemediationScore != null && data.scoreCapApplied) {
+        h += '<div style="font-size:0.71rem;color:var(--text-muted);margin:-2px 0 5px;">'
+          + 'Raw score: ' + esc(String(data.rawRemediationScore)) + ' → capped at 100'
+          + '</div>';
+      }
+
+      if (Array.isArray(data.confidenceReasons) && data.confidenceReasons.length > 0) {
+        data.confidenceReasons.forEach(function(reason) {
+          h += '<div style="font-size:0.71rem;color:var(--text-muted);margin-bottom:3px;">'
+            + esc(String(reason)) + '</div>';
+        });
+      }
+
+      var vbc = data.versionBoundaryContext || {};
+      if (vbc.affectsConfidence) {
+        h += '<div style="font-size:0.71rem;color:var(--text-muted);margin-bottom:8px;">'
+          + 'Version Boundaries: ' + esc(String(vbc.boundaryCount  || 0))
+          + ' · Suppressed Comparisons: ' + esc(String(vbc.suppressedIntervals || 0))
+          + '</div>';
+      }
+
       if (data.summary) {
         h += '<p style="font-size:0.83rem;color:var(--text-secondary);line-height:1.45;margin:0 0 8px;">'
           + esc(data.summary) + '</p>';
