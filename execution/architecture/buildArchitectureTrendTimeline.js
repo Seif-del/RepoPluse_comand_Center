@@ -64,6 +64,12 @@ function _getMetric(snapshot, key) {
   return 0;
 }
 
+function _snapScore(snap, sub, key) {
+  const obj = snap && snap[sub];
+  const v   = obj && obj[key];
+  return typeof v === 'number' && isFinite(v) ? v : 0;
+}
+
 // ── Risk signal extraction ────────────────────────────────────────────────────
 
 function _extractRiskSignals(snapshot) {
@@ -176,6 +182,11 @@ function _buildDriftEvents(sorted) {
         type:    'score_drop',
         severity: sev,
         summary: 'Architecture health score dropped by ' + Math.abs(delta) + ' points.',
+        prevScore,
+        currScore,
+        deltaBoundary:    _snapScore(curr, 'boundaryVerification', 'boundaryHealthScore')     - _snapScore(prev, 'boundaryVerification', 'boundaryHealthScore'),
+        deltaCompleteness: _snapScore(curr, 'implementationCompleteness', 'completenessScore') - _snapScore(prev, 'implementationCompleteness', 'completenessScore'),
+        deltaLinkage:     _snapScore(curr, 'apiLinkage', 'linkageScore')                      - _snapScore(prev, 'apiLinkage', 'linkageScore'),
       });
     }
 
@@ -260,6 +271,12 @@ function _buildDriftEvents(sorted) {
         severity: 'medium',
         summary: 'API integration regression detected — unresolved calls: ' + currUnresolved
           + ', method mismatches: ' + currMismatch + '.',
+        prevUnresolved,
+        currUnresolved,
+        unresolvedDelta: currUnresolved - prevUnresolved,
+        prevMismatch,
+        currMismatch,
+        mismatchDelta:   currMismatch - prevMismatch,
       });
     }
 

@@ -925,6 +925,18 @@ router.get('/:id/remediation', async (req, res, next) => {
       confidenceLevel: typeof architectureSnapshot.confidenceLevel === 'string'
         ? architectureSnapshot.confidenceLevel
         : 'low',
+      boundaryHealthScore: (architectureSnapshot.boundaryVerification &&
+        typeof architectureSnapshot.boundaryVerification.boundaryHealthScore === 'number')
+        ? architectureSnapshot.boundaryVerification.boundaryHealthScore
+        : undefined,
+      completenessScore: (architectureSnapshot.implementationCompleteness &&
+        typeof architectureSnapshot.implementationCompleteness.completenessScore === 'number')
+        ? architectureSnapshot.implementationCompleteness.completenessScore
+        : undefined,
+      linkageScore: (architectureSnapshot.apiLinkage &&
+        typeof architectureSnapshot.apiLinkage.linkageScore === 'number')
+        ? architectureSnapshot.apiLinkage.linkageScore
+        : undefined,
     };
 
     const remediation = buildRemediationRecommendations({

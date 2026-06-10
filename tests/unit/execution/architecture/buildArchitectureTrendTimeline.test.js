@@ -536,6 +536,53 @@ describe('drift events — score_drop / score_gain', () => {
       expect(ev.snapshotAt).toBe('2024-06-01T00:00:00Z');
     });
   });
+
+  test('score_drop event contains prevScore and currScore', () => {
+    const snaps = [
+      datedSnap('2024-01-01T00:00:00Z', 90),
+      datedSnap('2024-06-01T00:00:00Z', 70),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'score_drop'; });
+    expect(ev.prevScore).toBe(90);
+    expect(ev.currScore).toBe(70);
+  });
+
+  test('score_drop event contains deltaBoundary, deltaCompleteness, deltaLinkage', () => {
+    const prev = {
+      snapshotAt: '2024-01-01T00:00:00Z',
+      architectureHealthScore: 90,
+      boundaryVerification:        { boundaryHealthScore: 80, violations: [] },
+      implementationCompleteness:  { completenessScore: 75 },
+      apiLinkage:                  { linkageScore: 70 },
+      metrics: {},
+    };
+    const curr = {
+      snapshotAt: '2024-06-01T00:00:00Z',
+      architectureHealthScore: 70,
+      boundaryVerification:        { boundaryHealthScore: 60, violations: [] },
+      implementationCompleteness:  { completenessScore: 65 },
+      apiLinkage:                  { linkageScore: 65 },
+      metrics: {},
+    };
+    const r = buildArchitectureTrendTimeline({ snapshots: [prev, curr] });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'score_drop'; });
+    expect(ev.deltaBoundary).toBe(-20);
+    expect(ev.deltaCompleteness).toBe(-10);
+    expect(ev.deltaLinkage).toBe(-5);
+  });
+
+  test('score_drop component deltas default to 0 when sub-objects absent', () => {
+    const snaps = [
+      datedSnap('2024-01-01T00:00:00Z', 90),
+      datedSnap('2024-06-01T00:00:00Z', 70),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'score_drop'; });
+    expect(ev.deltaBoundary).toBe(0);
+    expect(ev.deltaCompleteness).toBe(0);
+    expect(ev.deltaLinkage).toBe(0);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -763,6 +810,40 @@ describe('drift events — api_regression', () => {
     ];
     const r = buildArchitectureTrendTimeline({ snapshots: snaps });
     expect(r.driftEvents.find(function(e) { return e.type === 'api_regression'; })).toBeUndefined();
+  });
+
+  test('api_regression event contains prevUnresolved, currUnresolved, unresolvedDelta', () => {
+    const snaps = [
+      datedSnap('2024-01-01T00:00:00Z', 70, { metrics: { unresolvedFrontendCallCount: 2 } }),
+      datedSnap('2024-06-01T00:00:00Z', 68, { metrics: { unresolvedFrontendCallCount: 5 } }),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'api_regression'; });
+    expect(ev.prevUnresolved).toBe(2);
+    expect(ev.currUnresolved).toBe(5);
+    expect(ev.unresolvedDelta).toBe(3);
+  });
+
+  test('api_regression event contains prevMismatch, currMismatch, mismatchDelta', () => {
+    const snaps = [
+      datedSnap('2024-01-01T00:00:00Z', 70, { methodMismatches: [] }),
+      datedSnap('2024-06-01T00:00:00Z', 68, { methodMismatches: [{ route: '/a' }, { route: '/b' }] }),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'api_regression'; });
+    expect(ev.prevMismatch).toBe(0);
+    expect(ev.currMismatch).toBe(2);
+    expect(ev.mismatchDelta).toBe(2);
+  });
+
+  test('api_regression mismatchDelta is 0 when only unresolved changed', () => {
+    const snaps = [
+      datedSnap('2024-01-01T00:00:00Z', 70, { metrics: { unresolvedFrontendCallCount: 1 } }),
+      datedSnap('2024-06-01T00:00:00Z', 68, { metrics: { unresolvedFrontendCallCount: 3 } }),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'api_regression'; });
+    expect(ev.mismatchDelta).toBe(0);
   });
 });
 

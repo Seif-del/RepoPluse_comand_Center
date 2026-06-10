@@ -259,6 +259,43 @@ describe('detectArchitectureAnomalies — score_collapse', function() {
     const sc = r.anomalies.find(function(a) { return a.type === 'score_collapse'; });
     expect(sc.evidence).toHaveProperty('scoreCollapseCount');
   });
+
+  test('evidence contains collapseEvents array', function() {
+    const r = detectArchitectureAnomalies({ timelineData: makeTD({ scores: [80, 55] }) });
+    const sc = r.anomalies.find(function(a) { return a.type === 'score_collapse'; });
+    expect(Array.isArray(sc.evidence.collapseEvents)).toBe(true);
+    expect(sc.evidence.collapseEvents).toHaveLength(1);
+  });
+
+  test('each collapseEvent has snapshotAt, severity, delta, prevScore, currScore', function() {
+    const r = detectArchitectureAnomalies({ timelineData: makeTD({ scores: [80, 55] }) });
+    const ev = r.anomalies.find(function(a) { return a.type === 'score_collapse'; }).evidence.collapseEvents[0];
+    expect(ev).toHaveProperty('snapshotAt');
+    expect(ev).toHaveProperty('severity');
+    expect(ev).toHaveProperty('delta');
+    expect(ev).toHaveProperty('prevScore');
+    expect(ev).toHaveProperty('currScore');
+  });
+
+  test('collapseEvent prevScore and currScore are correct', function() {
+    const r = detectArchitectureAnomalies({ timelineData: makeTD({ scores: [80, 55] }) });
+    const ev = r.anomalies.find(function(a) { return a.type === 'score_collapse'; }).evidence.collapseEvents[0];
+    expect(ev.prevScore).toBe(80);
+    expect(ev.currScore).toBe(55);
+    expect(ev.delta).toBe(-25);
+  });
+
+  test('collapseEvent severity critical for delta <= -35', function() {
+    const r = detectArchitectureAnomalies({ timelineData: makeTD({ scores: [80, 40] }) });
+    const ev = r.anomalies.find(function(a) { return a.type === 'score_collapse'; }).evidence.collapseEvents[0];
+    expect(ev.severity).toBe('critical');
+  });
+
+  test('multiple collapses accumulate multiple collapseEvents entries', function() {
+    const r = detectArchitectureAnomalies({ timelineData: makeTD({ scores: [80, 55, 30] }) });
+    const sc = r.anomalies.find(function(a) { return a.type === 'score_collapse'; });
+    expect(sc.evidence.collapseEvents).toHaveLength(2);
+  });
 });
 
 // ── Coupling spike ────────────────────────────────────────────────────────────

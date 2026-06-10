@@ -107,9 +107,12 @@ const ANOMALY_SUMMARIES = {
   volatility_outlier:        'Architecture score shows high volatility across timeline.',
 };
 
-function _timelineAnomalyEvidence(type, patterns) {
+function _timelineAnomalyEvidence(type, patterns, extras) {
   return {
-    score_collapse:            { scoreCollapseCount:           patterns.scoreCollapseCount },
+    score_collapse:            {
+      scoreCollapseCount: patterns.scoreCollapseCount,
+      collapseEvents:     (extras && extras.collapseEvents) || [],
+    },
     coupling_spike:            { couplingSpikeCount:           patterns.couplingSpikeCount },
     api_linkage_drop:          { apiLinkageDropCount:          patterns.apiLinkageDropCount },
     boundary_spike:            { boundarySpikeCount:           patterns.boundarySpikeCount },
@@ -124,9 +127,10 @@ function _detectTimelineAnomalies(td) {
   const apiTL           = _safeArray(td.apiIntegrationTimeline);
   const implTL          = _safeArray(td.implementationTimeline);
 
-  const n         = scoreTimeline.length;
-  const patterns  = _emptyPatterns();
-  const worstSev  = {};   // type → worst severity seen
+  const n              = scoreTimeline.length;
+  const patterns       = _emptyPatterns();
+  const collapseEvents = [];
+  const worstSev       = {};   // type → worst severity seen
 
   function _update(type, sev) {
     worstSev[type] = _maxSev(worstSev[type], sev);
@@ -138,15 +142,29 @@ function _detectTimelineAnomalies(td) {
     let intervalHit = false;
 
     // Rule 2 — score_collapse
-    const delta = _safeNum(scoreTimeline[i].deltaFromPrevious);
+    const delta     = _safeNum(scoreTimeline[i].deltaFromPrevious);
+    const currScore = _safeNum(scoreTimeline[i].score);
+    const prevScore = currScore - delta;
+    let collapseSev = null;
     if (delta <= -35) {
       patterns.scoreCollapseCount++;
       intervalHit = true;
       _update('score_collapse', 'critical');
+      collapseSev = 'critical';
     } else if (delta <= -20) {
       patterns.scoreCollapseCount++;
       intervalHit = true;
       _update('score_collapse', 'high');
+      collapseSev = 'high';
+    }
+    if (collapseSev) {
+      collapseEvents.push({
+        snapshotAt: scoreTimeline[i].snapshotAt || null,
+        severity:   collapseSev,
+        delta,
+        prevScore,
+        currScore,
+      });
     }
 
     // Rule 3 — coupling_spike
@@ -253,7 +271,7 @@ function _detectTimelineAnomalies(td) {
       type,
       severity: worstSev[type],
       summary:  ANOMALY_SUMMARIES[type],
-      evidence: _timelineAnomalyEvidence(type, patterns),
+      evidence: _timelineAnomalyEvidence(type, patterns, { collapseEvents }),
     });
   });
 

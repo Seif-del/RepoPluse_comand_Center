@@ -144,7 +144,16 @@ function _detectScoreRegression(driftEvents, scoreTimeline) {
     severity,
     count:    drops.length,
     summary:  'Architecture health score dropped ' + drops.length + ' time(s) — net delta: ' + totalDelta + '.',
-    evidence: drops.map(function(e) { return e.summary; }),
+    evidence: drops.map(function(e) {
+      return {
+        snapshotAt:        e.snapshotAt        !== undefined ? e.snapshotAt        : null,
+        prevScore:         e.prevScore         !== undefined ? e.prevScore         : null,
+        currScore:         e.currScore         !== undefined ? e.currScore         : null,
+        deltaBoundary:     e.deltaBoundary     !== undefined ? e.deltaBoundary     : null,
+        deltaCompleteness: e.deltaCompleteness !== undefined ? e.deltaCompleteness : null,
+        deltaLinkage:      e.deltaLinkage      !== undefined ? e.deltaLinkage      : null,
+      };
+    }),
   };
 }
 
@@ -199,7 +208,17 @@ function _detectApiRegression(driftEvents, apiIntegrationTimeline) {
     severity: unresolvedDelta >= 3 ? 'high' : 'medium',
     count:    apiRegressions.length,
     summary:  'API integration regressed ' + apiRegressions.length + ' time(s) — unresolved call delta: ' + unresolvedDelta + '.',
-    evidence: apiRegressions.map(function(e) { return e.summary; }),
+    evidence: apiRegressions.map(function(e) {
+      return {
+        snapshotAt:      e.snapshotAt      !== undefined ? e.snapshotAt      : null,
+        prevUnresolved:  e.prevUnresolved  !== undefined ? e.prevUnresolved  : null,
+        currUnresolved:  e.currUnresolved  !== undefined ? e.currUnresolved  : null,
+        unresolvedDelta: e.unresolvedDelta !== undefined ? e.unresolvedDelta : null,
+        prevMismatch:    e.prevMismatch    !== undefined ? e.prevMismatch    : null,
+        currMismatch:    e.currMismatch    !== undefined ? e.currMismatch    : null,
+        mismatchDelta:   e.mismatchDelta   !== undefined ? e.mismatchDelta   : null,
+      };
+    }),
   };
 }
 

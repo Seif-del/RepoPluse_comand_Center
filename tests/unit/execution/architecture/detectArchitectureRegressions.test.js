@@ -242,11 +242,24 @@ describe('score_regression detection', function() {
     expect(types).not.toContain('score_regression');
   });
 
-  test('score_regression evidence contains drop summaries', function() {
+  test('score_regression evidence contains structured drop objects', function() {
     const snaps = [ds(D1, { score: 75 }), ds(D2, { score: 65 })];
     const sr = detectArchitectureRegressions({ snapshots: snaps }).regressions.find(function(r) { return r.type === 'score_regression'; });
     expect(sr.evidence).toHaveLength(1);
-    expect(sr.evidence[0]).toMatch(/dropped/i);
+    const ev = sr.evidence[0];
+    expect(ev).toHaveProperty('snapshotAt');
+    expect(ev).toHaveProperty('prevScore');
+    expect(ev).toHaveProperty('currScore');
+    expect(ev).toHaveProperty('deltaBoundary');
+    expect(ev).toHaveProperty('deltaCompleteness');
+    expect(ev).toHaveProperty('deltaLinkage');
+  });
+
+  test('score_regression evidence prevScore and currScore reflect the actual scores', function() {
+    const snaps = [ds(D1, { score: 80 }), ds(D2, { score: 68 })];
+    const sr = detectArchitectureRegressions({ snapshots: snaps }).regressions.find(function(r) { return r.type === 'score_regression'; });
+    expect(sr.evidence[0].prevScore).toBe(80);
+    expect(sr.evidence[0].currScore).toBe(68);
   });
 });
 
@@ -366,6 +379,28 @@ describe('api_regression detection', function() {
     const snaps = [ds(D1, { score: 75, unresolvedFrontendCalls: 2 }), ds(D2, { score: 75, unresolvedFrontendCalls: 2 })];
     const types = detectArchitectureRegressions({ snapshots: snaps }).regressions.map(function(r) { return r.type; });
     expect(types).not.toContain('api_regression');
+  });
+
+  test('api_regression evidence contains structured delta objects', function() {
+    const snaps = [ds(D1, { score: 75, unresolvedFrontendCalls: 1 }), ds(D2, { score: 75, unresolvedFrontendCalls: 3 })];
+    const ar = detectArchitectureRegressions({ snapshots: snaps }).regressions.find(function(r) { return r.type === 'api_regression'; });
+    expect(ar.evidence).toHaveLength(1);
+    const ev = ar.evidence[0];
+    expect(ev).toHaveProperty('snapshotAt');
+    expect(ev).toHaveProperty('prevUnresolved');
+    expect(ev).toHaveProperty('currUnresolved');
+    expect(ev).toHaveProperty('unresolvedDelta');
+    expect(ev).toHaveProperty('prevMismatch');
+    expect(ev).toHaveProperty('currMismatch');
+    expect(ev).toHaveProperty('mismatchDelta');
+  });
+
+  test('api_regression evidence unresolvedDelta matches actual delta', function() {
+    const snaps = [ds(D1, { score: 75, unresolvedFrontendCalls: 2 }), ds(D2, { score: 75, unresolvedFrontendCalls: 5 })];
+    const ar = detectArchitectureRegressions({ snapshots: snaps }).regressions.find(function(r) { return r.type === 'api_regression'; });
+    expect(ar.evidence[0].prevUnresolved).toBe(2);
+    expect(ar.evidence[0].currUnresolved).toBe(5);
+    expect(ar.evidence[0].unresolvedDelta).toBe(3);
   });
 });
 

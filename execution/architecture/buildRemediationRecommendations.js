@@ -101,8 +101,16 @@ function _govRecs(governance) {
   const recs = [];
   if (!_isObj(governance)) return recs;
 
-  const gl = _safeStr(governance.governanceLevel);
-  const gs = _safeNum(governance.governanceScore);
+  const gl  = _safeStr(governance.governanceLevel);
+  const gs  = _safeNum(governance.governanceScore);
+  const bhs = (typeof governance.boundaryHealthScore === 'number') ? governance.boundaryHealthScore : null;
+  const cs  = (typeof governance.completenessScore   === 'number') ? governance.completenessScore   : null;
+  const ls  = (typeof governance.linkageScore        === 'number') ? governance.linkageScore        : null;
+
+  const componentEvidence = {};
+  if (bhs !== null) componentEvidence.boundaryHealthScore = bhs;
+  if (cs  !== null) componentEvidence.completenessScore   = cs;
+  if (ls  !== null) componentEvidence.linkageScore        = ls;
 
   if (gl === 'critical') {
     recs.push(_rec(
@@ -112,7 +120,7 @@ function _govRecs(governance) {
       'Establish architecture governance framework',
       'Governance is critical (score: ' + gs + '). The portfolio lacks effective architecture oversight.',
       'Improved governance score and reduced architecture risk',
-      { governanceScore: gs, governanceLevel: gl }
+      Object.assign({ governanceScore: gs, governanceLevel: gl }, componentEvidence)
     ));
   } else if (gl === 'weak') {
     recs.push(_rec(
@@ -122,7 +130,7 @@ function _govRecs(governance) {
       'Strengthen architecture governance practices',
       'Governance is weak (score: ' + gs + '). Engineering governance practices need improvement.',
       'Improved governance score and engineering quality standards',
-      { governanceScore: gs, governanceLevel: gl }
+      Object.assign({ governanceScore: gs, governanceLevel: gl }, componentEvidence)
     ));
   }
 
@@ -226,6 +234,10 @@ function _regressionRecs(regression) {
 
   // Score regression → architecture review
   if (rl === 'critical' || rl === 'regression') {
+    const scoreReg          = _safeArray(regression.regressions).find(function(r) { return r.type === 'score_regression'; });
+    const scoreDropEvidence = (scoreReg && Array.isArray(scoreReg.evidence)) ? scoreReg.evidence : [];
+    const apiReg            = _safeArray(regression.regressions).find(function(r) { return r.type === 'api_regression'; });
+    const apiRegressionEvidence = (apiReg && Array.isArray(apiReg.evidence)) ? apiReg.evidence : [];
     recs.push(_rec(
       'regression_review',
       'architecture',
@@ -234,7 +246,8 @@ function _regressionRecs(regression) {
       'Architecture regression detected (level: ' + rl + ', score: ' + rs + '). Structural deterioration requires investigation.',
       'Root causes identified and corrective measures implemented',
       { regressionLevel: rl, regressionScore: rs,
-        scoreDropCount: _safeNum(patterns.scoreDropCount) }
+        scoreDropCount: _safeNum(patterns.scoreDropCount),
+        scoreDropEvidence, apiRegressionEvidence }
     ));
   }
 
@@ -348,8 +361,11 @@ function _anomalyRecs(anomaly) {
   const patterns = _isObj(anomaly.patterns) ? anomaly.patterns : {};
 
   // Score collapse → incident-style investigation
-  const collapseCount = _safeNum(patterns.scoreCollapseCount);
+  const collapseCount   = _safeNum(patterns.scoreCollapseCount);
   if (collapseCount > 0) {
+    const collapseAnomaly = _safeArray(anomaly.anomalies).find(function(a) { return a.type === 'score_collapse'; });
+    const collapseEvents  = (collapseAnomaly && _isObj(collapseAnomaly.evidence) && Array.isArray(collapseAnomaly.evidence.collapseEvents))
+      ? collapseAnomaly.evidence.collapseEvents : [];
     recs.push(_rec(
       'anomaly_investigation',
       'anomaly',
@@ -357,7 +373,7 @@ function _anomalyRecs(anomaly) {
       'Conduct incident-style architecture investigation',
       collapseCount + ' score collapse event(s) detected. Sudden architecture score drops require root cause analysis.',
       'Root cause identified, score stabilized, preventive measures implemented',
-      { scoreCollapseCount: collapseCount, anomalyLevel: al }
+      { scoreCollapseCount: collapseCount, anomalyLevel: al, collapseEvents }
     ));
   }
 

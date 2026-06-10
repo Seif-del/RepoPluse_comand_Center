@@ -194,6 +194,40 @@ describe('buildRemediationRecommendations', () => {
       expect(rec).toBeDefined();
       expect(rec.category).toBe('coupling');
     });
+
+    it('governance rec evidence includes component scores when provided', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('critical', 20, {
+          boundaryHealthScore: 45,
+          completenessScore:   50,
+          linkageScore:        60,
+        })
+      });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.evidence.boundaryHealthScore).toBe(45);
+      expect(rec.evidence.completenessScore).toBe(50);
+      expect(rec.evidence.linkageScore).toBe(60);
+    });
+
+    it('governance rec evidence omits component scores when not provided', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 20) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.evidence).not.toHaveProperty('boundaryHealthScore');
+      expect(rec.evidence).not.toHaveProperty('completenessScore');
+      expect(rec.evidence).not.toHaveProperty('linkageScore');
+    });
+
+    it('governance rec evidence always includes governanceScore and governanceLevel', () => {
+      const r = buildRemediationRecommendations({
+        governance: makeGovernance('weak', 40, {
+          boundaryHealthScore: 65,
+        })
+      });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.evidence.governanceScore).toBe(40);
+      expect(rec.evidence.governanceLevel).toBe('weak');
+      expect(rec.evidence.boundaryHealthScore).toBe(65);
+    });
   });
 
   // 6. Forecast recommendations
@@ -285,6 +319,43 @@ describe('buildRemediationRecommendations', () => {
     it('watch level with no patterns generates no regression recs', () => {
       const r = buildRemediationRecommendations({ regression: makeRegression('watch', 70) });
       expect(r.recommendations.filter(x => x.id.startsWith('regression_'))).toHaveLength(0);
+    });
+
+    it('regression_review evidence propagates scoreDropEvidence and apiRegressionEvidence from regression.regressions', () => {
+      const scoreDropEvFixture = [
+        { snapshotAt: '2024-06-01T00:00:00Z', prevScore: 80, currScore: 65, deltaBoundary: -10, deltaCompleteness: -5, deltaLinkage: -2 },
+      ];
+      const apiRegEvFixture = [
+        { snapshotAt: '2024-06-01T00:00:00Z', prevUnresolved: 2, currUnresolved: 5, unresolvedDelta: 3, prevMismatch: 0, currMismatch: 1, mismatchDelta: 1 },
+      ];
+      const regression = {
+        regressionLevel: 'regression',
+        regressionScore: 55,
+        patterns: { scoreDropCount: 1 },
+        regressions: [
+          { type: 'score_regression', severity: 'medium', count: 1, evidence: scoreDropEvFixture },
+          { type: 'api_regression',   severity: 'medium', count: 1, evidence: apiRegEvFixture },
+        ],
+      };
+      const r = buildRemediationRecommendations({ regression });
+      const rec = r.recommendations.find(x => x.id === 'regression_review');
+      expect(rec).toBeDefined();
+      expect(Array.isArray(rec.evidence.scoreDropEvidence)).toBe(true);
+      expect(rec.evidence.scoreDropEvidence).toHaveLength(1);
+      expect(rec.evidence.scoreDropEvidence[0].prevScore).toBe(80);
+      expect(rec.evidence.scoreDropEvidence[0].currScore).toBe(65);
+      expect(Array.isArray(rec.evidence.apiRegressionEvidence)).toBe(true);
+      expect(rec.evidence.apiRegressionEvidence).toHaveLength(1);
+      expect(rec.evidence.apiRegressionEvidence[0].unresolvedDelta).toBe(3);
+    });
+
+    it('regression_review evidence scoreDropEvidence and apiRegressionEvidence are empty arrays when regression.regressions absent', () => {
+      const r = buildRemediationRecommendations({ regression: makeRegression('regression', 55) });
+      const rec = r.recommendations.find(x => x.id === 'regression_review');
+      expect(Array.isArray(rec.evidence.scoreDropEvidence)).toBe(true);
+      expect(rec.evidence.scoreDropEvidence).toHaveLength(0);
+      expect(Array.isArray(rec.evidence.apiRegressionEvidence)).toBe(true);
+      expect(rec.evidence.apiRegressionEvidence).toHaveLength(0);
     });
   });
 
@@ -400,6 +471,34 @@ describe('buildRemediationRecommendations', () => {
     it('missing patterns object generates no anomaly recs', () => {
       const r = buildRemediationRecommendations({ anomaly: { anomalyLevel: 'watch' } });
       expect(r.recommendations.filter(x => x.id.startsWith('anomaly_'))).toHaveLength(0);
+    });
+
+    it('anomaly_investigation evidence propagates collapseEvents from anomaly.anomalies', () => {
+      const collapseEventsFixture = [
+        { snapshotAt: '2024-06-01T00:00:00Z', severity: 'critical', delta: -40, prevScore: 80, currScore: 40 },
+      ];
+      const anomaly = {
+        anomalyLevel: 'critical',
+        patterns: { scoreCollapseCount: 1 },
+        anomalies: [
+          { type: 'score_collapse', severity: 'critical', evidence: { scoreCollapseCount: 1, collapseEvents: collapseEventsFixture } },
+        ],
+      };
+      const r = buildRemediationRecommendations({ anomaly });
+      const rec = r.recommendations.find(x => x.id === 'anomaly_investigation');
+      expect(rec).toBeDefined();
+      expect(Array.isArray(rec.evidence.collapseEvents)).toBe(true);
+      expect(rec.evidence.collapseEvents).toHaveLength(1);
+      expect(rec.evidence.collapseEvents[0].prevScore).toBe(80);
+      expect(rec.evidence.collapseEvents[0].currScore).toBe(40);
+      expect(rec.evidence.collapseEvents[0].severity).toBe('critical');
+    });
+
+    it('anomaly_investigation evidence collapseEvents is empty array when anomaly.anomalies absent', () => {
+      const r = buildRemediationRecommendations({ anomaly: makeAnomaly('critical', { scoreCollapseCount: 1 }) });
+      const rec = r.recommendations.find(x => x.id === 'anomaly_investigation');
+      expect(Array.isArray(rec.evidence.collapseEvents)).toBe(true);
+      expect(rec.evidence.collapseEvents).toHaveLength(0);
     });
   });
 
