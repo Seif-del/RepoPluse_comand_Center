@@ -487,14 +487,18 @@
     tbody tr.row-heat-low      { box-shadow: inset 3px 0 0 rgba(59,130,246,.28); }
     tbody tr.row-heat-healthy  { box-shadow: inset 3px 0 0 rgba(22,163,74,.28); }
     tbody tr.row-heat-unknown  { box-shadow: inset 3px 0 0 rgba(160,160,160,.25); }
+    tbody tr.row-heat-elevated { box-shadow: inset 3px 0 0 rgba(234,88,12,.62); }
+    tbody tr.row-heat-watch    { box-shadow: inset 3px 0 0 rgba(217,119,6,.52); }
 
     /* Selected row — keep strip visible over blue wash */
-    tbody tr.row-selected.row-heat-critical { box-shadow: inset 3px 0 0 rgba(220,38,38,.88); }
-    tbody tr.row-selected.row-heat-high     { box-shadow: inset 3px 0 0 rgba(234,88,12,.78); }
-    tbody tr.row-selected.row-heat-medium   { box-shadow: inset 3px 0 0 rgba(217,119,6,.68); }
-    tbody tr.row-selected.row-heat-low      { box-shadow: inset 3px 0 0 rgba(59,130,246,.50); }
-    tbody tr.row-selected.row-heat-healthy  { box-shadow: inset 3px 0 0 rgba(22,163,74,.50); }
-    tbody tr.row-selected.row-heat-unknown  { box-shadow: inset 3px 0 0 rgba(160,160,160,.40); }
+    tbody tr.row-selected.row-heat-critical  { box-shadow: inset 3px 0 0 rgba(220,38,38,.88); }
+    tbody tr.row-selected.row-heat-high      { box-shadow: inset 3px 0 0 rgba(234,88,12,.78); }
+    tbody tr.row-selected.row-heat-medium    { box-shadow: inset 3px 0 0 rgba(217,119,6,.68); }
+    tbody tr.row-selected.row-heat-low       { box-shadow: inset 3px 0 0 rgba(59,130,246,.50); }
+    tbody tr.row-selected.row-heat-healthy   { box-shadow: inset 3px 0 0 rgba(22,163,74,.50); }
+    tbody tr.row-selected.row-heat-unknown   { box-shadow: inset 3px 0 0 rgba(160,160,160,.40); }
+    tbody tr.row-selected.row-heat-elevated  { box-shadow: inset 3px 0 0 rgba(234,88,12,.78); }
+    tbody tr.row-selected.row-heat-watch     { box-shadow: inset 3px 0 0 rgba(217,119,6,.68); }
 
     tbody td {
       padding: 5px 8px;
@@ -649,7 +653,9 @@
     .aq-badge.severity-medium   { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
     .aq-badge.severity-low      { background: var(--sev-low-bg);      border: 1px solid var(--sev-low-border);      color: var(--sev-low-text);      }
     .aq-badge.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
-    .aq-badge.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .aq-badge.severity-healthy   { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .aq-badge.severity-elevated  { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
+    .aq-badge.severity-watch     { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
 
     /* ── Inline trajectory marker (appended inside .aq-badge) ───────────── */
     .aq-traj { margin-left: 2px; opacity: 0.8; font-weight: 400; }
@@ -661,9 +667,11 @@
     .severity-high     { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     color: var(--sev-high-text);     }
     .severity-medium   { background: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   }
     .severity-low      { background: var(--sev-low-bg);      border-color: var(--sev-low-border);      color: var(--sev-low-text);      }
-    .severity-healthy  { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
-    .severity-unknown  { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
-    .severity-neutral  { background: var(--sev-neutral-bg);  border-color: var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
+    .severity-healthy   { background: var(--sev-healthy-bg);  border-color: var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .severity-elevated  { background: var(--sev-high-bg);     border-color: var(--sev-high-border);     color: var(--sev-high-text);     }
+    .severity-watch     { background: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .severity-unknown   { background: var(--sev-unknown-bg);  border-color: var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+    .severity-neutral   { background: var(--sev-neutral-bg);  border-color: var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
 
     .aq-score {
       font-weight: 400;
@@ -715,8 +723,10 @@
     .reason-tag.severity-high     { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
     .reason-tag.severity-medium   { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
     .reason-tag.severity-low      { background: var(--sev-low-bg);      border: 1px solid var(--sev-low-border);      color: var(--sev-low-text);      }
-    .reason-tag.severity-healthy  { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
-    .reason-tag.severity-unknown  { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
+    .reason-tag.severity-healthy   { background: var(--sev-healthy-bg);  border: 1px solid var(--sev-healthy-border);  color: var(--sev-healthy-text);  }
+    .reason-tag.severity-elevated  { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
+    .reason-tag.severity-watch     { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
+    .reason-tag.severity-unknown   { background: var(--sev-unknown-bg);  border: 1px solid var(--sev-unknown-border);  color: var(--sev-unknown-text);  }
     .reason-tag.severity-neutral  { background: var(--sev-neutral-bg);  border: 1px solid var(--sev-neutral-border);  color: var(--sev-neutral-text);  }
 
     .reason-tag-more {
@@ -2436,24 +2446,24 @@
         if (archData && archData.architectureHealthLevel) {
           var hl = archData.architectureHealthLevel;
           if      (hl === 'risky')   items.push({ label: 'Architecture Risky',  cls: 'severity-critical' });
-          else if (hl === 'weak')    items.push({ label: 'Architecture Weak',   cls: 'severity-high' });
-          else if (hl === 'watch')   items.push({ label: 'Architecture Watch',  cls: 'severity-medium' });
+          else if (hl === 'weak')    items.push({ label: 'Architecture Weak',   cls: 'severity-elevated' });
+          else if (hl === 'watch')   items.push({ label: 'Architecture Watch',  cls: 'severity-watch' });
           else if (hl === 'healthy') { /* healthy architecture → no arch reason */ }
-          else                       items.push({ label: 'Coverage Gap',         cls: 'severity-medium' }); // unknown
+          else                       items.push({ label: 'Coverage Gap',         cls: 'severity-watch' }); // unknown
         } else {
-          items.push({ label: 'Coverage Gap', cls: 'severity-medium' }); // null or no level
+          items.push({ label: 'Coverage Gap', cls: 'severity-watch' }); // null or no level
         }
       } else {
         // Legacy path: derive from repo.score (operational risk proxy)
         var s = repo ? repo.score : null;
         if (s == null) {
-          items.push({ label: 'Coverage Gap', cls: 'severity-medium' });
+          items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
         } else if (s >= 70) {
           items.push({ label: 'Architecture Risky', cls: 'severity-critical' });
         } else if (s >= 45) {
-          items.push({ label: 'Architecture Weak', cls: 'severity-high' });
+          items.push({ label: 'Architecture Weak', cls: 'severity-elevated' });
         } else if (s >= 20) {
-          items.push({ label: 'Architecture Watch', cls: 'severity-medium' });
+          items.push({ label: 'Architecture Watch', cls: 'severity-watch' });
         }
       }
 
@@ -2462,9 +2472,9 @@
       if (aqLevel === 'critical') {
         items.push({ label: 'Governance Critical', cls: 'severity-critical' });
       } else if (aqLevel === 'high') {
-        items.push({ label: 'Governance Elevated', cls: 'severity-high' });
+        items.push({ label: 'Governance Elevated', cls: 'severity-elevated' });
       } else if (aqLevel === 'medium') {
-        items.push({ label: 'Governance Moderate', cls: 'severity-medium' });
+        items.push({ label: 'Governance Moderate', cls: 'severity-watch' });
       }
 
       // ── Forecast (20% weight) ───────────────────────────────────────────
@@ -2473,8 +2483,8 @@
         if (fcData && fcData.forecastLevel && fcData.forecastLevel !== 'unknown') {
           var fl = fcData.forecastLevel;
           if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
-          else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-high' });
-          else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-medium' });
+          else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
+          else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch' });
         }
         // null or low/stable/none → no forecast reason
       } else {
@@ -2484,18 +2494,17 @@
         if (fcTLabel === 'Escalating' || fcTLabel === 'Forecast Crit') {
           items.push({ label: 'Forecast Critical', cls: 'severity-critical' });
         } else if (fcTLabel === 'Deteriorating' || fcTLabel === 'Forecast High') {
-          items.push({ label: 'Forecast Degrading', cls: 'severity-high' });
+          items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
         } else if (fcTLabel === 'Volatile' || fcTLabel === 'Persistent' || fcTLabel === 'PR Risk') {
-          items.push({ label: 'Forecast Watch', cls: 'severity-medium' });
+          items.push({ label: 'Forecast Watch', cls: 'severity-watch' });
         }
       }
 
       // ── Watchlist (portfolio intel via archData.watchlistEscalationLevel) ───
       if (archData && archData.watchlistEscalationLevel) {
         var wle2 = archData.watchlistEscalationLevel;
-        if      (wle2 === 'critical') items.push({ label: 'Watchlist Critical', cls: 'severity-critical' });
-        else if (wle2 === 'urgent')   items.push({ label: 'Watchlist Urgent',   cls: 'severity-high' });
-        else if (wle2 === 'elevated') items.push({ label: 'Watchlist Elevated', cls: 'severity-medium' });
+        if      (wle2 === 'critical')                   items.push({ label: 'Watchlist Critical', cls: 'severity-critical' });
+        else if (wle2 === 'urgent' || wle2 === 'elevated') items.push({ label: 'Watchlist Elevated', cls: 'severity-elevated' });
       }
 
       // ── Operational — only when no arch/governance/forecast reason exists ─
@@ -2504,7 +2513,7 @@
         if (repoLabel === 'critical') {
           items.push({ label: 'Operational Critical', cls: 'severity-critical' });
         } else if (repoLabel === 'at-risk') {
-          items.push({ label: 'Operational At-Risk', cls: 'severity-high' });
+          items.push({ label: 'Operational At-Risk', cls: 'severity-elevated' });
         }
       }
 
@@ -6000,7 +6009,7 @@
       // Card 2: Architectural Priority — consistent with table, uses real architecture data
       var ovPriKey = computeRepoPriority(repo, aq, archData, fcData);
       var ovPriVal = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' }[ovPriKey] || ovPriKey;
-      var ovPriCls = { critical: 'severity-critical', elevated: 'severity-high', watch: 'severity-medium', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
+      var ovPriCls = { critical: 'severity-critical', elevated: 'severity-elevated', watch: 'severity-watch', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
 
       // Card 3: Forecast — from architecture forecast API
       var ovFcVal, ovFcCls;
@@ -6513,7 +6522,7 @@
 
       // Pre-compute priorities and sort: highest risk first, then score descending within bucket.
       var PRIORITY_ORDER = { critical: 0, elevated: 1, watch: 2, healthy: 3 };
-      var PRIORITY_SEV   = { critical: 'severity-critical', elevated: 'severity-high', watch: 'severity-medium', healthy: 'severity-healthy' };
+      var PRIORITY_SEV   = { critical: 'severity-critical', elevated: 'severity-elevated', watch: 'severity-watch', healthy: 'severity-healthy' };
       var PRIORITY_LABEL = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' };
 
       var withPri = filtered.map(function(r) {
@@ -7687,13 +7696,13 @@
 
       function _wlLevelSev(level) {
         if (level === 'clear' || level === 'none') return 'healthy';
-        if (level === 'monitor')                   return 'medium';
-        if (level === 'elevated' || level === 'urgent') return 'high';
+        if (level === 'monitor')                   return 'watch';
+        if (level === 'elevated' || level === 'urgent') return 'elevated';
         if (level === 'critical')                  return 'critical';
         return 'unknown';
       }
       function _wlLevelLabel(level) {
-        return { clear: 'CLEAR', monitor: 'MONITOR', elevated: 'ELEVATED', urgent: 'URGENT', critical: 'CRITICAL' }[level]
+        return { clear: 'HEALTHY', none: 'HEALTHY', monitor: 'WATCH', elevated: 'ELEVATED', urgent: 'ELEVATED', critical: 'CRITICAL' }[level]
           || 'UNKNOWN';
       }
 
@@ -7770,11 +7779,11 @@
 
       // B. Escalation Summary counts row
       var escalEntries = [
-        { key: 'critical', label: 'Critical',  sev: 'critical' },
-        { key: 'urgent',   label: 'Urgent',    sev: 'high'     },
-        { key: 'elevated', label: 'Elevated',  sev: 'high'     },
-        { key: 'monitor',  label: 'Monitor',   sev: 'medium'   },
-        { key: 'none',     label: 'Clear',     sev: 'healthy'  },
+        { key: 'critical', label: 'Critical',  sev: 'critical'  },
+        { key: 'urgent',   label: 'Elevated',  sev: 'elevated'  },
+        { key: 'elevated', label: 'Elevated',  sev: 'elevated'  },
+        { key: 'monitor',  label: 'Watch',     sev: 'watch'     },
+        { key: 'none',     label: 'Healthy',   sev: 'healthy'   },
       ].filter(function(e) { return (escalation[e.key] || 0) > 0; });
       if (escalEntries.length) {
         html += '<div class="pf-counts" style="margin-bottom:14px;">';

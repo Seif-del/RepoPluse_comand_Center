@@ -147,23 +147,23 @@ function buildRepoPriorityReasons(repo, aq, archData, fcData) {
     if (archData && archData.architectureHealthLevel) {
       var hl = archData.architectureHealthLevel;
       if      (hl === 'risky')   items.push({ label: 'Architecture Risky',  cls: 'severity-critical' });
-      else if (hl === 'weak')    items.push({ label: 'Architecture Weak',   cls: 'severity-high' });
-      else if (hl === 'watch')   items.push({ label: 'Architecture Watch',  cls: 'severity-medium' });
+      else if (hl === 'weak')    items.push({ label: 'Architecture Weak',   cls: 'severity-elevated' });
+      else if (hl === 'watch')   items.push({ label: 'Architecture Watch',  cls: 'severity-watch' });
       else if (hl === 'healthy') { /* healthy → no arch reason */ }
-      else                       items.push({ label: 'Coverage Gap',         cls: 'severity-medium' }); // unknown
+      else                       items.push({ label: 'Coverage Gap',         cls: 'severity-watch' }); // unknown
     } else {
-      items.push({ label: 'Coverage Gap', cls: 'severity-medium' });
+      items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
     }
   } else {
     var s = repo ? repo.score : null;
     if (s == null) {
-      items.push({ label: 'Coverage Gap', cls: 'severity-medium' });
+      items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
     } else if (s >= 70) {
       items.push({ label: 'Architecture Risky', cls: 'severity-critical' });
     } else if (s >= 45) {
-      items.push({ label: 'Architecture Weak', cls: 'severity-high' });
+      items.push({ label: 'Architecture Weak', cls: 'severity-elevated' });
     } else if (s >= 20) {
-      items.push({ label: 'Architecture Watch', cls: 'severity-medium' });
+      items.push({ label: 'Architecture Watch', cls: 'severity-watch' });
     }
   }
 
@@ -171,17 +171,17 @@ function buildRepoPriorityReasons(repo, aq, archData, fcData) {
   if (aqLevel === 'critical') {
     items.push({ label: 'Governance Critical', cls: 'severity-critical' });
   } else if (aqLevel === 'high') {
-    items.push({ label: 'Governance Elevated', cls: 'severity-high' });
+    items.push({ label: 'Governance Elevated', cls: 'severity-elevated' });
   } else if (aqLevel === 'medium') {
-    items.push({ label: 'Governance Moderate', cls: 'severity-medium' });
+    items.push({ label: 'Governance Moderate', cls: 'severity-watch' });
   }
 
   if (fcData !== undefined) {
     if (fcData && fcData.forecastLevel && fcData.forecastLevel !== 'unknown') {
       var fl = fcData.forecastLevel;
       if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
-      else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-high' });
-      else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-medium' });
+      else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
+      else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch' });
     }
   } else {
     var fcTrend  = derivePredictiveTrend(repo, aq);
@@ -189,17 +189,16 @@ function buildRepoPriorityReasons(repo, aq, archData, fcData) {
     if (fcTLabel === 'Escalating' || fcTLabel === 'Forecast Crit') {
       items.push({ label: 'Forecast Critical', cls: 'severity-critical' });
     } else if (fcTLabel === 'Deteriorating' || fcTLabel === 'Forecast High') {
-      items.push({ label: 'Forecast Degrading', cls: 'severity-high' });
+      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
     } else if (fcTLabel === 'Volatile' || fcTLabel === 'Persistent' || fcTLabel === 'PR Risk') {
-      items.push({ label: 'Forecast Watch', cls: 'severity-medium' });
+      items.push({ label: 'Forecast Watch', cls: 'severity-watch' });
     }
   }
 
   if (archData && archData.watchlistEscalationLevel) {
     var wle2 = archData.watchlistEscalationLevel;
-    if      (wle2 === 'critical') items.push({ label: 'Watchlist Critical', cls: 'severity-critical' });
-    else if (wle2 === 'urgent')   items.push({ label: 'Watchlist Urgent',   cls: 'severity-high' });
-    else if (wle2 === 'elevated') items.push({ label: 'Watchlist Elevated', cls: 'severity-medium' });
+    if      (wle2 === 'critical')                      items.push({ label: 'Watchlist Critical', cls: 'severity-critical' });
+    else if (wle2 === 'urgent' || wle2 === 'elevated') items.push({ label: 'Watchlist Elevated', cls: 'severity-elevated' });
   }
 
   if (items.length === 0) {
@@ -207,7 +206,7 @@ function buildRepoPriorityReasons(repo, aq, archData, fcData) {
     if (repoLabel === 'critical') {
       items.push({ label: 'Operational Critical', cls: 'severity-critical' });
     } else if (repoLabel === 'at-risk') {
-      items.push({ label: 'Operational At-Risk', cls: 'severity-high' });
+      items.push({ label: 'Operational At-Risk', cls: 'severity-elevated' });
     }
   }
 
@@ -599,16 +598,16 @@ describe('buildRepoPriorityReasons — architecture dimension', () => {
     expect(out).toContain('severity-critical');
   });
 
-  test('score 50 → "Architecture Weak" (severity-high)', () => {
+  test('score 50 → "Architecture Weak" (severity-elevated)', () => {
     const out = buildRepoPriorityReasons({ score: 50 }, noAq());
     expect(out).toContain('Architecture Weak');
-    expect(out).toContain('severity-high');
+    expect(out).toContain('severity-elevated');
   });
 
-  test('score 30 → "Architecture Watch" (severity-medium)', () => {
+  test('score 30 → "Architecture Watch" (severity-watch)', () => {
     const out = buildRepoPriorityReasons({ score: 30 }, noAq());
     expect(out).toContain('Architecture Watch');
-    expect(out).toContain('severity-medium');
+    expect(out).toContain('severity-watch');
   });
 
   test('score 10 (healthy) → "No Significant Issues" (severity-healthy)', () => {
@@ -640,13 +639,13 @@ describe('buildRepoPriorityReasons — governance dimension', () => {
   test('aq=high → "Governance Elevated"', () => {
     const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, aqOf('high'));
     expect(out).toContain('Governance Elevated');
-    expect(out).toContain('severity-high');
+    expect(out).toContain('severity-elevated');
   });
 
   test('aq=medium → "Governance Moderate"', () => {
     const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, aqOf('medium'));
     expect(out).toContain('Governance Moderate');
-    expect(out).toContain('severity-medium');
+    expect(out).toContain('severity-watch');
   });
 
   test('aq=low → no governance reason → "No Significant Issues"', () => {
@@ -666,13 +665,13 @@ describe('buildRepoPriorityReasons — forecast dimension', () => {
   test('deteriorating trajectory → "Forecast Degrading"', () => {
     const out = buildRepoPriorityReasons({ score: 10 }, aqOf('low', { trajectory: 'deteriorating', reasons: [] }));
     expect(out).toContain('Forecast Degrading');
-    expect(out).toContain('severity-high');
+    expect(out).toContain('severity-elevated');
   });
 
   test('volatile trajectory → "Forecast Watch"', () => {
     const out = buildRepoPriorityReasons({ score: 10 }, aqOf('low', { trajectory: 'volatile', reasons: ['Volatile operational trajectory'] }));
     expect(out).toContain('Forecast Watch');
-    expect(out).toContain('severity-medium');
+    expect(out).toContain('severity-watch');
   });
 
   test('Critical forecast level reason → "Forecast Critical"', () => {
@@ -847,7 +846,7 @@ describe('buildRepoPriorityReasons — archData parameter', () => {
   test('archData.level=weak → Architecture Weak', () => {
     const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'weak' }, null);
     expect(out).toContain('Architecture Weak');
-    expect(out).toContain('severity-high');
+    expect(out).toContain('severity-elevated');
   });
 
   test('archData.level=healthy → no arch reason → No Significant Issues', () => {
@@ -868,7 +867,7 @@ describe('buildRepoPriorityReasons — fcData parameter', () => {
   test('fcData.forecastLevel=high → Forecast Degrading', () => {
     const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, { forecastLevel: 'high' });
     expect(out).toContain('Forecast Degrading');
-    expect(out).toContain('severity-high');
+    expect(out).toContain('severity-elevated');
   });
 
   test('fcData.forecastLevel=watch → Forecast Watch', () => {
@@ -1018,24 +1017,25 @@ describe('buildRepoPriorityReasons — watchlist escalation', () => {
     expect(out).toContain('severity-critical');
   });
 
-  test('watchlistEscalationLevel=urgent emits Watchlist Urgent', () => {
+  test('watchlistEscalationLevel=urgent emits Watchlist Elevated (collapsed to ELEVATED tier)', () => {
     const out = buildRepoPriorityReasons(
       {}, noAq(),
       { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'urgent' },
       null
     );
-    expect(out).toContain('Watchlist Urgent');
-    expect(out).toContain('severity-high');
+    expect(out).toContain('Watchlist Elevated');
+    expect(out).not.toContain('Watchlist Urgent');
+    expect(out).toContain('severity-elevated');
   });
 
-  test('watchlistEscalationLevel=elevated emits Watchlist Elevated', () => {
+  test('watchlistEscalationLevel=elevated emits Watchlist Elevated (severity-elevated)', () => {
     const out = buildRepoPriorityReasons(
       {}, noAq(),
       { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'elevated' },
       null
     );
     expect(out).toContain('Watchlist Elevated');
-    expect(out).toContain('severity-medium');
+    expect(out).toContain('severity-elevated');
   });
 
   test('watchlist=monitor → no watchlist reason emitted', () => {
@@ -1573,7 +1573,7 @@ function buildOverviewCardsHtml(repo, aq, archData, fcData) {
 
   var ovPriKey = computeRepoPriority(repo, aq, archData, fcData);
   var ovPriVal = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' }[ovPriKey] || ovPriKey;
-  var ovPriCls = { critical: 'severity-critical', elevated: 'severity-high', watch: 'severity-medium', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
+  var ovPriCls = { critical: 'severity-critical', elevated: 'severity-elevated', watch: 'severity-watch', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
 
   var ovFcVal, ovFcCls;
   if (!fcData || !fcData.forecastLevel) {
@@ -3124,5 +3124,107 @@ describe('buildArchitectureRiskProfileHtml — reads archCache fields written by
     // API Linkage, Impl, Coupling, Boundary all dash; Forecast dash; Confidence shows
     const dashCount = (html.match(/>—</g) || []).length;
     expect(dashCount).toBe(5);   // five dimension rows dash before data arrives
+  });
+});
+
+// ── Severity vocabulary alignment — reason tags use CRITICAL/ELEVATED/WATCH/HEALTHY ──
+
+describe('buildRepoPriorityReasons — severity vocabulary alignment', () => {
+  test('Architecture Weak emits severity-elevated (not severity-high)', () => {
+    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'weak' }, null);
+    expect(out).toContain('Architecture Weak');
+    expect(out).toContain('severity-elevated');
+    expect(out).not.toContain('severity-high');
+  });
+
+  test('Architecture Watch emits severity-watch (not severity-medium)', () => {
+    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'watch' }, null);
+    expect(out).toContain('Architecture Watch');
+    expect(out).toContain('severity-watch');
+    expect(out).not.toContain('severity-medium');
+  });
+
+  test('Coverage Gap (null archData) emits severity-watch', () => {
+    const out = buildRepoPriorityReasons(null, noAq(), null, null);
+    expect(out).toContain('Coverage Gap');
+    expect(out).toContain('severity-watch');
+    expect(out).not.toContain('severity-medium');
+  });
+
+  test('Coverage Gap (legacy null score) emits severity-watch', () => {
+    const out = buildRepoPriorityReasons({ score: null }, noAq());
+    expect(out).toContain('Coverage Gap');
+    expect(out).toContain('severity-watch');
+  });
+
+  test('Operational At-Risk emits severity-elevated (not severity-high)', () => {
+    const out = buildRepoPriorityReasons({ score: 10, label: 'at-risk' }, noAq());
+    expect(out).toContain('Operational At-Risk');
+    expect(out).toContain('severity-elevated');
+    expect(out).not.toContain('severity-high');
+  });
+
+  test('urgent and elevated watchlist both collapse to Watchlist Elevated / severity-elevated', () => {
+    const outU = buildRepoPriorityReasons({}, noAq(),
+      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'urgent' }, null);
+    const outE = buildRepoPriorityReasons({}, noAq(),
+      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'elevated' }, null);
+    expect(outU).toContain('Watchlist Elevated');
+    expect(outU).toContain('severity-elevated');
+    expect(outU).not.toContain('Watchlist Urgent');
+    expect(outE).toContain('Watchlist Elevated');
+    expect(outE).toContain('severity-elevated');
+  });
+
+  test('severity-critical and severity-healthy are unchanged', () => {
+    const crit = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'risky' }, null);
+    expect(crit).toContain('severity-critical');
+    const heal = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, null);
+    expect(heal).toContain('severity-healthy');
+  });
+});
+
+// ── Overview card Architectural Priority badge uses aligned vocabulary ─────────
+
+describe('buildOverviewCardsHtml — Architectural Priority badge vocabulary alignment', () => {
+  const REPO_V = { id: 550, fullName: 'org/vocab-test', score: null, label: 'healthy' };
+
+  beforeEach(() => {
+    _repoIntelligenceById     = {};
+    _archDataByRepoId         = {};
+    _archForecastDataByRepoId = {};
+    _archFetchInFlightByRepoId = {};
+  });
+
+  test('elevated priority repo → priority badge uses severity-elevated', () => {
+    mergeRepoIntelligence(550, { architectureHealthLevel: 'weak', architectureHealthScore: 55 });
+    const arch = _resolveOverviewArchData(550);
+    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('elevated');
+    const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('severity-elevated');
+  });
+
+  test('watch priority repo → priority badge uses severity-watch', () => {
+    mergeRepoIntelligence(550, { architectureHealthLevel: 'watch', architectureHealthScore: 75 });
+    const arch = _resolveOverviewArchData(550);
+    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('watch');
+    const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('severity-watch');
+  });
+
+  test('critical priority repo → priority badge uses severity-critical (unchanged)', () => {
+    mergeRepoIntelligence(550, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    const arch = _resolveOverviewArchData(550);
+    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('critical');
+    const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('severity-critical');
+  });
+
+  test('healthy priority repo → priority badge uses severity-healthy (unchanged)', () => {
+    mergeRepoIntelligence(550, { architectureHealthLevel: 'healthy', architectureHealthScore: 90 });
+    const arch = _resolveOverviewArchData(550);
+    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('healthy');
+    const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('severity-healthy');
   });
 });
