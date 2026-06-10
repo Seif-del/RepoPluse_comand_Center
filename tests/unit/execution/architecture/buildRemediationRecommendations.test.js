@@ -1134,3 +1134,66 @@ describe('buildRemediationRecommendations', () => {
   });
 
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 20. versionBoundaryContext output
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('versionBoundaryContext output', () => {
+  it('unknown result (no sources) has versionBoundaryContext with zeros and affectsConfidence false', () => {
+    const r = buildRemediationRecommendations({});
+    expect(r.versionBoundaryContext).toEqual({ boundaryCount: 0, suppressedIntervals: 0, affectsConfidence: false });
+  });
+
+  it('no versionContext supplied yields zero-state versionBoundaryContext on normal result', () => {
+    const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+    expect(r.versionBoundaryContext).toEqual({ boundaryCount: 0, suppressedIntervals: 0, affectsConfidence: false });
+  });
+
+  it('versionContext with boundaryCount 0 yields affectsConfidence false', () => {
+    const r = buildRemediationRecommendations({
+      governance: makeGovernance('critical', 10),
+      versionContext: { boundaryCount: 0, suppressedIntervals: 0 },
+    });
+    expect(r.versionBoundaryContext.affectsConfidence).toBe(false);
+  });
+
+  it('versionContext with boundaryCount > 0 yields affectsConfidence true', () => {
+    const r = buildRemediationRecommendations({
+      governance: makeGovernance('critical', 10),
+      versionContext: { boundaryCount: 2, suppressedIntervals: 2 },
+    });
+    expect(r.versionBoundaryContext).toEqual({ boundaryCount: 2, suppressedIntervals: 2, affectsConfidence: true });
+  });
+
+  it('versionContext fields are passed through accurately on normal path', () => {
+    const r = buildRemediationRecommendations({
+      governance: makeGovernance('weak', 35),
+      versionContext: { boundaryCount: 3, suppressedIntervals: 3 },
+    });
+    expect(r.versionBoundaryContext.boundaryCount).toBe(3);
+    expect(r.versionBoundaryContext.suppressedIntervals).toBe(3);
+    expect(r.versionBoundaryContext.affectsConfidence).toBe(true);
+  });
+
+  it('no-recs path includes versionBoundaryContext', () => {
+    // Only watchlistItem provided — it counts as a usable source but produces no recs
+    const r = buildRemediationRecommendations({
+      watchlistItem: { watched: true },
+      versionContext: { boundaryCount: 1, suppressedIntervals: 1 },
+    });
+    expect(r.versionBoundaryContext).toBeDefined();
+    expect(r.versionBoundaryContext.boundaryCount).toBe(1);
+  });
+
+  it('versionBoundaryContext does not affect remediationScore or recommendationLevel', () => {
+    const base = buildRemediationRecommendations({ governance: makeGovernance('critical', 10) });
+    const withVC = buildRemediationRecommendations({
+      governance: makeGovernance('critical', 10),
+      versionContext: { boundaryCount: 5, suppressedIntervals: 5 },
+    });
+    expect(withVC.remediationScore).toBe(base.remediationScore);
+    expect(withVC.recommendationLevel).toBe(base.recommendationLevel);
+    expect(withVC.confidenceLevel).toBe(base.confidenceLevel);
+  });
+});

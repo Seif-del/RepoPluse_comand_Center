@@ -68,18 +68,28 @@ function _emptyImpact(confidence) {
   return { governanceImpact: 0, architectureImpact: 0, riskReduction: 0, confidence };
 }
 
+function _versionBoundaryContext(versionContext) {
+  if (!_isObj(versionContext)) {
+    return { boundaryCount: 0, suppressedIntervals: 0, affectsConfidence: false };
+  }
+  const boundaryCount      = _safeNum(versionContext.boundaryCount);
+  const suppressedIntervals = _safeNum(versionContext.suppressedIntervals);
+  return { boundaryCount, suppressedIntervals, affectsConfidence: boundaryCount > 0 };
+}
+
 function _unknownResult() {
   return {
-    recommendationLevel: 'unknown',
-    remediationScore:    0,
-    rawRemediationScore: 0,
-    scoreCapApplied:     false,
-    confidenceLevel:     'low',
-    summary:             'Insufficient data — no usable intelligence sources provided.',
-    recommendations:     [],
-    actionPlan:          _emptyActionPlan(),
-    priorities:          _emptyPriorities(),
-    estimatedImpact:     _emptyImpact('low'),
+    recommendationLevel:    'unknown',
+    remediationScore:       0,
+    rawRemediationScore:    0,
+    scoreCapApplied:        false,
+    confidenceLevel:        'low',
+    versionBoundaryContext: { boundaryCount: 0, suppressedIntervals: 0, affectsConfidence: false },
+    summary:                'Insufficient data — no usable intelligence sources provided.',
+    recommendations:        [],
+    actionPlan:             _emptyActionPlan(),
+    priorities:             _emptyPriorities(),
+    estimatedImpact:        _emptyImpact('low'),
   };
 }
 
@@ -625,16 +635,17 @@ function buildRemediationRecommendations(input) {
 
   if (final.length === 0) {
     return {
-      recommendationLevel: 'none',
-      remediationScore:    0,
-      rawRemediationScore: 0,
-      scoreCapApplied:     false,
+      recommendationLevel:    'none',
+      remediationScore:       0,
+      rawRemediationScore:    0,
+      scoreCapApplied:        false,
       confidenceLevel,
-      summary:             'No remediation required — no actionable recommendations identified (' + confidenceLevel + ' confidence).',
-      recommendations:     [],
-      actionPlan:          _emptyActionPlan(),
-      priorities:          _emptyPriorities(),
-      estimatedImpact:     _emptyImpact(confidenceLevel),
+      versionBoundaryContext: _versionBoundaryContext(input.versionContext),
+      summary:                'No remediation required — no actionable recommendations identified (' + confidenceLevel + ' confidence).',
+      recommendations:        [],
+      actionPlan:             _emptyActionPlan(),
+      priorities:             _emptyPriorities(),
+      estimatedImpact:        _emptyImpact(confidenceLevel),
     };
   }
 
@@ -653,6 +664,7 @@ function buildRemediationRecommendations(input) {
     rawRemediationScore,
     scoreCapApplied,
     confidenceLevel,
+    versionBoundaryContext: _versionBoundaryContext(input.versionContext),
     summary,
     recommendations: final,
     actionPlan,

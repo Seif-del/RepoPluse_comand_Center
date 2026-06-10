@@ -410,6 +410,8 @@ function _emptyResult() {
     apiIntegrationTimeline: [],
     implementationTimeline: [],
     driftEvents:            [],
+    versionBoundaryCount:   0,
+    versionChangeEvents:    [],
     summary:                'No architecture snapshots available.',
     recommendations:        [],
   };
@@ -535,9 +537,11 @@ function buildArchitectureTrendTimeline(params) {
     prevSignals = currSignals;
   });
 
-  const driftEvents     = _buildDriftEvents(sorted);
-  const summary         = _summary(sorted, driftEvents);
-  const recommendations = _recommendations(driftEvents);
+  const driftEvents          = _buildDriftEvents(sorted);
+  const versionChangeEvents  = driftEvents.filter(function(e) { return e.type === 'version_change'; });
+  const versionBoundaryCount = versionChangeEvents.length;
+  const summary              = _summary(sorted, driftEvents);
+  const recommendations      = _recommendations(driftEvents);
 
   return {
     timeline,
@@ -548,6 +552,8 @@ function buildArchitectureTrendTimeline(params) {
     apiIntegrationTimeline,
     implementationTimeline,
     driftEvents,
+    versionBoundaryCount,
+    versionChangeEvents,
     summary,
     recommendations,
   };

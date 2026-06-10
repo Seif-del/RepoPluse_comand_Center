@@ -1130,3 +1130,86 @@ describe('missing field safety', () => {
     expect(r.timeline[0].score).toBe(70);
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 20. Version boundary count and events output
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('versionBoundaryCount and versionChangeEvents output', () => {
+  function vSnap(isoDate, score, analyzerVersion, scoringVersion) {
+    return {
+      snapshotAt:              isoDate,
+      architectureHealthScore: score,
+      architectureHealthLevel: score >= 85 ? 'healthy' : score >= 70 ? 'watch' : score >= 45 ? 'weak' : 'risky',
+      analyzerVersion,
+      scoringVersion,
+      metrics: {},
+    };
+  }
+
+  test('empty snapshots yields versionBoundaryCount 0 and empty versionChangeEvents', () => {
+    const r = buildArchitectureTrendTimeline({ snapshots: [] });
+    expect(r.versionBoundaryCount).toBe(0);
+    expect(r.versionChangeEvents).toEqual([]);
+  });
+
+  test('single snapshot yields versionBoundaryCount 0', () => {
+    const r = buildArchitectureTrendTimeline({ snapshots: [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0')] });
+    expect(r.versionBoundaryCount).toBe(0);
+    expect(r.versionChangeEvents).toHaveLength(0);
+  });
+
+  test('two same-version snapshots yields versionBoundaryCount 0', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 75, '1.0', '1.0')];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    expect(r.versionBoundaryCount).toBe(0);
+    expect(r.versionChangeEvents).toHaveLength(0);
+  });
+
+  test('one version boundary yields versionBoundaryCount 1', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },
+      vSnap('2024-06-01T00:00:00Z', 78, '1.0', '1.0'),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    expect(r.versionBoundaryCount).toBe(1);
+    expect(r.versionChangeEvents).toHaveLength(1);
+  });
+
+  test('versionChangeEvents entries have type version_change and required fields', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },
+      vSnap('2024-06-01T00:00:00Z', 78, '1.0', '1.0'),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.versionChangeEvents[0];
+    expect(ev.type).toBe('version_change');
+    expect(ev.severity).toBe('low');
+    expect(ev.prevAnalyzerVersion).toBe('legacy');
+    expect(ev.currAnalyzerVersion).toBe('1.0');
+    expect(ev.prevScoringVersion).toBe('legacy');
+    expect(ev.currScoringVersion).toBe('1.0');
+  });
+
+  test('versionChangeEvents is a subset of driftEvents', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },
+      vSnap('2024-06-01T00:00:00Z', 78, '1.0', '1.0'),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    r.versionChangeEvents.forEach(function(ev) {
+      expect(r.driftEvents).toContainEqual(ev);
+    });
+  });
+
+  test('two version boundaries yields versionBoundaryCount 2', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },
+      vSnap('2024-04-01T00:00:00Z', 78, '1.0', '1.0'),
+      vSnap('2024-07-01T00:00:00Z', 76, '2.0', '1.0'),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    expect(r.versionBoundaryCount).toBe(2);
+    expect(r.versionChangeEvents).toHaveLength(2);
+  });
+});

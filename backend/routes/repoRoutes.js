@@ -947,6 +947,10 @@ router.get('/:id/remediation', async (req, res, next) => {
       couplingAlert,
       watchlistItem:       null,
       architectureSnapshot,
+      versionContext: {
+        boundaryCount:      timelineData.versionBoundaryCount || 0,
+        suppressedIntervals: timelineData.versionBoundaryCount || 0,
+      },
     });
 
     res.json({
