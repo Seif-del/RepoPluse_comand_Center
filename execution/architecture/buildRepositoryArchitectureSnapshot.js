@@ -189,6 +189,9 @@ function _metrics(inventory, dependencyGraph, apiLinkage, boundaryVerification, 
     linkedEndpointCount:         cov.linkedFrontendCallCount                   || 0,
     unresolvedFrontendCallCount: cov.unresolvedFrontendCallCount               || 0,
     orphanedBackendRouteCount:   cov.orphanedBackendRouteCount                 || 0,
+    navigationOrphanCount:       cov.navigationOrphanCount                    || 0,
+    unlinkedApiCount:            cov.unlinkedApiCount                         || 0,
+    disconnectedApiCount:        cov.disconnectedApiCount                     || 0,
     circularDependencyCount:     cm.circularDependencyCount                    || 0,
     boundaryViolationCount:      viols.length,
     implementationSignalCount:   signals.length,
@@ -202,7 +205,8 @@ function _metrics(inventory, dependencyGraph, apiLinkage, boundaryVerification, 
  * Pure function — no I/O, no mutation of input.
  * Composes the six Phase 1 modules in pipeline order.
  *
- * @param {{ repoId, repoName, defaultBranch, snapshotAt, files: Array }} [params]
+ * @param {{ repoId, repoName, defaultBranch, snapshotAt, files: Array,
+ *           previousLinkedEndpoints?: Array<{method, path}> }} [params]
  */
 function buildRepositoryArchitectureSnapshot(params) {
   const repoId        = (params && params.repoId)        || null;
@@ -210,6 +214,8 @@ function buildRepositoryArchitectureSnapshot(params) {
   const defaultBranch = (params && params.defaultBranch) || null;
   const snapshotAt    = (params && params.snapshotAt)    || null;
   const files         = (params && Array.isArray(params.files)) ? params.files : [];
+  const previousLinkedEndpoints = (params && Array.isArray(params.previousLinkedEndpoints))
+    ? params.previousLinkedEndpoints : [];
 
   // ── Stage 1 ─────────────────────────────────────────────────────────────────
   const inventory = buildRepositoryStructureInventory({ files });
@@ -222,9 +228,10 @@ function buildRepositoryArchitectureSnapshot(params) {
 
   // ── Stage 4 ─────────────────────────────────────────────────────────────────
   const apiLinkage = linkFrontendBackendApis({
-    backendRoutes:     routeApiStructure.backendRoutes,
-    frontendApiCalls:  routeApiStructure.frontendApiCalls,
-    endpointInventory: routeApiStructure.endpointInventory,
+    backendRoutes:          routeApiStructure.backendRoutes,
+    frontendApiCalls:       routeApiStructure.frontendApiCalls,
+    endpointInventory:      routeApiStructure.endpointInventory,
+    previousLinkedEndpoints,
   });
 
   // ── Stage 5 ─────────────────────────────────────────────────────────────────

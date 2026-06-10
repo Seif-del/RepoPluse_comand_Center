@@ -746,3 +746,219 @@ describe('linkFrontendBackendApis — output shape', () => {
     expect(ep).toHaveProperty('linkageType');
   });
 });
+
+// ── Orphan classification — orphanType field ──────────────────────────────────
+
+describe('linkFrontendBackendApis — orphanType classification', () => {
+  function orphan(method, path) {
+    return { method: method.toUpperCase(), path, file: 'backend/server.js', framework: 'express' };
+  }
+  function prevLinked(method, path) {
+    return { method: method.toUpperCase(), path };
+  }
+
+  test('non-/api/ orphaned route has orphanType "navigation"', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/dashboard')],
+      frontendApiCalls: [],
+      endpointInventory: [],
+    });
+    const rt = r.orphanedBackendRoutes.find(function(x) { return x.path === '/dashboard'; });
+    expect(rt).toBeDefined();
+    expect(rt.orphanType).toBe('navigation');
+  });
+
+  test('/api/ orphaned route with no previous linkage has orphanType "unlinked"', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/repos/confidence')],
+      frontendApiCalls: [],
+      endpointInventory: [],
+    });
+    const rt = r.orphanedBackendRoutes[0];
+    expect(rt.orphanType).toBe('unlinked');
+  });
+
+  test('/api/ orphaned route present in previousLinkedEndpoints has orphanType "disconnected"', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:          [bRoute('GET', '/api/portfolio/anomalies')],
+      frontendApiCalls:       [],
+      endpointInventory:      [],
+      previousLinkedEndpoints: [prevLinked('GET', '/api/portfolio/anomalies')],
+    });
+    const rt = r.orphanedBackendRoutes[0];
+    expect(rt.orphanType).toBe('disconnected');
+  });
+
+  test('param masking: :id in previous and :_p in current both classify as "disconnected"', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:          [bRoute('GET', '/api/repos/:id/architecture')],
+      frontendApiCalls:       [],
+      endpointInventory:      [],
+      previousLinkedEndpoints: [prevLinked('GET', '/api/repos/:_p/architecture')],
+    });
+    const rt = r.orphanedBackendRoutes[0];
+    expect(rt.orphanType).toBe('disconnected');
+  });
+
+  test('count invariant: navigationOrphanCount + unlinkedApiCount + disconnectedApiCount === orphanedBackendRouteCount', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes: [
+        bRoute('GET', '/dashboard'),
+        bRoute('GET', '/auth/github'),
+        bRoute('GET', '/api/repos/confidence'),
+        bRoute('GET', '/api/portfolio/anomalies'),
+      ],
+      frontendApiCalls:       [],
+      endpointInventory:      [],
+      previousLinkedEndpoints: [prevLinked('GET', '/api/portfolio/anomalies')],
+    });
+    const cov = r.coverage;
+    expect(cov.navigationOrphanCount + cov.unlinkedApiCount + cov.disconnectedApiCount)
+      .toBe(cov.orphanedBackendRouteCount);
+  });
+
+  test('without previousLinkedEndpoints all /api/ orphans are "unlinked"', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes: [
+        bRoute('GET', '/api/repos/confidence'),
+        bRoute('GET', '/api/portfolio/anomalies'),
+      ],
+      frontendApiCalls:  [],
+      endpointInventory: [],
+    });
+    const types = r.orphanedBackendRoutes.map(function(rt) { return rt.orphanType; });
+    expect(types.every(function(t) { return t === 'unlinked'; })).toBe(true);
+  });
+
+  test('coverage contains all three new count fields', () => {
+    const r = linkFrontendBackendApis({ backendRoutes: [], frontendApiCalls: [], endpointInventory: [] });
+    expect(r.coverage).toHaveProperty('navigationOrphanCount');
+    expect(r.coverage).toHaveProperty('unlinkedApiCount');
+    expect(r.coverage).toHaveProperty('disconnectedApiCount');
+  });
+
+  test('/auth/ path orphaned route has orphanType "navigation"', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/auth/github'), bRoute('GET', '/auth/github/callback'), bRoute('POST', '/auth/logout')],
+      frontendApiCalls: [],
+      endpointInventory: [],
+    });
+    r.orphanedBackendRoutes.forEach(function(rt) {
+      expect(rt.orphanType).toBe('navigation');
+    });
+  });
+});
+
+// ── Classification-aware scoring ──────────────────────────────────────────────
+
+describe('linkFrontendBackendApis — classification-aware scoring', () => {
+
+  test('navigation orphan excluded from denominator — score higher than if treated as unlinked', () => {
+    // 1 linked API + 1 navigation orphan (/dashboard)
+    // apiBackendCount = 2 - 1 = 1 → classifiedBackendCovPct = 100%
+    // score = round(100*0.6 + 100*0.3 - 0 - 0) = 90
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/dashboard')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+    });
+    expect(r.linkageScore).toBe(90);
+  });
+
+  test('no navigation orphans — denominator unchanged, score same as before', () => {
+    // 1 linked + 1 unlinked /api/ → navigationOrphanCount = 0
+    // apiBackendCount = 2, classifiedBackendCovPct = 50%
+    // score = round(100*0.6 + 50*0.3) = 75
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/api/internal')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+    });
+    expect(r.linkageScore).toBe(75);
+  });
+
+  test('all routes are navigation (apiBackendCount = 0) — falls back gracefully, no crash', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/dashboard'), bRoute('GET', '/auth/login')],
+      frontendApiCalls: [],
+      endpointInventory: [],
+    });
+    expect(Number.isFinite(r.linkageScore)).toBe(true);
+    expect(['integrated', 'partial', 'weak', 'unknown']).toContain(r.linkageLevel);
+  });
+
+  test('disconnectedApiCount = 1 — penalty of 2 applied to linkageScore', () => {
+    // 1 linked + 1 disconnected /api/ route
+    // apiBackendCount = 2, classifiedBackendCovPct = 50%
+    // disconnectedPenalty = min(8, 1*2) = 2
+    // score = round(100*0.6 + 50*0.3 - 0 - 2) = round(73) = 73
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/api/items')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+      previousLinkedEndpoints: [{ method: 'GET', path: '/api/items' }],
+    });
+    expect(r.coverage.disconnectedApiCount).toBe(1);
+    expect(r.linkageScore).toBe(73);
+  });
+
+  test('disconnectedApiCount >= 4 — penalty capped at 8', () => {
+    // 1 linked + 4 disconnected → disconnectedPenalty = min(8, 8) = 8 (exactly at cap)
+    // 1 linked + 10 disconnected → disconnectedPenalty = min(8, 20) = 8 (over cap, still 8)
+    const prevLinked = [
+      { method: 'GET', path: '/api/a' }, { method: 'GET', path: '/api/b' },
+      { method: 'GET', path: '/api/c' }, { method: 'GET', path: '/api/d' },
+      { method: 'GET', path: '/api/e' }, { method: 'GET', path: '/api/f' },
+      { method: 'GET', path: '/api/g' }, { method: 'GET', path: '/api/h' },
+      { method: 'GET', path: '/api/i' }, { method: 'GET', path: '/api/j' },
+    ];
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), ...prevLinked.map(e => bRoute(e.method, e.path))],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+      previousLinkedEndpoints: prevLinked,
+    });
+    expect(r.coverage.disconnectedApiCount).toBe(10);
+    // score = round(100*0.6 + round(1/11*100)*0.3 - 8) = round(60 + 9*0.3 - 8) = round(54.7) = 55
+    expect(r.linkageScore).toBe(55);
+  });
+
+  test('disconnectedApiCount = 0 — no extra penalty, score matches base formula', () => {
+    // 1 linked + 1 unlinked (never in previousLinkedEndpoints) → no disconnected penalty
+    // score = round(100*0.6 + 50*0.3) = 75
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/api/other')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+      previousLinkedEndpoints: [],
+    });
+    expect(r.coverage.disconnectedApiCount).toBe(0);
+    expect(r.linkageScore).toBe(75);
+  });
+
+  test('navigation orphan scores 15 pts higher than same-sized /api/ unlinked orphan', () => {
+    const rNav = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/dashboard')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+    });
+    const rUnlinked = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/api/internal')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+    });
+    // nav → 90, unlinked → 75
+    expect(rNav.linkageScore - rUnlinked.linkageScore).toBe(15);
+  });
+
+  test('linkageScore is an integer after classification-aware adjustments', () => {
+    const r = linkFrontendBackendApis({
+      backendRoutes:    [bRoute('GET', '/api/users'), bRoute('GET', '/dashboard'), bRoute('GET', '/api/items')],
+      frontendApiCalls: [fCall('GET', '/api/users')],
+      endpointInventory: [],
+      previousLinkedEndpoints: [{ method: 'GET', path: '/api/items' }],
+    });
+    expect(Number.isInteger(r.linkageScore)).toBe(true);
+  });
+
+});

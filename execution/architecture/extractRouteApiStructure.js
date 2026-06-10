@@ -299,6 +299,13 @@ const FETCH_TMPL_RE = /\bfetch\s*\(\s*`((?:\\.|[^`\\])*)`/gs;
 // between the opening brace and the method: property.
 const FETCH_OPTS_RE = /^\s*,\s*\{(?:[^{}]|\{[^{}]*\})*?method\s*:\s*['"`]([A-Za-z]+)['"`]/s;
 
+// fetch('PREFIX' + EXPR + 'SUFFIX', opts) — string-concatenation paths.
+// EXPR must contain no string literals (single/double quotes), covering patterns like
+// fetch('/api/repos/' + encodeURIComponent(String(id)) + '/architecture', opts).
+// Group 1: prefix (e.g. '/api/repos/'), Group 2: suffix (e.g. '/architecture'),
+// Group 3: optional options object for method detection.
+const FETCH_CONCAT_RE = /\bfetch\s*\(\s*'(\/[^'\\]*)'\s*\+\s*[^'"]*?\+\s*'([^'\\]*)'\s*(,\s*\{(?:[^{}]|\{[^{}]*\})*\})?/gs;
+
 // axios.METHOD('/path')  apiClient.METHOD('/path')
 const AXIOS_RE = /\b(axios|apiClient)\s*\.\s*(get|post|put|delete|patch|head|options)\s*\(\s*(['"`])((?:\\.|[^\\])*?)\3/gis;
 const AXIOS_TMPL_RE = /\b(axios|apiClient)\s*\.\s*(get|post|put|delete|patch|head|options)\s*\(\s*`((?:\\.|[^`])*?)`/gis;
@@ -320,9 +327,26 @@ function _extractFrontendCalls(filePath, src) {
 
   let m;
 
-  // fetch with single-quoted URL
+  // fetch with string concatenation: fetch('PREFIX' + expr + 'SUFFIX', opts).
+  // Runs before FETCH_SQ_RE so we can skip these positions — FETCH_SQ_RE would otherwise
+  // emit only the truncated prefix (e.g. '/api/repos') instead of the full parameterised path.
+  const concatPositions = new Set();
+  FETCH_CONCAT_RE.lastIndex = 0;
+  while ((m = FETCH_CONCAT_RE.exec(stripped)) !== null) {
+    concatPositions.add(m.index);
+    const prefix = m[1].replace(/\/$/, ''); // strip trailing slash from prefix
+    const suffix = m[2];                    // e.g. '/architecture'
+    const method = _extractMethod(m[3]) || 'GET';
+    const path   = _normRoutePath(prefix + '/:_p' + suffix);
+    if (path.startsWith('/')) {
+      calls.push({ method, path, file: filePath, client: 'fetch' });
+    }
+  }
+
+  // fetch with single-quoted URL (skip positions already consumed by FETCH_CONCAT_RE)
   FETCH_SQ_RE.lastIndex = 0;
   while ((m = FETCH_SQ_RE.exec(stripped)) !== null) {
+    if (concatPositions.has(m.index)) continue;
     const rawPath = m[1];
     if (!rawPath.startsWith('/')) continue;
     const rest   = stripped.slice(m.index + m[0].length);
@@ -502,10 +526,13 @@ function extractRouteApiStructure(params) {
     const nxt = _extractNextRoutes(f.path, f.content);
     for (const nr of nxt) nextRoutes.push(nr);
 
-    // Express / Fastify routes
-    const { routes, handlers } = _extractExpressRoutes(f.path, f.content);
-    for (const rt of routes)   backendRoutes.push(rt);
-    for (const h  of handlers) routeHandlers.push(h);
+    // Express / Fastify routes — skip Markdown files; code blocks in documentation
+    // are not real route registrations and would produce false positives.
+    if (!f.path.endsWith('.md')) {
+      const { routes, handlers } = _extractExpressRoutes(f.path, f.content);
+      for (const rt of routes)   backendRoutes.push(rt);
+      for (const h  of handlers) routeHandlers.push(h);
+    }
 
     // Frontend API calls
     const calls = _extractFrontendCalls(f.path, f.content);

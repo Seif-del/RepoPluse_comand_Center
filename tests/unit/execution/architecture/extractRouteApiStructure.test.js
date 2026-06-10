@@ -1080,3 +1080,154 @@ describe('extractRouteApiStructure — output shape', () => {
     expect(c).toHaveProperty('client');
   });
 });
+
+// ── Markdown false-positive prevention ───────────────────────────────────────
+
+describe('extractRouteApiStructure — Markdown route code blocks are not backend routes', () => {
+  const mdContent = [
+    '# API Reference',
+    '',
+    'Register a new user:',
+    '',
+    '```js',
+    "app.post('/api/users', createUser);",
+    "app.get('/api/users/:id', getUser);",
+    "app.delete('/api/users/:id', deleteUser);",
+    '```',
+    '',
+    'Send a notification:',
+    '',
+    '```js',
+    "app.post('/api/notifications', sendNotification);",
+    '```',
+  ].join('\n');
+
+  test('Markdown code-block routes produce zero backend routes', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('docs/api-reference.md', mdContent)],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+  });
+
+  test('Markdown code-block routes do not appear in unusedBackendRoutes', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('docs/api-reference.md', mdContent)],
+    });
+    expect(r.unusedBackendRoutes).toHaveLength(0);
+  });
+
+  test('real .js route file alongside Markdown still extracts its routes', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('docs/api-reference.md', mdContent),
+        makeFile('routes/users.js', "app.get('/api/live', handler);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/live' && rt.method === 'GET');
+    expect(route).toBeDefined();
+    expect(r.backendRoutes).toHaveLength(1);
+  });
+
+  test('Markdown file with routes does not inflate orphanedBackendRouteCount', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('docs/api-reference.md', mdContent),
+        makeFile('frontend/app.js', "fetch('/api/live')"),
+        makeFile('routes/users.js', "app.get('/api/live', handler);"),
+      ],
+    });
+    // /api/live is called and served — only route present
+    expect(r.unusedBackendRoutes).toHaveLength(0);
+  });
+});
+
+// ── String-concatenation fetch extraction ────────────────────────────────────
+
+describe('extractRouteApiStructure — concatenated fetch calls resolve to parameterised paths', () => {
+  test('fetch with single-segment suffix extracts correct parameterised path', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/dashboard.js',
+        "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture', { credentials: 'include' })")],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/:_p/architecture');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('GET');
+  });
+
+  test('fetch with multi-segment suffix extracts full parameterised path', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/dashboard.js',
+        "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture/forecast', { credentials: 'include' })")],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/:_p/architecture/forecast');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('GET');
+  });
+
+  test('POST method is detected from options object in concatenated fetch', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/dashboard.js',
+        "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/change-risk', { method: 'POST', credentials: 'include' })")],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/:_p/change-risk');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('POST');
+  });
+
+  test('truncated prefix /api/repos is NOT emitted as a separate call', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/dashboard.js',
+        "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture', { credentials: 'include' })")],
+    });
+    const truncated = r.frontendApiCalls.filter(c => c.path === '/api/repos');
+    expect(truncated).toHaveLength(0);
+  });
+
+  test('all four dashboard concatenated calls extract without the truncated duplicate', () => {
+    const src = [
+      "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture/forecast', { credentials: 'include' })",
+      "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture', { credentials: 'include' })",
+      "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/remediation', { credentials: 'include' })",
+      "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/change-risk', { method: 'POST', credentials: 'include' })",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('frontend/dashboard.html', src)] });
+    const paths = r.frontendApiCalls.map(c => c.method + ':' + c.path).sort();
+    expect(paths).toContain('GET:/api/repos/:_p/architecture');
+    expect(paths).toContain('GET:/api/repos/:_p/architecture/forecast');
+    expect(paths).toContain('GET:/api/repos/:_p/remediation');
+    expect(paths).toContain('POST:/api/repos/:_p/change-risk');
+    expect(paths.filter(p => p === 'GET:/api/repos')).toHaveLength(0);
+  });
+
+  test('concatenated fetch call links to matching prefixed backend route via linkFrontendBackendApis', () => {
+    // extractRouteApiStructure uses exact-key matching for unusedBackendRoutes;
+    // param-masked linking happens in linkFrontendBackendApis. Test the full pipeline.
+    const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('frontend/dashboard.html',
+          "fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/architecture', { credentials: 'include' })"),
+        makeFile('backend/server.js',
+          "const repoRoutes = require('./routes/repoRoutes');\napp.use('/api/repos', repoRoutes);"),
+        makeFile('backend/routes/repoRoutes.js',
+          "router.get('/:id/architecture', getArchitecture);"),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:    r.backendRoutes,
+      frontendApiCalls: r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    const orphaned = linkage.orphanedBackendRoutes.find(rt => rt.path === '/api/repos/:id/architecture');
+    expect(orphaned).toBeUndefined();
+  });
+
+  test('non-concatenated fetch call on same route is unaffected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/app.js', "fetch('/api/users')")],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/users');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('GET');
+  });
+});

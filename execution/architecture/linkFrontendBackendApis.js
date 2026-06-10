@@ -60,6 +60,20 @@ function _pathMatches(pA, pB) {
   return _normAndMask(pA) === _normAndMask(pB);
 }
 
+// ── Orphan classification ─────────────────────────────────────────────────────
+// Classifies an orphaned backend route into one of three types:
+//   'navigation'  — path does not start with /api/: page route, OAuth flow, admin trigger
+//   'disconnected'— /api/ route whose param-masked path was in the previous snapshot's
+//                   linkedEndpoints (formerly connected, now detached from frontend)
+//   'unlinked'    — /api/ route with no evidence of prior frontend connection
+
+function _classifyOrphanedRoute(route, prevLinkedSet) {
+  if (!route.path.startsWith('/api/')) return 'navigation';
+  const key = route.method.toUpperCase() + ':' + _paramMask(_normPath(route.path));
+  if (prevLinkedSet.has(key)) return 'disconnected';
+  return 'unlinked';
+}
+
 // ── Core linkage engine ───────────────────────────────────────────────────────
 
 function _buildLinkage(backendRoutes, frontendApiCalls) {
@@ -203,12 +217,14 @@ function _buildLinkage(backendRoutes, frontendApiCalls) {
 
 // ── Score and level ───────────────────────────────────────────────────────────
 
-function _score(frontendCovPct, backendCovPct, mismatchCount, totalFrontend) {
+function _score(frontendCovPct, backendCovPct, mismatchCount, totalFrontend, disconnectedApiCount) {
   // mismatch penalty: each mismatch costs proportional weight capped at 10 points
   const mismatchPenalty = totalFrontend > 0
     ? Math.min(10, (mismatchCount / totalFrontend) * 10)
     : 0;
-  const raw = frontendCovPct * 0.6 + backendCovPct * 0.3 - mismatchPenalty;
+  // disconnected penalty: 2 pts per formerly-connected API route severed from frontend, capped at 8
+  const disconnectedPenalty = Math.min(8, (disconnectedApiCount || 0) * 2.0);
+  const raw = frontendCovPct * 0.6 + backendCovPct * 0.3 - mismatchPenalty - disconnectedPenalty;
   return Math.max(0, Math.min(100, Math.round(raw)));
 }
 
@@ -270,20 +286,36 @@ function _summary(linked, unresolved, orphaned, mismatches, level, score) {
  * Link frontend API calls to backend routes.
  * Pure function — no I/O, no mutation of input.
  *
- * @param {{ backendRoutes: Array, frontendApiCalls: Array, endpointInventory: Array }} [params]
+ * @param {{ backendRoutes: Array, frontendApiCalls: Array, endpointInventory: Array,
+ *           previousLinkedEndpoints?: Array<{method, path}> }} [params]
  */
 function linkFrontendBackendApis(params) {
   const backendRoutes    = (params && Array.isArray(params.backendRoutes))    ? params.backendRoutes    : [];
   const frontendApiCalls = (params && Array.isArray(params.frontendApiCalls)) ? params.frontendApiCalls : [];
 
+  // Build a set of param-masked METHOD:path keys from the previous snapshot's linked
+  // endpoints. Used to classify orphaned routes as 'disconnected' vs 'unlinked'.
+  const prevLinkedRaw = (params && Array.isArray(params.previousLinkedEndpoints))
+    ? params.previousLinkedEndpoints : [];
+  const prevLinkedSet = new Set(
+    prevLinkedRaw.map(function(e) {
+      return e.method.toUpperCase() + ':' + _paramMask(_normPath(e.path));
+    })
+  );
+
   const {
     linkedEndpoints,
     unresolvedFrontendCalls,
-    orphanedBackendRoutes,
+    orphanedBackendRoutes: rawOrphans,
     methodMismatches,
     linkedFrontendIdxs,
     linkedBackendIdxs,
   } = _buildLinkage(backendRoutes, frontendApiCalls);
+
+  // Classify each orphaned route and add orphanType field
+  const orphanedBackendRoutes = rawOrphans.map(function(rt) {
+    return Object.assign({}, rt, { orphanType: _classifyOrphanedRoute(rt, prevLinkedSet) });
+  });
 
   // Coverage
   const frontendCallCount        = frontendApiCalls.length;
@@ -293,6 +325,10 @@ function linkFrontendBackendApis(params) {
   const unresolvedFrontendCallCount = unresolvedFrontendCalls.length;
   const orphanedBackendRouteCount   = orphanedBackendRoutes.length;
   const methodMismatchCount         = methodMismatches.length;
+
+  const navigationOrphanCount = orphanedBackendRoutes.filter(function(rt) { return rt.orphanType === 'navigation';   }).length;
+  const unlinkedApiCount      = orphanedBackendRoutes.filter(function(rt) { return rt.orphanType === 'unlinked';     }).length;
+  const disconnectedApiCount  = orphanedBackendRoutes.filter(function(rt) { return rt.orphanType === 'disconnected'; }).length;
 
   const frontendCoveragePercent = frontendCallCount > 0
     ? Math.round((linkedFrontendCallCount  / frontendCallCount) * 100)
@@ -311,10 +347,23 @@ function linkFrontendBackendApis(params) {
     methodMismatchCount,
     frontendCoveragePercent,
     backendCoveragePercent,
+    navigationOrphanCount,
+    unlinkedApiCount,
+    disconnectedApiCount,
   };
 
   const hasAny = frontendCallCount > 0 || backendRouteCount > 0;
-  const linkageScore = hasAny ? _score(frontendCoveragePercent, backendCoveragePercent, methodMismatchCount, frontendCallCount) : 0;
+
+  // Exclude navigation orphans from the backend coverage denominator so page
+  // routes, OAuth flows, and admin triggers don't dilute the API linkage score.
+  const apiBackendCount = backendRouteCount - navigationOrphanCount;
+  const classifiedBackendCovPct = apiBackendCount > 0
+    ? Math.round((linkedBackendRouteCount / apiBackendCount) * 100)
+    : backendCoveragePercent;
+
+  const linkageScore = hasAny
+    ? _score(frontendCoveragePercent, classifiedBackendCovPct, methodMismatchCount, frontendCallCount, disconnectedApiCount)
+    : 0;
   const linkageLevel = _level(linkageScore, hasAny);
 
   const recommendations = _recommendations(unresolvedFrontendCalls, orphanedBackendRoutes, methodMismatches, linkageLevel);

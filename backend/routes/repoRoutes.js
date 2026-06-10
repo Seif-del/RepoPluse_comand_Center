@@ -1098,12 +1098,14 @@ router.get('/:id/architecture', async (req, res, next) => {
     // ── Stage 5: run architecture analysis pipeline ───────────────────────────
     const snapshot = buildRepositoryArchitectureSnapshot({
       repoId,
-      repoName:      repo.fullName,
+      repoName:               repo.fullName,
       defaultBranch,
-      snapshotAt:    new Date().toISOString(),
+      snapshotAt:             new Date().toISOString(),
       files,
+      previousLinkedEndpoints: cachedRow
+        ? ((cachedRow.snapshot.apiLinkage || {}).linkedEndpoints || [])
+        : [],
     });
-
     // ── Stage 6: persist snapshot when it contains real files ────────────────
     if (snapshot.metrics && snapshot.metrics.totalFiles > 0) {
       await db.query(

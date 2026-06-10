@@ -5028,6 +5028,13 @@
             + '<div class="pf-count-label">Orphaned Routes</div></div>';
         }
         html += '</div>';
+        if (m.orphanedBackendRouteCount > 0) {
+          html += '<div style="font-size:0.77rem;color:var(--text-secondary);margin-bottom:6px;">'
+            + 'Navigation/Internal: '   + esc(String(m.navigationOrphanCount  != null ? m.navigationOrphanCount  : '—'))
+            + ' &nbsp;&middot;&nbsp; Unlinked APIs: '      + esc(String(m.unlinkedApiCount      != null ? m.unlinkedApiCount      : '—'))
+            + ' &nbsp;&middot;&nbsp; Disconnected APIs: '  + esc(String(m.disconnectedApiCount  != null ? m.disconnectedApiCount  : '—'))
+            + '</div>';
+        }
       }
 
       if (mismatches > 0) {

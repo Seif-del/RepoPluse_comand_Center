@@ -767,3 +767,90 @@ describe('buildRepositoryArchitectureSnapshot — topFindings deduplication', ()
     expect(new Set(normalized).size).toBe(normalized.length);
   });
 });
+
+// ── Large frontend HTML regression (dashboard.html at 368 KB) ─────────────────
+// Regression: frontend/dashboard.html (~360 KB) was excluded by a 200 KB per-file
+// limit in fetchRepositoryFiles, causing 13+ backend routes to be falsely classified
+// as orphaned. Limit raised to 400 KB. This suite verifies the architecture pipeline
+// processes a large frontend HTML file and extracts its fetch() API calls end-to-end.
+
+function largeDashboardFiles() {
+  // 368 KB HTML file with one fetch() call, representative of frontend/dashboard.html.
+  const padding = 'x'.repeat(368 * 1024);
+  const dashboardContent =
+    '<!DOCTYPE html><html><body><script>\n' +
+    padding +
+    "\nfetch('/api/repos').then(function(r){return r.json();});\n" +
+    '</script></body></html>';
+
+  return [
+    makeFile('frontend/dashboard.html', dashboardContent, 'html'),
+    makeFile('routes/repos.js',
+      "router.get('/api/repos', function(req, res) { res.json([]); });"),
+    makeFile('services/RepoService.js', "module.exports = { list: function() { return []; } };"),
+    makeFile('tests/stub.test.js', "test('x', function() {});"),
+  ];
+}
+
+describe('buildRepositoryArchitectureSnapshot — large frontend HTML (dashboard.html regression)', () => {
+  test('large HTML frontend file is counted in totalFiles', function() {
+    var files = largeDashboardFiles();
+    var r = buildRepositoryArchitectureSnapshot({ files: files });
+    expect(r.metrics.totalFiles).toBe(files.length);
+  });
+
+  test('large HTML frontend file contributes at least one frontend API call', function() {
+    var r = buildRepositoryArchitectureSnapshot({ files: largeDashboardFiles() });
+    expect(r.metrics.frontendApiCallCount).toBeGreaterThan(0);
+  });
+
+  test('fetch() call from large HTML file links to matching backend route', function() {
+    var r = buildRepositoryArchitectureSnapshot({ files: largeDashboardFiles() });
+    // /api/repos is declared in routes/repos.js and called by dashboard.html.
+    // It must appear as a linked endpoint, not an orphaned route.
+    expect(r.metrics.linkedEndpointCount).toBeGreaterThan(0);
+    expect(r.metrics.orphanedBackendRouteCount).toBeLessThan(r.metrics.backendRouteCount);
+  });
+});
+
+// ── Classification-aware orphan metrics ──────────────────────────────────────
+
+describe('buildRepositoryArchitectureSnapshot — classification-aware orphan metrics', () => {
+  var apiFile = makeFile('backend/routes/api.js', "router.get('/api/never-fronted', handler);");
+
+  test('new metric fields are present in metrics output', function() {
+    var r = buildRepositoryArchitectureSnapshot({ files: [apiFile] });
+    expect(r.metrics).toHaveProperty('navigationOrphanCount');
+    expect(r.metrics).toHaveProperty('unlinkedApiCount');
+    expect(r.metrics).toHaveProperty('disconnectedApiCount');
+  });
+
+  test('count invariant: orphanedBackendRouteCount equals sum of three new metrics', function() {
+    var navFile = makeFile('backend/server.js', "app.get('/dashboard', (req, res) => res.sendFile('x'));");
+    var r = buildRepositoryArchitectureSnapshot({ files: [apiFile, navFile] });
+    var m = r.metrics;
+    expect(m.navigationOrphanCount + m.unlinkedApiCount + m.disconnectedApiCount)
+      .toBe(m.orphanedBackendRouteCount);
+  });
+
+  test('previousLinkedEndpoints produces disconnectedApiCount > 0 when a linked route is now orphaned', function() {
+    var r = buildRepositoryArchitectureSnapshot({
+      files: [apiFile],
+      previousLinkedEndpoints: [{ method: 'GET', path: '/api/never-fronted' }],
+    });
+    expect(r.metrics.disconnectedApiCount).toBeGreaterThan(0);
+    expect(r.metrics.unlinkedApiCount).toBe(0);
+  });
+
+  test('without previousLinkedEndpoints disconnectedApiCount is zero', function() {
+    var r = buildRepositoryArchitectureSnapshot({ files: [apiFile] });
+    expect(r.metrics.disconnectedApiCount).toBe(0);
+  });
+
+  test('orphanedBackendRouteCount is preserved unchanged regardless of previousLinkedEndpoints', function() {
+    var withHistory    = buildRepositoryArchitectureSnapshot({ files: [apiFile], previousLinkedEndpoints: [{ method: 'GET', path: '/api/never-fronted' }] });
+    var withoutHistory = buildRepositoryArchitectureSnapshot({ files: [apiFile] });
+    expect(withHistory.metrics.orphanedBackendRouteCount)
+      .toBe(withoutHistory.metrics.orphanedBackendRouteCount);
+  });
+});

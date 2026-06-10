@@ -15,7 +15,7 @@
 //   - Skips secret file patterns (.env, .pem, .key, credentials, secrets)
 //   - Skips unsupported/binary extensions
 //   - Caps at 300 files total
-//   - Caps per-file content at 200 KB (decoded)
+//   - Caps per-file content at 400 KB (decoded)
 //   - Resilient to individual blob failures (Promise.allSettled)
 //   - Never executes code or writes to disk
 //   - Never includes access token in returned objects or thrown errors

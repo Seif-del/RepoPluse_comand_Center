@@ -152,6 +152,13 @@ function buildRepositoryArchitectureHtml(data) {
         + '<div class="pf-count-label">Orphaned Routes</div></div>';
     }
     html += '</div>';
+    if (m.orphanedBackendRouteCount > 0) {
+      html += '<div style="font-size:0.77rem;color:var(--text-secondary);margin-bottom:6px;">'
+        + 'Navigation/Internal: '   + esc(String(m.navigationOrphanCount  != null ? m.navigationOrphanCount  : '—'))
+        + ' &nbsp;&middot;&nbsp; Unlinked APIs: '      + esc(String(m.unlinkedApiCount      != null ? m.unlinkedApiCount      : '—'))
+        + ' &nbsp;&middot;&nbsp; Disconnected APIs: '  + esc(String(m.disconnectedApiCount  != null ? m.disconnectedApiCount  : '—'))
+        + '</div>';
+    }
   }
 
   if (mismatches > 0) {
@@ -446,6 +453,49 @@ describe('buildRepositoryArchitectureHtml — recommendations rendering', () => 
       }));
       expect(countArchRecs(html)).toBe(1);
       expect(html).toContain('Use event sourcing for audit trail.');
+    });
+
+  });
+
+  describe('orphaned route exposure breakdown', () => {
+
+    const withCoverage = (metricsOverrides) => minimalData({
+      metrics: Object.assign({ totalFiles: 10 }, metricsOverrides),
+      apiLinkage: { coverage: { frontendCallCoveragePercent: 80 } },
+    });
+
+    test('renders breakdown when orphanedBackendRouteCount > 0', () => {
+      const html = buildRepositoryArchitectureHtml(withCoverage({
+        orphanedBackendRouteCount: 26,
+        navigationOrphanCount:     9,
+        unlinkedApiCount:          17,
+        disconnectedApiCount:      0,
+      }));
+      expect(html).toContain('Navigation/Internal: 9');
+      expect(html).toContain('Unlinked APIs: 17');
+      expect(html).toContain('Disconnected APIs: 0');
+    });
+
+    test('does not render breakdown when orphanedBackendRouteCount is 0', () => {
+      const html = buildRepositoryArchitectureHtml(withCoverage({
+        orphanedBackendRouteCount: 0,
+        navigationOrphanCount:     0,
+        unlinkedApiCount:          0,
+        disconnectedApiCount:      0,
+      }));
+      expect(html).not.toContain('Navigation/Internal:');
+      expect(html).not.toContain('Unlinked APIs:');
+      expect(html).not.toContain('Disconnected APIs:');
+    });
+
+    test('shows em dash for missing sub-counts on old snapshots', () => {
+      const html = buildRepositoryArchitectureHtml(withCoverage({
+        orphanedBackendRouteCount: 5,
+        // navigationOrphanCount, unlinkedApiCount, disconnectedApiCount absent
+      }));
+      expect(html).toContain('Navigation/Internal: —');
+      expect(html).toContain('Unlinked APIs: —');
+      expect(html).toContain('Disconnected APIs: —');
     });
 
   });
