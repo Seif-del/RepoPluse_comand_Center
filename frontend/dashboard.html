@@ -4843,6 +4843,7 @@
         coupling_growth:           'COUPLING',
         api_regression:            'API REGRESSION',
         implementation_regression: 'IMPL REGRESSION',
+        version_change:            'VERSION CHANGE',
       };
 
       var SEV_CLASS = {
@@ -4864,10 +4865,22 @@
         var timeStr  = ev.snapshotAt
           ? new Date(ev.snapshotAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
           : '—';
+        var detail = '';
+        if (ev.type === 'version_change') {
+          var pa = ev.prevAnalyzerVersion || 'legacy';
+          var ca = ev.currAnalyzerVersion || 'legacy';
+          var ps = ev.prevScoringVersion  || 'legacy';
+          var cs = ev.currScoringVersion  || 'legacy';
+          var ds = 'font-size:0.70rem;color:var(--text-muted);margin-top:3px;';
+          detail += '<div style="' + ds + '">Analyzer: ' + esc(pa) + ' → ' + esc(ca) + '</div>';
+          detail += '<div style="' + ds + '">Scoring: '  + esc(ps) + ' → ' + esc(cs) + '</div>';
+          detail += '<div style="' + ds + '">Score comparison suppressed across this boundary</div>';
+        }
         html += '<div class="timeline-item">'
           + '<span class="' + esc(sevCls) + '">' + esc(badgeTxt) + '</span>'
           + '<div class="timeline-content">'
           + '<div class="timeline-desc">' + esc(ev.summary || '') + '</div>'
+          + detail
           + '</div>'
           + '<span class="timeline-time">' + esc(timeStr) + '</span>'
           + '</div>';

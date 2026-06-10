@@ -5,7 +5,13 @@
 // Jest node env — no DOM or browser required.
 
 // ── Minimal esc stub ─────────────────────────────────────────────────────────
-function esc(s) { return String(s); }
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 // ── buildArchTimelineHtml (copied verbatim from dashboard.html) ───────────────
 function buildArchTimelineHtml(fc) {
@@ -31,6 +37,7 @@ function buildArchTimelineHtml(fc) {
     coupling_growth:           'COUPLING',
     api_regression:            'API REGRESSION',
     implementation_regression: 'IMPL REGRESSION',
+    version_change:            'VERSION CHANGE',
   };
 
   var SEV_CLASS = {
@@ -52,10 +59,22 @@ function buildArchTimelineHtml(fc) {
     var timeStr  = ev.snapshotAt
       ? new Date(ev.snapshotAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       : '—';
+    var detail = '';
+    if (ev.type === 'version_change') {
+      var pa = ev.prevAnalyzerVersion || 'legacy';
+      var ca = ev.currAnalyzerVersion || 'legacy';
+      var ps = ev.prevScoringVersion  || 'legacy';
+      var cs = ev.currScoringVersion  || 'legacy';
+      var ds = 'font-size:0.70rem;color:var(--text-muted);margin-top:3px;';
+      detail += '<div style="' + ds + '">Analyzer: ' + esc(pa) + ' → ' + esc(ca) + '</div>';
+      detail += '<div style="' + ds + '">Scoring: '  + esc(ps) + ' → ' + esc(cs) + '</div>';
+      detail += '<div style="' + ds + '">Score comparison suppressed across this boundary</div>';
+    }
     html += '<div class="timeline-item">'
       + '<span class="' + esc(sevCls) + '">' + esc(badgeTxt) + '</span>'
       + '<div class="timeline-content">'
       + '<div class="timeline-desc">' + esc(ev.summary || '') + '</div>'
+      + detail
       + '</div>'
       + '<span class="timeline-time">' + esc(timeStr) + '</span>'
       + '</div>';
@@ -326,5 +345,76 @@ describe('buildArchTimelineHtml — no operational wording', () => {
     test(label + ': no "CI/CD" wording', () => {
       expect(buildArchTimelineHtml(fc).toLowerCase()).not.toContain('ci/cd');
     });
+  });
+});
+
+// ── buildArchTimelineHtml — version_change events ─────────────────────────────
+
+describe('buildArchTimelineHtml — version_change events', () => {
+  function makeVersionChange(overrides) {
+    return Object.assign({
+      type:                 'version_change',
+      severity:             'low',
+      snapshotAt:           '2026-03-01T12:00:00Z',
+      summary:              'Analyzer or scoring version changed — score comparisons across this boundary may not reflect repository changes.',
+      prevAnalyzerVersion:  'legacy',
+      currAnalyzerVersion:  '1.0',
+      prevScoringVersion:   'legacy',
+      currScoringVersion:   '1.0',
+    }, overrides);
+  }
+
+  test('version_change type renders VERSION CHANGE badge label', () => {
+    const fc   = makeFc({ driftEvents: [makeVersionChange()] });
+    const html = buildArchTimelineHtml(fc);
+    expect(html).toContain('VERSION CHANGE');
+  });
+
+  test('renders Analyzer version transition', () => {
+    const fc   = makeFc({ driftEvents: [makeVersionChange({ prevAnalyzerVersion: 'legacy', currAnalyzerVersion: '1.0' })] });
+    const html = buildArchTimelineHtml(fc);
+    expect(html).toContain('Analyzer: legacy');
+    expect(html).toContain('1.0');
+  });
+
+  test('renders Scoring version transition', () => {
+    const fc   = makeFc({ driftEvents: [makeVersionChange({ prevScoringVersion: 'legacy', currScoringVersion: '1.0' })] });
+    const html = buildArchTimelineHtml(fc);
+    expect(html).toContain('Scoring: legacy');
+    expect(html).toContain('1.0');
+  });
+
+  test('renders suppression notice', () => {
+    const fc   = makeFc({ driftEvents: [makeVersionChange()] });
+    const html = buildArchTimelineHtml(fc);
+    expect(html).toContain('Score comparison suppressed across this boundary');
+  });
+
+  test('falls back to legacy when version fields are absent', () => {
+    const ev = { type: 'version_change', severity: 'low', summary: 'Version changed.' };
+    const fc = makeFc({ driftEvents: [ev] });
+    expect(() => buildArchTimelineHtml(fc)).not.toThrow();
+    const html = buildArchTimelineHtml(fc);
+    expect(html).toContain('Analyzer: legacy');
+    expect(html).toContain('Scoring: legacy');
+  });
+
+  test('non-version_change event does not show suppression notice', () => {
+    const fc   = makeFc({ driftEvents: [makeEvent({ type: 'score_drop', severity: 'high' })] });
+    const html = buildArchTimelineHtml(fc);
+    expect(html).not.toContain('Score comparison suppressed');
+  });
+
+  test('escapes XSS in prevAnalyzerVersion and currAnalyzerVersion', () => {
+    const fc = makeFc({
+      driftEvents: [makeVersionChange({
+        prevAnalyzerVersion: '<script>bad</script>',
+        currAnalyzerVersion: '<img src=x>',
+      })],
+    });
+    const html = buildArchTimelineHtml(fc);
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;script&gt;');
   });
 });
