@@ -24,6 +24,8 @@ const { deduplicateRecommendations }         = require('./deduplicateRecommendat
 
 const RECOMMENDATIONS_MAX = 5;
 const TOP_FINDINGS_MAX    = 5;
+const ANALYZER_VERSION    = '1.0';
+const SCORING_VERSION     = '1.0';
 
 // ── Structure presence ────────────────────────────────────────────────────────
 
@@ -302,6 +304,8 @@ function buildRepositoryArchitectureSnapshot(params) {
     repoName,
     defaultBranch,
     snapshotAt,
+    analyzerVersion: ANALYZER_VERSION,
+    scoringVersion:  SCORING_VERSION,
     architectureHealthScore,
     architectureHealthLevel,
     confidenceLevel,

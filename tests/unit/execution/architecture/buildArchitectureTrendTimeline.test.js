@@ -586,6 +586,88 @@ describe('drift events — score_drop / score_gain', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// 10b. Version boundary — scoreTimeline.versionBoundary and version_change events
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('version boundary — scoreTimeline and drift events', () => {
+  // makeSnap destructuring drops extra keys — build versioned snaps directly
+  function vSnap(isoDate, score, analyzerVersion, scoringVersion) {
+    return {
+      snapshotAt:             isoDate,
+      architectureHealthScore: score,
+      architectureHealthLevel: score >= 85 ? 'healthy' : score >= 70 ? 'watch' : score >= 45 ? 'weak' : 'risky',
+      analyzerVersion,
+      scoringVersion,
+      metrics: {},
+    };
+  }
+
+  test('scoreTimeline[0].versionBoundary is always false', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 75, '1.0', '1.0')];
+    expect(buildArchitectureTrendTimeline({ snapshots: snaps }).scoreTimeline[0].versionBoundary).toBe(false);
+  });
+
+  test('scoreTimeline[i].versionBoundary is false when versions match', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 75, '1.0', '1.0')];
+    expect(buildArchitectureTrendTimeline({ snapshots: snaps }).scoreTimeline[1].versionBoundary).toBe(false);
+  });
+
+  test('scoreTimeline[i].versionBoundary is true when analyzerVersion differs', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 75, '2.0', '1.0')];
+    expect(buildArchitectureTrendTimeline({ snapshots: snaps }).scoreTimeline[1].versionBoundary).toBe(true);
+  });
+
+  test('scoreTimeline[i].versionBoundary is true when scoringVersion differs', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 75, '1.0', '2.0')];
+    expect(buildArchitectureTrendTimeline({ snapshots: snaps }).scoreTimeline[1].versionBoundary).toBe(true);
+  });
+
+  test('scoreTimeline[i].versionBoundary is true on legacy → versioned transition', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },  // no version → legacy
+      vSnap('2024-06-01T00:00:00Z', 60, '1.0', '1.0'),
+    ];
+    expect(buildArchitectureTrendTimeline({ snapshots: snaps }).scoreTimeline[1].versionBoundary).toBe(true);
+  });
+
+  test('version_change drift event emitted at version boundary', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },
+      vSnap('2024-06-01T00:00:00Z', 60, '1.0', '1.0'),
+    ];
+    const r  = buildArchitectureTrendTimeline({ snapshots: snaps });
+    const ev = r.driftEvents.find(function(e) { return e.type === 'version_change'; });
+    expect(ev).toBeDefined();
+    expect(ev.severity).toBe('low');
+    expect(ev.prevAnalyzerVersion).toBe('legacy');
+    expect(ev.currAnalyzerVersion).toBe('1.0');
+    expect(ev.prevScoringVersion).toBe('legacy');
+    expect(ev.currScoringVersion).toBe('1.0');
+  });
+
+  test('score_drop NOT emitted when delta <= -10 but version boundary present', () => {
+    const snaps = [
+      { snapshotAt: '2024-01-01T00:00:00Z', architectureHealthScore: 80, metrics: {} },  // legacy
+      vSnap('2024-06-01T00:00:00Z', 60, '1.0', '1.0'),
+    ];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    expect(r.driftEvents.find(function(e) { return e.type === 'score_drop'; })).toBeUndefined();
+  });
+
+  test('score_drop IS emitted when delta <= -10 and versions match', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 60, '1.0', '1.0')];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    expect(r.driftEvents.find(function(e) { return e.type === 'score_drop'; })).toBeDefined();
+  });
+
+  test('version_change NOT emitted when versions are same', () => {
+    const snaps = [vSnap('2024-01-01T00:00:00Z', 80, '1.0', '1.0'), vSnap('2024-06-01T00:00:00Z', 70, '1.0', '1.0')];
+    const r = buildArchitectureTrendTimeline({ snapshots: snaps });
+    expect(r.driftEvents.find(function(e) { return e.type === 'version_change'; })).toBeUndefined();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 11. Drift events — level_degraded / level_improved
 // ═════════════════════════════════════════════════════════════════════════════
 

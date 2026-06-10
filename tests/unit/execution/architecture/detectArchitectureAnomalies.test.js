@@ -298,6 +298,50 @@ describe('detectArchitectureAnomalies — score_collapse', function() {
   });
 });
 
+// ── Version boundary suppression ──────────────────────────────────────────────
+
+describe('detectArchitectureAnomalies — score_collapse version boundary suppression', function() {
+  function makeTDWithBoundary(entries) {
+    return {
+      scoreTimeline: entries,
+      couplingTimeline: [],
+      apiIntegrationTimeline: [],
+      implementationTimeline: [],
+      driftEvents: [],
+      summary: '',
+      recommendations: [],
+    };
+  }
+
+  test('score_collapse NOT fired when versionBoundary is true, even if delta <= -20', function() {
+    const tl = [
+      { snapshotAt: '2024-01-01T00:00:00Z', score: 80, deltaFromPrevious: 0,   deltaFromFirst: 0,   versionBoundary: false },
+      { snapshotAt: '2024-06-01T00:00:00Z', score: 55, deltaFromPrevious: -25, deltaFromFirst: -25, versionBoundary: true  },
+    ];
+    const r = detectArchitectureAnomalies({ timelineData: makeTDWithBoundary(tl) });
+    expect(r.anomalies.find(function(a) { return a.type === 'score_collapse'; })).toBeUndefined();
+  });
+
+  test('score_collapse IS fired when versionBoundary is false and delta <= -20', function() {
+    const tl = [
+      { snapshotAt: '2024-01-01T00:00:00Z', score: 80, deltaFromPrevious: 0,   deltaFromFirst: 0,   versionBoundary: false },
+      { snapshotAt: '2024-06-01T00:00:00Z', score: 55, deltaFromPrevious: -25, deltaFromFirst: -25, versionBoundary: false },
+    ];
+    const r = detectArchitectureAnomalies({ timelineData: makeTDWithBoundary(tl) });
+    expect(r.anomalies.find(function(a) { return a.type === 'score_collapse'; })).toBeDefined();
+  });
+
+  test('scoreCollapseCount is 0 when all large-delta intervals have versionBoundary true', function() {
+    const tl = [
+      { snapshotAt: '2024-01-01T00:00:00Z', score: 80, deltaFromPrevious: 0,   deltaFromFirst: 0,   versionBoundary: false },
+      { snapshotAt: '2024-06-01T00:00:00Z', score: 55, deltaFromPrevious: -25, deltaFromFirst: -25, versionBoundary: true  },
+      { snapshotAt: '2024-09-01T00:00:00Z', score: 20, deltaFromPrevious: -35, deltaFromFirst: -60, versionBoundary: true  },
+    ];
+    const r = detectArchitectureAnomalies({ timelineData: makeTDWithBoundary(tl) });
+    expect(r.patterns.scoreCollapseCount).toBe(0);
+  });
+});
+
 // ── Coupling spike ────────────────────────────────────────────────────────────
 
 describe('detectArchitectureAnomalies — coupling_spike', function() {

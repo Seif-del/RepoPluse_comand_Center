@@ -140,6 +140,24 @@ describe('buildRepositoryArchitectureSnapshot — empty input', () => {
 
 // ── Submodule outputs present ─────────────────────────────────────────────────
 
+describe('buildRepositoryArchitectureSnapshot — version metadata', () => {
+  test('snapshot includes analyzerVersion 1.0', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: backendOnlyFiles() });
+    expect(r.analyzerVersion).toBe('1.0');
+  });
+
+  test('snapshot includes scoringVersion 1.0', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: backendOnlyFiles() });
+    expect(r.scoringVersion).toBe('1.0');
+  });
+
+  test('analyzerVersion and scoringVersion present on null input', () => {
+    const r = buildRepositoryArchitectureSnapshot(null);
+    expect(r.analyzerVersion).toBe('1.0');
+    expect(r.scoringVersion).toBe('1.0');
+  });
+});
+
 describe('buildRepositoryArchitectureSnapshot — submodule outputs', () => {
   test('inventory has categories and architectureHints', () => {
     const r = buildRepositoryArchitectureSnapshot({ files: backendOnlyFiles() });

@@ -141,21 +141,24 @@ function _detectTimelineAnomalies(td) {
     const isLast = (i === n - 1);
     let intervalHit = false;
 
-    // Rule 2 — score_collapse
-    const delta     = _safeNum(scoreTimeline[i].deltaFromPrevious);
-    const currScore = _safeNum(scoreTimeline[i].score);
-    const prevScore = currScore - delta;
-    let collapseSev = null;
-    if (delta <= -35) {
-      patterns.scoreCollapseCount++;
-      intervalHit = true;
-      _update('score_collapse', 'critical');
-      collapseSev = 'critical';
-    } else if (delta <= -20) {
-      patterns.scoreCollapseCount++;
-      intervalHit = true;
-      _update('score_collapse', 'high');
-      collapseSev = 'high';
+    // Rule 2 — score_collapse (suppressed at version boundaries)
+    const delta        = _safeNum(scoreTimeline[i].deltaFromPrevious);
+    const vb           = scoreTimeline[i].versionBoundary === true;
+    const currScore    = _safeNum(scoreTimeline[i].score);
+    const prevScore    = currScore - delta;
+    let   collapseSev  = null;
+    if (!vb) {
+      if (delta <= -35) {
+        patterns.scoreCollapseCount++;
+        intervalHit = true;
+        _update('score_collapse', 'critical');
+        collapseSev = 'critical';
+      } else if (delta <= -20) {
+        patterns.scoreCollapseCount++;
+        intervalHit = true;
+        _update('score_collapse', 'high');
+        collapseSev = 'high';
+      }
     }
     if (collapseSev) {
       collapseEvents.push({

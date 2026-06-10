@@ -70,6 +70,14 @@ function _snapScore(snap, sub, key) {
   return typeof v === 'number' && isFinite(v) ? v : 0;
 }
 
+function _isVersionBoundary(prev, curr) {
+  const pa = (prev && prev.analyzerVersion) || 'legacy';
+  const ca = (curr && curr.analyzerVersion) || 'legacy';
+  const ps = (prev && prev.scoringVersion)  || 'legacy';
+  const cs = (curr && curr.scoringVersion)  || 'legacy';
+  return pa !== ca || ps !== cs;
+}
+
 // ── Risk signal extraction ────────────────────────────────────────────────────
 
 function _extractRiskSignals(snapshot) {
@@ -172,8 +180,24 @@ function _buildDriftEvents(sorted) {
     const resolvedRisks = Array.from(prevRisks).filter(function(s) { return !currRisks.has(s); });
     const currBoundaryViolTypes = _extractBoundaryViolationTypes(curr);
 
-    // 1. score_drop
-    if (delta <= -10) {
+    const isVersionBoundary = _isVersionBoundary(prev, curr);
+
+    // version_change — emitted before score events so reviewers can correlate
+    if (isVersionBoundary) {
+      events.push({
+        snapshotAt,
+        type:    'version_change',
+        severity: 'low',
+        summary: 'Analyzer or scoring version changed — score comparisons across this boundary may not reflect repository changes.',
+        prevAnalyzerVersion: (prev.analyzerVersion) || 'legacy',
+        currAnalyzerVersion: (curr.analyzerVersion) || 'legacy',
+        prevScoringVersion:  (prev.scoringVersion)  || 'legacy',
+        currScoringVersion:  (curr.scoringVersion)  || 'legacy',
+      });
+    }
+
+    // 1. score_drop — suppressed at version boundaries
+    if (!isVersionBoundary && delta <= -10) {
       let sev = 'low';
       if (delta <= -30)      sev = 'high';
       else if (delta <= -15) sev = 'medium';
@@ -445,6 +469,7 @@ function buildArchitectureTrendTimeline(params) {
       score,
       deltaFromPrevious: deltaFromPrev,
       deltaFromFirst:    score - firstScore,
+      versionBoundary:   i === 0 ? false : _isVersionBoundary(sorted[i - 1], snap),
     });
 
     // ── levelTransitions ──────────────────────────────────────────────────
