@@ -987,3 +987,334 @@ describe('buildTopRemediationActionsHtml — actionPlan fallback', () => {
     expect(html).not.toContain('Should not appear');
   });
 });
+
+// ── buildRecentRegressionsHtml (copied verbatim from dashboard.html) ──────────
+function buildRecentRegressionsHtml(fc, esc) {
+  var REGRESSION_TYPES = {
+    score_drop:                true,
+    level_degraded:            true,
+    api_regression:            true,
+    implementation_regression: true,
+    coupling_growth:           true,
+    new_risk:                  true,
+  };
+
+  var TYPE_LABEL = {
+    score_drop:                'SCORE DROP',
+    level_degraded:            'DEGRADED',
+    api_regression:            'API REGRESSION',
+    implementation_regression: 'IMPL REGRESSION',
+    coupling_growth:           'COUPLING',
+    new_risk:                  'NEW RISK',
+  };
+
+  var SEV_CLASS = {
+    high:   'severity-high',
+    medium: 'severity-medium',
+    low:    'severity-healthy',
+  };
+
+  if (!fc) {
+    return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+      + 'Architecture data not yet available — regression history will appear once architecture analysis completes.</p>';
+  }
+
+  var events = Array.isArray(fc.driftEvents) ? fc.driftEvents : [];
+
+  var regressions = events
+    .filter(function(ev) { return ev && REGRESSION_TYPES[ev.type]; })
+    .sort(function(a, b) {
+      var da = a.snapshotAt ? new Date(a.snapshotAt).getTime() : 0;
+      var db = b.snapshotAt ? new Date(b.snapshotAt).getTime() : 0;
+      return db - da;
+    })
+    .slice(0, 5);
+
+  if (!regressions.length) {
+    return '<p style="font-size:0.82rem;color:var(--text-muted);padding:6px 0;">'
+      + 'No regression events detected in available snapshots.</p>';
+  }
+
+  var h = '<div class="arch-sub-panel" style="margin-bottom:12px;">';
+  h += '<div class="arch-sub-label">Recent Regressions</div>';
+
+  regressions.forEach(function(ev) {
+    var sevCls = SEV_CLASS[ev.severity] || 'severity-unknown';
+    var label  = TYPE_LABEL[ev.type]    || esc(String(ev.type || 'EVENT').toUpperCase());
+    var timeStr = ev.snapshotAt
+      ? new Date(ev.snapshotAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '—';
+
+    var evidence = '';
+    if (ev.type === 'score_drop' && ev.prevScore != null && ev.currScore != null) {
+      evidence = esc(String(ev.prevScore)) + ' → ' + esc(String(ev.currScore));
+    } else if (ev.type === 'api_regression') {
+      var parts = [];
+      if (ev.unresolvedDelta != null && ev.unresolvedDelta !== 0)
+        parts.push('+' + esc(String(ev.unresolvedDelta)) + ' unresolved');
+      if (ev.mismatchDelta != null && ev.mismatchDelta !== 0)
+        parts.push('+' + esc(String(ev.mismatchDelta)) + ' mismatches');
+      if (parts.length) evidence = parts.join(', ');
+    }
+
+    h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px;">';
+    h += '<span class="aq-badge ' + sevCls + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;'
+      + 'letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
+      + esc(label) + '</span>';
+    if (evidence) {
+      h += '<span style="font-size:0.70rem;color:var(--text-muted);">' + evidence + '</span>';
+    }
+    h += '<span style="font-size:0.70rem;color:var(--text-muted);margin-left:auto;">' + esc(timeStr) + '</span>';
+    h += '</div>';
+    h += '<div style="font-size:0.80rem;color:var(--text-secondary);">' + esc(ev.summary || '') + '</div>';
+    h += '</div>';
+  });
+
+  h += '</div>';
+  return h;
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+function makeEv(overrides) {
+  return Object.assign({
+    type:       'score_drop',
+    severity:   'high',
+    snapshotAt: '2026-05-10T14:00:00Z',
+    summary:    'Architecture health score dropped by 20 points.',
+    prevScore:  75,
+    currScore:  55,
+  }, overrides);
+}
+
+describe('buildRecentRegressionsHtml — null/empty states', () => {
+  test('null fc returns "Architecture data not yet available" message', () => {
+    expect(buildRecentRegressionsHtml(null, esc)).toContain('Architecture data not yet available');
+  });
+
+  test('null fc does not return no-regression message', () => {
+    expect(buildRecentRegressionsHtml(null, esc)).not.toContain('No regression events detected');
+  });
+
+  test('fc with no driftEvents returns no-regression message', () => {
+    expect(buildRecentRegressionsHtml({ driftEvents: [] }, esc)).toContain('No regression events detected');
+  });
+
+  test('fc with only non-regression events returns no-regression message', () => {
+    const fc = { driftEvents: [
+      makeEv({ type: 'score_gain',     severity: 'low',  summary: 'Score improved.' }),
+      makeEv({ type: 'level_improved', severity: 'low',  summary: 'Level improved.' }),
+      makeEv({ type: 'resolved_risk',  severity: 'low',  summary: 'Risk resolved.' }),
+      makeEv({ type: 'version_change', severity: 'low',  summary: 'Version changed.' }),
+    ]};
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('No regression events detected');
+  });
+
+  test('fc missing driftEvents property returns no-regression message', () => {
+    expect(buildRecentRegressionsHtml({}, esc)).toContain('No regression events detected');
+  });
+});
+
+describe('buildRecentRegressionsHtml — section header', () => {
+  test('renders "Recent Regressions" header', () => {
+    const fc = { driftEvents: [makeEv()] };
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('Recent Regressions');
+  });
+});
+
+describe('buildRecentRegressionsHtml — regression type filter', () => {
+  const INCLUDED = ['score_drop', 'level_degraded', 'api_regression', 'implementation_regression', 'coupling_growth', 'new_risk'];
+  const EXCLUDED = ['score_gain', 'level_improved', 'resolved_risk', 'version_change'];
+
+  INCLUDED.forEach(function(type) {
+    test('includes type "' + type + '"', () => {
+      const fc = { driftEvents: [makeEv({ type, summary: 'event-' + type })] };
+      expect(buildRecentRegressionsHtml(fc, esc)).toContain('event-' + type);
+    });
+  });
+
+  EXCLUDED.forEach(function(type) {
+    test('excludes type "' + type + '"', () => {
+      const fc = { driftEvents: [makeEv({ type, summary: 'event-' + type })] };
+      expect(buildRecentRegressionsHtml(fc, esc)).not.toContain('event-' + type);
+    });
+  });
+});
+
+describe('buildRecentRegressionsHtml — type labels', () => {
+  const labelCases = [
+    ['score_drop',                'SCORE DROP'],
+    ['level_degraded',            'DEGRADED'],
+    ['api_regression',            'API REGRESSION'],
+    ['implementation_regression', 'IMPL REGRESSION'],
+    ['coupling_growth',           'COUPLING'],
+    ['new_risk',                  'NEW RISK'],
+  ];
+
+  labelCases.forEach(function([type, label]) {
+    test('type "' + type + '" renders badge "' + label + '"', () => {
+      const fc = { driftEvents: [makeEv({ type })] };
+      expect(buildRecentRegressionsHtml(fc, esc)).toContain(label);
+    });
+  });
+});
+
+describe('buildRecentRegressionsHtml — severity classes', () => {
+  test('severity "high" uses severity-high class', () => {
+    const fc = { driftEvents: [makeEv({ severity: 'high' })] };
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('severity-high');
+  });
+
+  test('severity "medium" uses severity-medium class', () => {
+    const fc = { driftEvents: [makeEv({ severity: 'medium' })] };
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('severity-medium');
+  });
+
+  test('severity "low" uses severity-healthy class', () => {
+    const fc = { driftEvents: [makeEv({ severity: 'low' })] };
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('severity-healthy');
+  });
+
+  test('unknown severity falls back to severity-unknown', () => {
+    const fc = { driftEvents: [makeEv({ severity: 'exotic' })] };
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('severity-unknown');
+  });
+});
+
+describe('buildRecentRegressionsHtml — sort order (most recent first)', () => {
+  test('more recent snapshotAt appears before older one', () => {
+    const fc = { driftEvents: [
+      makeEv({ snapshotAt: '2026-03-01T00:00:00Z', summary: 'Older event' }),
+      makeEv({ snapshotAt: '2026-05-01T00:00:00Z', summary: 'Newer event' }),
+    ]};
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html.indexOf('Newer event')).toBeLessThan(html.indexOf('Older event'));
+  });
+
+  test('null snapshotAt sorts last', () => {
+    const fc = { driftEvents: [
+      makeEv({ snapshotAt: null,                   summary: 'No date event' }),
+      makeEv({ snapshotAt: '2026-04-01T00:00:00Z', summary: 'Dated event' }),
+    ]};
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html.indexOf('Dated event')).toBeLessThan(html.indexOf('No date event'));
+  });
+});
+
+describe('buildRecentRegressionsHtml — cap at 5', () => {
+  test('renders exactly 5 items when 8 regression events provided', () => {
+    const evs = Array.from({ length: 8 }, function(_, i) {
+      return makeEv({ snapshotAt: '2026-0' + (i + 1) + '-01T00:00:00Z', summary: 'event-' + i });
+    });
+    const fc = { driftEvents: evs };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    // 5 most recent: indices 7,6,5,4,3 → summaries event-7 through event-3
+    expect(html).toContain('event-7');
+    expect(html).toContain('event-3');
+    expect(html).not.toContain('event-2');
+  });
+
+  test('does not mutate the original driftEvents array', () => {
+    const evs = Array.from({ length: 3 }, function(_, i) { return makeEv({ summary: 's' + i }); });
+    const original = evs.slice();
+    buildRecentRegressionsHtml({ driftEvents: evs }, esc);
+    expect(evs.length).toBe(original.length);
+  });
+});
+
+describe('buildRecentRegressionsHtml — evidence: score_drop', () => {
+  test('renders prevScore → currScore for score_drop', () => {
+    const fc = { driftEvents: [makeEv({ type: 'score_drop', prevScore: 80, currScore: 55 })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('80');
+    expect(html).toContain('55');
+    expect(html).toContain('→');
+  });
+
+  test('omits evidence span when prevScore is absent', () => {
+    const fc = { driftEvents: [makeEv({ type: 'score_drop', prevScore: null, currScore: 55, summary: 'Dropped.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('Dropped.');
+    expect(html).not.toContain('text-muted;">');  // evidence span not rendered
+  });
+
+  test('omits evidence span when currScore is absent', () => {
+    const fc = { driftEvents: [makeEv({ type: 'score_drop', prevScore: 80, currScore: null, summary: 'Dropped.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('Dropped.');
+  });
+});
+
+describe('buildRecentRegressionsHtml — evidence: api_regression', () => {
+  test('renders unresolvedDelta when non-zero', () => {
+    const fc = { driftEvents: [makeEv({ type: 'api_regression', unresolvedDelta: 3, mismatchDelta: 0, summary: 'API issue.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('+3 unresolved');
+  });
+
+  test('renders mismatchDelta when non-zero', () => {
+    const fc = { driftEvents: [makeEv({ type: 'api_regression', unresolvedDelta: 0, mismatchDelta: 2, summary: 'API issue.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('+2 mismatches');
+  });
+
+  test('renders both deltas joined by comma when both non-zero', () => {
+    const fc = { driftEvents: [makeEv({ type: 'api_regression', unresolvedDelta: 3, mismatchDelta: 2, summary: 'API issue.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('+3 unresolved');
+    expect(html).toContain('+2 mismatches');
+  });
+
+  test('omits evidence when both deltas are zero', () => {
+    const fc = { driftEvents: [makeEv({ type: 'api_regression', unresolvedDelta: 0, mismatchDelta: 0, summary: 'API issue.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('API issue.');
+    expect(html).not.toContain('unresolved');
+    expect(html).not.toContain('mismatches');
+  });
+
+  test('omits evidence when delta fields absent', () => {
+    const fc = { driftEvents: [makeEv({ type: 'api_regression', summary: 'API issue.' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).toContain('API issue.');
+    expect(html).not.toContain('unresolved');
+  });
+});
+
+describe('buildRecentRegressionsHtml — date rendering', () => {
+  test('renders a formatted date string when snapshotAt present', () => {
+    const fc = { driftEvents: [makeEv({ snapshotAt: '2026-05-10T14:00:00Z' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    // Raw ISO string must not appear — it must be formatted
+    expect(html).not.toContain('2026-05-10T14:00:00Z');
+  });
+
+  test('renders "—" when snapshotAt is null', () => {
+    const fc = { driftEvents: [makeEv({ snapshotAt: null })] };
+    expect(buildRecentRegressionsHtml(fc, esc)).toContain('>—<');
+  });
+});
+
+describe('buildRecentRegressionsHtml — XSS escaping', () => {
+  test('escapes XSS in summary', () => {
+    const fc = { driftEvents: [makeEv({ summary: '<script>alert(1)</script>' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  test('escapes XSS in score_drop prevScore', () => {
+    const fc = { driftEvents: [makeEv({ type: 'score_drop', prevScore: '<b>80</b>', currScore: 55 })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).not.toContain('<b>');
+    expect(html).toContain('&lt;b&gt;');
+  });
+
+  test('escapes XSS in api_regression unresolvedDelta', () => {
+    const fc = { driftEvents: [makeEv({ type: 'api_regression', unresolvedDelta: '<img>', mismatchDelta: 0, summary: 's' })] };
+    const html = buildRecentRegressionsHtml(fc, esc);
+    expect(html).not.toContain('<img>');
+    expect(html).toContain('&lt;img&gt;');
+  });
+});

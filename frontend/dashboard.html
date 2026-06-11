@@ -4944,6 +4944,13 @@
       container.innerHTML = buildArchTimelineHtml(fc);
     }
 
+    function loadRecentRegressions(repoId) {
+      var container = document.getElementById('repo-regressions-content');
+      if (!container) return;
+      var fc = _archForecastDataByRepoId[repoId] || null;
+      container.innerHTML = buildRecentRegressionsHtml(fc, esc);
+    }
+
     // ── Architecture Intelligence ────────────────────────────────────────────
 
     function _architectureWarningMessage(raw) {
@@ -5569,6 +5576,92 @@
           }
           updateOverviewArchCards(repoId);
         });
+    }
+
+    function buildRecentRegressionsHtml(fc, esc) {
+      var REGRESSION_TYPES = {
+        score_drop:                true,
+        level_degraded:            true,
+        api_regression:            true,
+        implementation_regression: true,
+        coupling_growth:           true,
+        new_risk:                  true,
+      };
+
+      var TYPE_LABEL = {
+        score_drop:                'SCORE DROP',
+        level_degraded:            'DEGRADED',
+        api_regression:            'API REGRESSION',
+        implementation_regression: 'IMPL REGRESSION',
+        coupling_growth:           'COUPLING',
+        new_risk:                  'NEW RISK',
+      };
+
+      var SEV_CLASS = {
+        high:   'severity-high',
+        medium: 'severity-medium',
+        low:    'severity-healthy',
+      };
+
+      if (!fc) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+          + 'Architecture data not yet available — regression history will appear once architecture analysis completes.</p>';
+      }
+
+      var events = Array.isArray(fc.driftEvents) ? fc.driftEvents : [];
+
+      var regressions = events
+        .filter(function(ev) { return ev && REGRESSION_TYPES[ev.type]; })
+        .sort(function(a, b) {
+          var da = a.snapshotAt ? new Date(a.snapshotAt).getTime() : 0;
+          var db = b.snapshotAt ? new Date(b.snapshotAt).getTime() : 0;
+          return db - da;
+        })
+        .slice(0, 5);
+
+      if (!regressions.length) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);padding:6px 0;">'
+          + 'No regression events detected in available snapshots.</p>';
+      }
+
+      var h = '<div class="arch-sub-panel" style="margin-bottom:12px;">';
+      h += '<div class="arch-sub-label">Recent Regressions</div>';
+
+      regressions.forEach(function(ev) {
+        var sevCls = SEV_CLASS[ev.severity] || 'severity-unknown';
+        var label  = TYPE_LABEL[ev.type]    || esc(String(ev.type || 'EVENT').toUpperCase());
+        var timeStr = ev.snapshotAt
+          ? new Date(ev.snapshotAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '—';
+
+        var evidence = '';
+        if (ev.type === 'score_drop' && ev.prevScore != null && ev.currScore != null) {
+          evidence = esc(String(ev.prevScore)) + ' → ' + esc(String(ev.currScore));
+        } else if (ev.type === 'api_regression') {
+          var parts = [];
+          if (ev.unresolvedDelta != null && ev.unresolvedDelta !== 0)
+            parts.push('+' + esc(String(ev.unresolvedDelta)) + ' unresolved');
+          if (ev.mismatchDelta != null && ev.mismatchDelta !== 0)
+            parts.push('+' + esc(String(ev.mismatchDelta)) + ' mismatches');
+          if (parts.length) evidence = parts.join(', ');
+        }
+
+        h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
+        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px;">';
+        h += '<span class="aq-badge ' + sevCls + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;'
+          + 'letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
+          + esc(label) + '</span>';
+        if (evidence) {
+          h += '<span style="font-size:0.70rem;color:var(--text-muted);">' + evidence + '</span>';
+        }
+        h += '<span style="font-size:0.70rem;color:var(--text-muted);margin-left:auto;">' + esc(timeStr) + '</span>';
+        h += '</div>';
+        h += '<div style="font-size:0.80rem;color:var(--text-secondary);">' + esc(ev.summary || '') + '</div>';
+        h += '</div>';
+      });
+
+      h += '</div>';
+      return h;
     }
 
     function buildTopRemediationActionsHtml(data, esc) {
@@ -6295,6 +6388,7 @@
 
       // ── Timeline tab — refresh using driftEvents now available in arch cache.
       loadRepoTimeline(repoId);
+      loadRecentRegressions(repoId);
 
       // ── Overview card grid — guarded because the overview tab may not be rendered.
       var grid = document.getElementById('repo-overview-arch-cards');
@@ -6436,7 +6530,9 @@
         +   '<div id="repo-architecture-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="remediation">'
-        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Repository Remediation</div>'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Recent Regressions</div>'
+        +   '<div id="repo-regressions-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:12px;">Repository Remediation</div>'
         +   '<div id="repo-remediation-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="change-risk">'
@@ -6488,6 +6584,7 @@
       }
 
       loadRepoTimeline(repo.id);
+      loadRecentRegressions(repo.id);
       loadRepoEscalation(repo.id);
       loadRepoForecast(repo.id);
       loadRepoConfidence(repo.id);
