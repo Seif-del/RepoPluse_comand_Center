@@ -663,6 +663,13 @@
                         padding: 2px 0; font-size: 0.78rem; color: var(--text-secondary); }
     .attn-driver-pts  { font-weight: 600; color: var(--text-primary); margin-left: 8px; flex-shrink: 0; }
 
+    /* ── Architecture score driver breakdown ────────────────────────────── */
+    .arch-score-driver-list    { list-style: none; margin: 6px 0 0; padding: 0; }
+    .arch-score-driver-row     { display: flex; justify-content: space-between; align-items: baseline;
+                                 padding: 2px 0; font-size: 0.78rem; color: var(--text-secondary); }
+    .arch-score-driver-formula { text-align: right; white-space: nowrap; }
+    .arch-score-driver-eq      { font-weight: 600; color: var(--text-primary); margin-left: 4px; }
+
     /* ── Inline trajectory marker (appended inside .aq-badge) ───────────── */
     .aq-traj { margin-left: 2px; opacity: 0.8; font-weight: 400; }
 
@@ -4498,8 +4505,33 @@
       });
       html += '</div>';
 
+      html += buildArchScoreDriversHtml(archCache);
+
       html += '</div>';
       return html;
+    }
+
+    function buildArchScoreDriversHtml(archCache) {
+      var bnd  = (archCache && archCache.boundaryHealthScore        != null) ? archCache.boundaryHealthScore        : null;
+      var comp = (archCache && archCache.implementationCompleteness != null) ? archCache.implementationCompleteness : null;
+      var link = (archCache && archCache.linkageScore               != null) ? archCache.linkageScore               : null;
+      if (bnd === null || comp === null || link === null) return '';
+
+      function row(label, score, weight, contrib) {
+        return '<li class="arch-score-driver-row">'
+          + '<span class="arch-score-driver-label">' + esc(label) + '</span>'
+          + '<span class="arch-score-driver-formula">'
+          + esc(String(score)) + ' &times; ' + esc(weight)
+          + '<span class="arch-score-driver-eq">= ' + esc(String(contrib)) + '</span>'
+          + '</span></li>';
+      }
+
+      return '<div class="repo-detail-label section-secondary" style="margin-top:14px;">Architecture Score Drivers</div>'
+        + '<ul class="arch-score-driver-list">'
+        + row('Boundary Integrity',          bnd,  '40%', Math.round(bnd  * 0.40))
+        + row('Implementation Completeness', comp, '40%', Math.round(comp * 0.40))
+        + row('API Linkage',                 link, '20%', Math.round(link * 0.20))
+        + '</ul>';
     }
 
     function loadRepoMaturity(repoId) {
@@ -5501,6 +5533,7 @@
               // FIX: completenessLevel vocab ('complete','partial') normalised to LEVEL_SEV keys
               implementationLevel:        _normImplCompletenessLevel(_implComp.completenessLevel || null),
               boundaryHealthScore:        typeof _bndVerif.boundaryHealthScore === 'number' ? _bndVerif.boundaryHealthScore : null,
+              linkageScore:               typeof _apiLinkage.linkageScore      === 'number' ? _apiLinkage.linkageScore      : null,
               // FIX: violations count lives in boundaryVerification.violations[], not as a named scalar
               boundaryViolationCount:     Array.isArray(_bndVerif.violations) ? _bndVerif.violations.length
                                         : (typeof _metrics.boundaryViolationCount === 'number' ? _metrics.boundaryViolationCount : null),
