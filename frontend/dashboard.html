@@ -1985,40 +1985,26 @@
       </div>
     </div>
 
-    <!-- Portfolio Architecture panel -->
-    <div class="section" id="section-portfolio-architecture">
-      <div class="section-header">
-        <span class="section-title">Portfolio Architecture</span>
-        <div class="section-divider"></div>
+    <!-- Portfolio tabs -->
+    <div class="section" id="section-portfolio-tabs">
+      <div class="repo-tabs" id="portfolio-tab-bar" role="tablist">
+        <button class="repo-tab-btn active" data-ptab="architecture" role="tab">Portfolio Architecture</button>
+        <button class="repo-tab-btn"        data-ptab="forecast"     role="tab">Portfolio Forecast</button>
+        <button class="repo-tab-btn"        data-ptab="governance"   role="tab">Engineering Governance</button>
+        <button class="repo-tab-btn"        data-ptab="watchlists"   role="tab">Architecture Watchlists</button>
       </div>
-      <div id="portfolio-architecture-panel"></div>
-    </div>
-
-    <!-- Portfolio Forecast panel -->
-    <div class="section" id="section-portfolio-forecast">
-      <div class="section-header">
-        <span class="section-title">Portfolio Forecast</span>
-        <div class="section-divider"></div>
+      <div class="repo-tab-panel active" data-ppanel="architecture">
+        <div id="portfolio-architecture-panel"></div>
       </div>
-      <div id="portfolio-forecast"></div>
-    </div>
-
-    <!-- Engineering Governance panel -->
-    <div class="section" id="section-portfolio-governance">
-      <div class="section-header">
-        <span class="section-title">Engineering Governance</span>
-        <div class="section-divider"></div>
+      <div class="repo-tab-panel" data-ppanel="forecast">
+        <div id="portfolio-forecast"></div>
       </div>
-      <div id="portfolio-governance-panel"></div>
-    </div>
-
-    <!-- Architecture Watchlists panel -->
-    <div class="section" id="section-portfolio-watchlists">
-      <div class="section-header">
-        <span class="section-title">Architecture Watchlists</span>
-        <div class="section-divider"></div>
+      <div class="repo-tab-panel" data-ppanel="governance">
+        <div id="portfolio-governance-panel"></div>
       </div>
-      <div id="portfolio-watchlists-panel"></div>
+      <div class="repo-tab-panel" data-ppanel="watchlists">
+        <div id="portfolio-watchlists-panel"></div>
+      </div>
     </div>
 
     <!-- Executive Briefing -->
@@ -5993,6 +5979,19 @@
       });
     }
 
+    function _switchPortfolioTab(tab) {
+      var bar = document.getElementById('portfolio-tab-bar');
+      if (!bar) return;
+      Array.prototype.forEach.call(bar.querySelectorAll('.repo-tab-btn'), function(btn) {
+        btn.classList.toggle('active', btn.dataset.ptab === tab);
+      });
+      var section = document.getElementById('section-portfolio-tabs');
+      if (!section) return;
+      Array.prototype.forEach.call(section.querySelectorAll('.repo-tab-panel'), function(panel) {
+        panel.classList.toggle('active', panel.dataset.ppanel === tab);
+      });
+    }
+
     // Pure helper for the Architecture Confidence card.
     // Accepts: { hasArchitectureSnapshot, architectureScore, forecastLevel }
     // HIGH              — snapshot + score + forecast present (not unknown)
@@ -7995,6 +7994,16 @@
 
     refresh();
     setInterval(refresh, 60000);
+
+    Array.prototype.forEach.call(
+      document.querySelectorAll('#portfolio-tab-bar .repo-tab-btn'),
+      function(btn) {
+        btn.addEventListener('click', function() { _switchPortfolioTab(btn.dataset.ptab); });
+        btn.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _switchPortfolioTab(btn.dataset.ptab); }
+        });
+      }
+    );
   </script>
 </body>
 </html>
