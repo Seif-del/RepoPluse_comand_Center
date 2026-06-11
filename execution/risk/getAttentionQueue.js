@@ -176,140 +176,118 @@ function _scoreRepo(repo) {
 
   var total   = 0;
   var reasons = [];
+  var drivers = [];
+
+  var _add = function(points, text) {
+    total += points;
+    reasons.push(text);
+    drivers.push({ label: text, contribution: points });
+  };
 
   // ── Risk score band alignment (exclusive tiers, highest matching fires) ───────
   if (riskScore !== null && riskScore >= 75) {
-    total += WEIGHTS.RISK_SCORE_CRITICAL;
-    reasons.push('Critical risk score (' + riskScore + ')');
+    _add(WEIGHTS.RISK_SCORE_CRITICAL, 'Critical risk score (' + riskScore + ')');
   } else if (riskScore !== null && riskScore >= 50) {
-    total += WEIGHTS.RISK_SCORE_AT_RISK;
-    reasons.push('Elevated risk score (' + riskScore + ')');
+    _add(WEIGHTS.RISK_SCORE_AT_RISK, 'Elevated risk score (' + riskScore + ')');
   } else if (riskScore !== null && riskScore >= 30) {
-    total += WEIGHTS.RISK_SCORE_MONITOR;
-    reasons.push('Monitored risk score (' + riskScore + ')');
+    _add(WEIGHTS.RISK_SCORE_MONITOR, 'Monitored risk score (' + riskScore + ')');
   }
 
   // ── Behavioral operational signals ───────────────────────────────────────────
   if (ci === 'failing') {
-    total += WEIGHTS.CI_FAILING;
-    reasons.push('CI pipeline is failing');
+    _add(WEIGHTS.CI_FAILING, 'CI pipeline is failing');
   }
   if (con === 'abandoned') {
     // Only treat as abandoned when CI is actively failing — that fully corroborates
     // the absence of contributors. Passing or unknown CI means the repo is dormant,
     // not confirmed abandoned.
     if (ci === 'failing') {
-      total += WEIGHTS.CONTRIBUTOR_ABANDONED;
-      reasons.push('Repository appears abandoned');
+      _add(WEIGHTS.CONTRIBUTOR_ABANDONED, 'Repository appears abandoned');
     } else {
-      total += WEIGHTS.CONTRIBUTOR_DORMANT;
-      reasons.push('Repository appears dormant');
+      _add(WEIGHTS.CONTRIBUTOR_DORMANT, 'Repository appears dormant');
     }
   }
   if (con === 'dormant') {
-    total += WEIGHTS.CONTRIBUTOR_DORMANT;
-    reasons.push('Repository appears dormant');
+    _add(WEIGHTS.CONTRIBUTOR_DORMANT, 'Repository appears dormant');
   }
 
   // ── Activity freshness — no recent commits (precedes structural signals) ──────
   if (noRecentCommits) {
-    total += WEIGHTS.NO_RECENT_COMMITS;
-    reasons.push('No recent commits');
+    _add(WEIGHTS.NO_RECENT_COMMITS, 'No recent commits');
   }
 
   // ── Structural context signals ────────────────────────────────────────────────
   if (con === 'bus_factor_risk') {
-    total += WEIGHTS.CONTRIBUTOR_BUS_FACTOR;
-    reasons.push('High bus-factor risk');
+    _add(WEIGHTS.CONTRIBUTOR_BUS_FACTOR, 'High bus-factor risk');
   }
   if (rel === 'stale') {
-    total += WEIGHTS.RELEASE_STALE;
-    reasons.push('Stale release cadence');
+    _add(WEIGHTS.RELEASE_STALE, 'Stale release cadence');
   }
   if (con === 'low_activity') {
-    total += WEIGHTS.CONTRIBUTOR_LOW;
-    reasons.push('Low contributor activity');
+    _add(WEIGHTS.CONTRIBUTOR_LOW, 'Low contributor activity');
   }
   if (rel === 'none') {
-    total += WEIGHTS.RELEASE_NONE;
-    reasons.push('No releases found');
+    _add(WEIGHTS.RELEASE_NONE, 'No releases found');
   }
 
   // ── Data-gap / low signals ────────────────────────────────────────────────────
   if (ci === 'unknown') {
-    total += WEIGHTS.CI_UNKNOWN;
-    reasons.push('CI status unknown');
+    _add(WEIGHTS.CI_UNKNOWN, 'CI status unknown');
   }
   if (rel === 'unknown') {
-    total += WEIGHTS.RELEASE_UNKNOWN;
-    reasons.push('Release status unknown');
+    _add(WEIGHTS.RELEASE_UNKNOWN, 'Release status unknown');
   }
   if (con === 'unknown') {
-    total += WEIGHTS.CONTRIBUTOR_UNKNOWN;
-    reasons.push('Contributor status unknown');
+    _add(WEIGHTS.CONTRIBUTOR_UNKNOWN, 'Contributor status unknown');
   }
   if (riskScore === null) {
-    total += WEIGHTS.NO_METRICS;
-    reasons.push('No metrics available yet');
+    _add(WEIGHTS.NO_METRICS, 'No metrics available yet');
   }
 
   // ── Forecast-awareness prioritization modifiers ───────────────────────────────
   if (trajectory === 'escalating') {
-    total += WEIGHTS.TRAJ_ESCALATING;
-    reasons.push('Escalating operational trajectory');
+    _add(WEIGHTS.TRAJ_ESCALATING, 'Escalating operational trajectory');
   }
   if (trajectory === 'deteriorating') {
-    total += WEIGHTS.TRAJ_DETERIORATING;
-    reasons.push('Deteriorating operational trajectory');
+    _add(WEIGHTS.TRAJ_DETERIORATING, 'Deteriorating operational trajectory');
   }
   if (trajectory === 'volatile') {
-    total += WEIGHTS.TRAJ_VOLATILE;
-    reasons.push('Volatile operational trajectory');
+    _add(WEIGHTS.TRAJ_VOLATILE, 'Volatile operational trajectory');
   }
   if (forecastLevel === 'critical') {
-    total += WEIGHTS.FORECAST_CRITICAL;
-    reasons.push('Critical forecast level');
+    _add(WEIGHTS.FORECAST_CRITICAL, 'Critical forecast level');
   }
   if (forecastLevel === 'high') {
-    total += WEIGHTS.FORECAST_HIGH;
-    reasons.push('High forecast level');
+    _add(WEIGHTS.FORECAST_HIGH, 'High forecast level');
   }
   if (persistentRisk) {
-    total += WEIGHTS.PERSISTENT_RISK;
-    reasons.push('Persistent operational risk');
+    _add(WEIGHTS.PERSISTENT_RISK, 'Persistent operational risk');
   }
   if (escalationLevel === 'critical') {
-    total += WEIGHTS.ESC_CRITICAL;
-    reasons.push('Escalation level is critical');
+    _add(WEIGHTS.ESC_CRITICAL, 'Escalation level is critical');
   } else if (escalationLevel === 'high') {
-    total += WEIGHTS.ESC_HIGH;
-    reasons.push('Escalation level is high');
+    _add(WEIGHTS.ESC_HIGH, 'Escalation level is high');
   }
   if (volatilityLevel === 'high') {
-    total += WEIGHTS.VOLATILITY_HIGH;
-    reasons.push('Operational volatility elevated');
+    _add(WEIGHTS.VOLATILITY_HIGH, 'Operational volatility elevated');
   }
   if (unresolvedCiRun) {
-    total += WEIGHTS.CI_UNRESOLVED;
-    reasons.push('Repeated unresolved CI instability');
+    _add(WEIGHTS.CI_UNRESOLVED, 'Repeated unresolved CI instability');
   }
 
   // ── PR Health operational signals (fires only when prHealthStatus present) ────
   if (prHealthStatus === 'critical') {
-    total += WEIGHTS.PR_HEALTH_CRITICAL;
-    reasons.push('PR health critical');
+    _add(WEIGHTS.PR_HEALTH_CRITICAL, 'PR health critical');
   } else if (prHealthStatus === 'at-risk') {
-    total += WEIGHTS.PR_HEALTH_AT_RISK;
-    reasons.push('PR health at-risk');
+    _add(WEIGHTS.PR_HEALTH_AT_RISK, 'PR health at-risk');
   } else if (prHealthStatus === 'monitor') {
-    total += WEIGHTS.PR_HEALTH_MONITOR;
-    reasons.push('PR health monitored');
+    _add(WEIGHTS.PR_HEALTH_MONITOR, 'PR health monitored');
   }
 
   var attentionScore = Math.min(100, total);
   var attentionLevel = _attentionLevel(attentionScore);
 
-  return { attentionScore: attentionScore, attentionLevel: attentionLevel, reasons: reasons };
+  return { attentionScore: attentionScore, attentionLevel: attentionLevel, reasons: reasons, drivers: drivers };
 }
 
 /**
@@ -337,6 +315,7 @@ function _scoreRepo(repo) {
  *   attentionLevel: 'critical'|'high'|'medium'|'low'|'healthy',
  *   attentionScore: number,
  *   reasons:        string[],
+ *   drivers:        Array<{ label: string, contribution: number }>,
  *   trajectory:     string|null,
  * }>}
  */
@@ -351,6 +330,7 @@ function getAttentionQueue(repos) {
       attentionLevel:   scored.attentionLevel,
       attentionScore:   scored.attentionScore,
       reasons:          scored.reasons,
+      drivers:          scored.drivers,
       trajectory:       repo.trajectory || null,
       // Internal sort fields — stripped before returning.
       _syncedAt:        repo.lastSyncedAt,
@@ -392,6 +372,7 @@ function getAttentionQueue(repos) {
       attentionLevel: item.attentionLevel,
       attentionScore: item.attentionScore,
       reasons:        item.reasons,
+      drivers:        item.drivers,
       trajectory:     item.trajectory,
     };
   });

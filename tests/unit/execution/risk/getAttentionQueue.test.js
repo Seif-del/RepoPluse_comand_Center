@@ -82,7 +82,7 @@ describe('getAttentionQueue — guard conditions', () => {
 // ── Return shape ───────────────────────────────────────────────────────────────
 
 describe('getAttentionQueue — return shape', () => {
-  it('each item has repoId, name, attentionLevel, attentionScore, reasons', () => {
+  it('each item has repoId, name, attentionLevel, attentionScore, reasons, drivers', () => {
     const result = getAttentionQueue([makeRepo({ id: 7, fullName: 'o/r' })]);
     expect(result).toHaveLength(1);
     const item = result[0];
@@ -92,6 +92,8 @@ describe('getAttentionQueue — return shape', () => {
     expect(item).toHaveProperty('attentionScore');
     expect(item).toHaveProperty('reasons');
     expect(Array.isArray(item.reasons)).toBe(true);
+    expect(item).toHaveProperty('drivers');
+    expect(Array.isArray(item.drivers)).toBe(true);
   });
 
   it('does not expose _syncedAt in output', () => {
@@ -1455,11 +1457,11 @@ describe('getAttentionQueue — volatility-adjusted sorting', () => {
     }
   });
 
-  it('each output item has exactly the public fields: repoId, name, attentionLevel, attentionScore, reasons, trajectory', () => {
+  it('each output item has exactly the public fields: repoId, name, attentionLevel, attentionScore, reasons, drivers, trajectory', () => {
     const repos = [makeRepo({ id: 1, trajectory: 'escalating' })];
     const result = getAttentionQueue(repos);
     const keys = Object.keys(result[0]).sort();
-    expect(keys).toEqual(['attentionLevel', 'attentionScore', 'name', 'reasons', 'repoId', 'trajectory']);
+    expect(keys).toEqual(['attentionLevel', 'attentionScore', 'drivers', 'name', 'reasons', 'repoId', 'trajectory']);
   });
 
   // ── Determinism ───────────────────────────────────────────────────────────────
@@ -1499,5 +1501,130 @@ describe('getAttentionQueue — volatility-adjusted sorting', () => {
     const r3 = makeRepo({ id: 2, ...base });
     const result = getAttentionQueue([r1, r2, r3]);
     expect(result.map(i => i.repoId)).toEqual([1, 2, 3]);
+  });
+});
+
+// ── attentionDrivers ──────────────────────────────────────────────────────────
+
+describe('getAttentionQueue — attentionDrivers', () => {
+  it('drivers is an array on every returned item', () => {
+    const result = getAttentionQueue([makeRepo()]);
+    expect(Array.isArray(result[0].drivers)).toBe(true);
+  });
+
+  it('zero-signal repo produces empty drivers array', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    expect(result[0].drivers).toHaveLength(0);
+  });
+
+  it('each driver has label (string) and contribution (number)', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    const driver = result[0].drivers[0];
+    expect(typeof driver.label).toBe('string');
+    expect(typeof driver.contribution).toBe('number');
+  });
+
+  it('CI failing produces driver { label: "CI pipeline is failing", contribution: WEIGHTS.CI_FAILING }', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    expect(result[0].drivers).toContainEqual({ label: 'CI pipeline is failing', contribution: WEIGHTS.CI_FAILING });
+  });
+
+  it('critical risk band produces driver { label: "Critical risk score (75)", contribution: WEIGHTS.RISK_SCORE_CRITICAL }', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 75, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    expect(result[0].drivers).toContainEqual({ label: 'Critical risk score (75)', contribution: WEIGHTS.RISK_SCORE_CRITICAL });
+  });
+
+  it('at-risk band produces driver with contribution WEIGHTS.RISK_SCORE_AT_RISK', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 50, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    expect(result[0].drivers).toContainEqual({ label: 'Elevated risk score (50)', contribution: WEIGHTS.RISK_SCORE_AT_RISK });
+  });
+
+  it('persistent risk produces driver with contribution WEIGHTS.PERSISTENT_RISK', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+      persistentRisk: true,
+    })]);
+    expect(result[0].drivers).toContainEqual({ label: 'Persistent operational risk', contribution: WEIGHTS.PERSISTENT_RISK });
+  });
+
+  it('drivers[i].label matches reasons[i] for all i', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 50, ciStatus: 'failing', releaseStatus: 'stale', contributorStatus: 'bus_factor_risk',
+      noRecentCommits: true,
+    })]);
+    const { reasons, drivers } = result[0];
+    expect(drivers).toHaveLength(reasons.length);
+    reasons.forEach((r, i) => expect(drivers[i].label).toBe(r));
+  });
+
+  it('multiple signals produce one driver per signal', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 50, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    // RISK_SCORE_AT_RISK + CI_FAILING = 2 drivers
+    expect(result[0].drivers).toHaveLength(2);
+  });
+
+  it('drivers contributions sum equals uncapped total (no-cap scenario)', () => {
+    // score=50 → RISK_SCORE_AT_RISK(45) + CI_FAILING(40) = 85, not capped
+    const result = getAttentionQueue([makeRepo({
+      score: 50, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+    })]);
+    const { attentionScore, drivers } = result[0];
+    const sum = drivers.reduce((acc, d) => acc + d.contribution, 0);
+    expect(attentionScore).toBe(85);
+    expect(sum).toBe(85);
+  });
+
+  it('drivers contributions sum can exceed attentionScore when cap fires', () => {
+    // score=80 → RISK_SCORE_CRITICAL(65) + CI_FAILING(40) + CONTRIBUTOR_ABANDONED(40) = 145 → capped at 100
+    const result = getAttentionQueue([makeRepo({
+      score: 80, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned',
+    })]);
+    const { attentionScore, drivers } = result[0];
+    const sum = drivers.reduce((acc, d) => acc + d.contribution, 0);
+    expect(attentionScore).toBe(100);
+    expect(sum).toBeGreaterThan(100);
+  });
+
+  it('drivers are not affected by score cap — all fired signals appear', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 80, ciStatus: 'failing', releaseStatus: 'healthy', contributorStatus: 'abandoned',
+    })]);
+    const labels = result[0].drivers.map(d => d.label);
+    expect(labels).toContain('Critical risk score (80)');
+    expect(labels).toContain('CI pipeline is failing');
+    expect(labels).toContain('Repository appears abandoned');
+  });
+
+  it('escalating trajectory driver has contribution WEIGHTS.TRAJ_ESCALATING', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+      trajectory: 'escalating',
+    })]);
+    expect(result[0].drivers).toContainEqual({ label: 'Escalating operational trajectory', contribution: WEIGHTS.TRAJ_ESCALATING });
+  });
+
+  it('PR health critical driver has contribution WEIGHTS.PR_HEALTH_CRITICAL', () => {
+    const result = getAttentionQueue([makeRepo({
+      score: 0, ciStatus: 'passing', releaseStatus: 'healthy', contributorStatus: 'healthy',
+      prHealthStatus: 'critical',
+    })]);
+    expect(result[0].drivers).toContainEqual({ label: 'PR health critical', contribution: WEIGHTS.PR_HEALTH_CRITICAL });
+  });
+
+  it('does not expose _add in the returned item', () => {
+    const result = getAttentionQueue([makeRepo()]);
+    expect(result[0]).not.toHaveProperty('_add');
   });
 });

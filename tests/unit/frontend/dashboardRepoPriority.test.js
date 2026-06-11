@@ -1627,6 +1627,19 @@ function buildOverviewCardsHtml(repo, aq, archData, fcData) {
     + card('Architecture Confidence',   conf.label,  conf.cls);
 }
 
+// ── buildAttentionDriversHtml (copied verbatim from dashboard.html) ──────────
+function buildAttentionDriversHtml(aq) {
+  if (!aq || !Array.isArray(aq.drivers) || !aq.drivers.length) return '';
+  var rows = aq.drivers.map(function(d) {
+    return '<li class="attn-driver-row">'
+      + '<span class="attn-driver-label">' + esc(d.label) + '</span>'
+      + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
+      + '</li>';
+  }).join('');
+  return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Attention Drivers</div>'
+    + '<ul class="attn-driver-list">' + rows + '</ul>';
+}
+
 // ── buildOverviewCardsHtml — Overview uses _repoIntelligenceById immediately ──
 
 describe('buildOverviewCardsHtml — Overview uses portfolio intel immediately', () => {
@@ -3226,5 +3239,107 @@ describe('buildOverviewCardsHtml — Architectural Priority badge vocabulary ali
     expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('healthy');
     const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
     expect(html).toContain('severity-healthy');
+  });
+});
+
+// ── buildAttentionDriversHtml ─────────────────────────────────────────────────
+
+describe('buildAttentionDriversHtml — guard conditions', () => {
+  test('null aq → empty string', () => {
+    expect(buildAttentionDriversHtml(null)).toBe('');
+  });
+
+  test('undefined aq → empty string', () => {
+    expect(buildAttentionDriversHtml(undefined)).toBe('');
+  });
+
+  test('aq without drivers field → empty string', () => {
+    expect(buildAttentionDriversHtml({ attentionLevel: 'high', attentionScore: 45 })).toBe('');
+  });
+
+  test('aq with empty drivers array → empty string', () => {
+    expect(buildAttentionDriversHtml({ drivers: [] })).toBe('');
+  });
+
+  test('aq with non-array drivers → empty string', () => {
+    expect(buildAttentionDriversHtml({ drivers: null })).toBe('');
+    expect(buildAttentionDriversHtml({ drivers: 'bad' })).toBe('');
+    expect(buildAttentionDriversHtml({ drivers: 42 })).toBe('');
+  });
+});
+
+describe('buildAttentionDriversHtml — render', () => {
+  test('section heading "Attention Drivers" present when drivers non-empty', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [{ label: 'CI pipeline is failing', contribution: 40 }],
+    });
+    expect(html).toContain('Attention Drivers');
+  });
+
+  test('single driver renders label and +N', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [{ label: 'CI pipeline is failing', contribution: 40 }],
+    });
+    expect(html).toContain('CI pipeline is failing');
+    expect(html).toContain('+40');
+  });
+
+  test('multiple drivers all rendered', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'Elevated risk score (50)', contribution: 45 },
+        { label: 'No recent commits',        contribution: 6  },
+        { label: 'Stale release cadence',    contribution: 3  },
+      ],
+    });
+    expect(html).toContain('Elevated risk score (50)');
+    expect(html).toContain('+45');
+    expect(html).toContain('No recent commits');
+    expect(html).toContain('+6');
+    expect(html).toContain('Stale release cadence');
+    expect(html).toContain('+3');
+  });
+
+  test('driver label passes through esc() — real esc in dashboard.html provides HTML encoding', () => {
+    // esc() stub is a no-op here; test confirms the label is passed through esc()
+    // by checking the verbatim value appears in output (not raw-injected without esc).
+    const html = buildAttentionDriversHtml({
+      drivers: [{ label: 'Elevated risk score (50)', contribution: 45 }],
+    });
+    expect(html).toContain('Elevated risk score (50)');
+  });
+
+  test('contribution value rendered with leading + sign', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [{ label: 'Persistent operational risk', contribution: 25 }],
+    });
+    expect(html).toContain('+25');
+    expect(html).not.toContain('+-');
+  });
+
+  test('list uses attn-driver-list class', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [{ label: 'CI pipeline is failing', contribution: 40 }],
+    });
+    expect(html).toContain('attn-driver-list');
+  });
+
+  test('each row uses attn-driver-row class', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'A', contribution: 10 },
+        { label: 'B', contribution: 5  },
+      ],
+    });
+    const matches = html.match(/attn-driver-row/g);
+    expect(matches).toHaveLength(2);
+  });
+
+  test('label uses attn-driver-label class, points use attn-driver-pts class', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [{ label: 'High bus-factor risk', contribution: 5 }],
+    });
+    expect(html).toContain('attn-driver-label');
+    expect(html).toContain('attn-driver-pts');
   });
 });

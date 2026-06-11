@@ -657,6 +657,12 @@
     .aq-badge.severity-elevated  { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
     .aq-badge.severity-watch     { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
 
+    /* ── Attention drivers list ──────────────────────────────────────────── */
+    .attn-driver-list { list-style: none; margin: 6px 0 0; padding: 0; }
+    .attn-driver-row  { display: flex; justify-content: space-between; align-items: baseline;
+                        padding: 2px 0; font-size: 0.78rem; color: var(--text-secondary); }
+    .attn-driver-pts  { font-weight: 600; color: var(--text-primary); margin-left: 8px; flex-shrink: 0; }
+
     /* ── Inline trajectory marker (appended inside .aq-badge) ───────────── */
     .aq-traj { margin-left: 2px; opacity: 0.8; font-weight: 400; }
 
@@ -6072,6 +6078,18 @@
         + card('Architecture Confidence',   conf.label,  conf.cls);
     }
 
+    function buildAttentionDriversHtml(aq) {
+      if (!aq || !Array.isArray(aq.drivers) || !aq.drivers.length) return '';
+      var rows = aq.drivers.map(function(d) {
+        return '<li class="attn-driver-row">'
+          + '<span class="attn-driver-label">' + esc(d.label) + '</span>'
+          + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
+          + '</li>';
+      }).join('');
+      return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Attention Drivers</div>'
+        + '<ul class="attn-driver-list">' + rows + '</ul>';
+    }
+
     // Returns the best-available archData for the Overview cards.
     // Precedence: portfolio intel (level → derived level from score) → per-click cache → null.
     // Returns null only when no data exists at all (renders "Coverage Gap" via the !archData path).
@@ -6279,6 +6297,7 @@
         + '</div>'
         + '<div class="repo-tab-panel active" data-panel="overview">'
         +   overviewCards
+        +   buildAttentionDriversHtml(aq)
         +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Architecture Assessment</div>'
         +   buildArchitectureAssessmentHtml(repo)
         +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Architecture Recommendations</div>'
