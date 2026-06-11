@@ -2054,7 +2054,7 @@
             <span id="chart-count" class="panel-count">— snapshots</span>
           </div>
         </div>
-        <div class="panel-body" style="padding: 16px 20px 8px;">
+        <div class="panel-body" id="history-chart-panel" style="padding: 16px 20px 8px;">
           <svg id="history-chart" class="chart-svg" aria-label="Risk score history chart">
             <defs>
               <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
@@ -2695,10 +2695,25 @@
       if (points.length < 2) {
         if (countEl) countEl.textContent = points.length === 1 ? '1 snapshot' : '0 snapshots';
         if (ctxEl)   ctxEl.innerHTML = '';
-        svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" class="chart-axis-label">'
-          + 'Not enough history to show a trend yet.</text>';
+        svg.style.display = 'none';
+        var chartPanel = document.getElementById('history-chart-panel');
+        if (chartPanel && !document.getElementById('history-chart-empty')) {
+          var emptyMsg = document.createElement('p');
+          emptyMsg.id = 'history-chart-empty';
+          emptyMsg.style.cssText = 'font-size:0.82rem;color:var(--text-muted);font-style:italic;margin:0;padding:4px 0;';
+          emptyMsg.textContent = 'Not enough history to show a trend yet.';
+          chartPanel.appendChild(emptyMsg);
+          chartPanel.style.padding = '10px 20px';
+        }
         return;
       }
+
+      // Normal path: restore SVG visibility and remove any collapsed empty state
+      svg.style.display = '';
+      var _emptyMsg = document.getElementById('history-chart-empty');
+      if (_emptyMsg) { _emptyMsg.parentNode.removeChild(_emptyMsg); }
+      var _chartPanel = document.getElementById('history-chart-panel');
+      if (_chartPanel) { _chartPanel.style.padding = '16px 20px 8px'; }
 
       if (countEl) countEl.textContent = points.length + ' snapshot' + (points.length !== 1 ? 's' : '');
 
@@ -5556,6 +5571,64 @@
         });
     }
 
+    function buildTopRemediationActionsHtml(data, esc) {
+      var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+
+      function priRank(p) {
+        var s = (p || '').toLowerCase();
+        return PRIORITY_RANK.hasOwnProperty(s) ? PRIORITY_RANK[s] : 4;
+      }
+
+      function priCls(p) {
+        var s = (p || '').toLowerCase();
+        if (s === 'critical') return 'severity-critical';
+        if (s === 'high')     return 'severity-high';
+        if (s === 'medium')   return 'severity-medium';
+        if (s === 'low')      return 'severity-healthy';
+        return 'severity-unknown';
+      }
+
+      var items;
+      var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+      if (recs.length > 0) {
+        items = recs.slice().sort(function(a, b) {
+          return priRank(a.priority) - priRank(b.priority);
+        }).slice(0, 5);
+      } else {
+        var ap = data.actionPlan || {};
+        var combined = (Array.isArray(ap.immediate) ? ap.immediate : [])
+          .concat(Array.isArray(ap.shortTerm) ? ap.shortTerm : []);
+        if (!combined.length) return '';
+        items = combined.slice(0, 5).map(function(item) {
+          return { title: item ? item.title : undefined, rationale: item ? item.reason : undefined };
+        });
+      }
+
+      if (!items || !items.length) return '';
+
+      var h = '<div class="arch-sub-panel" style="margin-bottom:12px;">';
+      h += '<div class="arch-sub-label">Top Remediation Actions</div>';
+      items.forEach(function(item) {
+        if (!item) return;
+        h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
+        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px;">';
+        if (item.priority) {
+          h += '<span class="aq-badge ' + priCls(item.priority) + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
+            + esc(String(item.priority).toUpperCase()) + '</span>';
+        }
+        if (item.category) {
+          h += '<span style="font-size:0.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">'
+            + esc(String(item.category)) + '</span>';
+        }
+        h += '</div>';
+        if (item.title)     h += '<div style="font-size:0.82rem;font-weight:600;color:var(--text-primary);margin-bottom:2px;">' + esc(item.title) + '</div>';
+        if (item.rationale) h += '<div style="font-size:0.77rem;color:var(--text-secondary);">' + esc(item.rationale) + '</div>';
+        h += '</div>';
+      });
+      h += '</div>';
+      return h;
+    }
+
     function buildRepoRemediationHtml(data) {
       var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
         + 'Remediation guidance unavailable until architecture intelligence is available for this repository.</p>';
@@ -5606,6 +5679,8 @@
           + esc(String(conf).toUpperCase()) + ' CONFIDENCE</span>';
       }
       h += '</div>';
+
+      h += buildTopRemediationActionsHtml(data, esc);
 
       if (data.rawRemediationScore != null && data.scoreCapApplied) {
         h += '<div style="font-size:0.71rem;color:var(--text-muted);margin:-2px 0 5px;">'

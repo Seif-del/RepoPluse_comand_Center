@@ -684,3 +684,306 @@ describe('buildRepoRemediationHtml — version boundary context', () => {
     expect(html).toContain('Suppressed Comparisons: 0');
   });
 });
+
+// ── buildTopRemediationActionsHtml (copied verbatim from dashboard.html) ──────
+function buildTopRemediationActionsHtml(data, esc) {
+  var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+
+  function priRank(p) {
+    var s = (p || '').toLowerCase();
+    return PRIORITY_RANK.hasOwnProperty(s) ? PRIORITY_RANK[s] : 4;
+  }
+
+  function priCls(p) {
+    var s = (p || '').toLowerCase();
+    if (s === 'critical') return 'severity-critical';
+    if (s === 'high')     return 'severity-high';
+    if (s === 'medium')   return 'severity-medium';
+    if (s === 'low')      return 'severity-healthy';
+    return 'severity-unknown';
+  }
+
+  var items;
+  var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+  if (recs.length > 0) {
+    items = recs.slice().sort(function(a, b) {
+      return priRank(a.priority) - priRank(b.priority);
+    }).slice(0, 5);
+  } else {
+    var ap = data.actionPlan || {};
+    var combined = (Array.isArray(ap.immediate) ? ap.immediate : [])
+      .concat(Array.isArray(ap.shortTerm) ? ap.shortTerm : []);
+    if (!combined.length) return '';
+    items = combined.slice(0, 5).map(function(item) {
+      return { title: item ? item.title : undefined, rationale: item ? item.reason : undefined };
+    });
+  }
+
+  if (!items || !items.length) return '';
+
+  var h = '<div class="arch-sub-panel" style="margin-bottom:12px;">';
+  h += '<div class="arch-sub-label">Top Remediation Actions</div>';
+  items.forEach(function(item) {
+    if (!item) return;
+    h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px;">';
+    if (item.priority) {
+      h += '<span class="aq-badge ' + priCls(item.priority) + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
+        + esc(String(item.priority).toUpperCase()) + '</span>';
+    }
+    if (item.category) {
+      h += '<span style="font-size:0.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">'
+        + esc(String(item.category)) + '</span>';
+    }
+    h += '</div>';
+    if (item.title)     h += '<div style="font-size:0.82rem;font-weight:600;color:var(--text-primary);margin-bottom:2px;">' + esc(item.title) + '</div>';
+    if (item.rationale) h += '<div style="font-size:0.77rem;color:var(--text-secondary);">' + esc(item.rationale) + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe('buildTopRemediationActionsHtml — empty/no-op states', () => {
+  test('returns empty string when recommendations absent and no actionPlan', () => {
+    expect(buildTopRemediationActionsHtml({ recommendationLevel: 'high' }, esc)).toBe('');
+  });
+
+  test('returns empty string when recommendations is empty and actionPlan absent', () => {
+    expect(buildTopRemediationActionsHtml({ recommendations: [] }, esc)).toBe('');
+  });
+
+  test('returns empty string when recommendations empty and actionPlan phases both empty', () => {
+    const d = { recommendations: [], actionPlan: { immediate: [], shortTerm: [] } };
+    expect(buildTopRemediationActionsHtml(d, esc)).toBe('');
+  });
+
+  test('returns empty string when actionPlan present but only mediumTerm/longTerm have items', () => {
+    const d = { recommendations: [], actionPlan: { mediumTerm: [{ title: 'x' }] } };
+    expect(buildTopRemediationActionsHtml(d, esc)).toBe('');
+  });
+});
+
+describe('buildTopRemediationActionsHtml — section header', () => {
+  test('renders Top Remediation Actions header', () => {
+    const d = { recommendations: [{ priority: 'high', title: 'Fix it' }] };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('Top Remediation Actions');
+  });
+});
+
+describe('buildTopRemediationActionsHtml — priority sort order', () => {
+  const recs = [
+    { priority: 'low',      title: 'Low action' },
+    { priority: 'critical', title: 'Critical action' },
+    { priority: 'medium',   title: 'Medium action' },
+    { priority: 'high',     title: 'High action' },
+  ];
+
+  test('critical appears before high in output', () => {
+    const html = buildTopRemediationActionsHtml({ recommendations: recs }, esc);
+    expect(html.indexOf('Critical action')).toBeLessThan(html.indexOf('High action'));
+  });
+
+  test('high appears before medium in output', () => {
+    const html = buildTopRemediationActionsHtml({ recommendations: recs }, esc);
+    expect(html.indexOf('High action')).toBeLessThan(html.indexOf('Medium action'));
+  });
+
+  test('medium appears before low in output', () => {
+    const html = buildTopRemediationActionsHtml({ recommendations: recs }, esc);
+    expect(html.indexOf('Medium action')).toBeLessThan(html.indexOf('Low action'));
+  });
+
+  test('unknown priority sorts after low', () => {
+    const d = {
+      recommendations: [
+        { priority: 'low',     title: 'Low' },
+        { priority: 'unknown', title: 'Unknown' },
+      ],
+    };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html.indexOf('Low')).toBeLessThan(html.indexOf('Unknown'));
+  });
+});
+
+describe('buildTopRemediationActionsHtml — cap at 5', () => {
+  const recs = Array.from({ length: 8 }, function(_, i) {
+    return { priority: 'high', title: 'action-' + i };
+  });
+
+  test('renders exactly 5 items when 8 recommendations provided', () => {
+    const html = buildTopRemediationActionsHtml({ recommendations: recs }, esc);
+    expect(html).toContain('action-4');
+    expect(html).not.toContain('action-5');
+  });
+
+  test('does not mutate the original recommendations array', () => {
+    const original = recs.slice();
+    buildTopRemediationActionsHtml({ recommendations: recs }, esc);
+    expect(recs.length).toBe(original.length);
+  });
+});
+
+describe('buildTopRemediationActionsHtml — rendered fields', () => {
+  const data = {
+    recommendations: [{
+      priority: 'high',
+      category: 'architecture',
+      title: 'Extract shared service',
+      rationale: 'Reduces coupling.',
+    }],
+  };
+
+  test('renders priority badge uppercased', () => {
+    expect(buildTopRemediationActionsHtml(data, esc)).toContain('HIGH');
+  });
+
+  test('priority high maps to severity-high class', () => {
+    expect(buildTopRemediationActionsHtml(data, esc)).toContain('severity-high');
+  });
+
+  test('priority critical maps to severity-critical class', () => {
+    const d = { recommendations: [{ priority: 'critical', title: 't' }] };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('severity-critical');
+  });
+
+  test('priority medium maps to severity-medium class', () => {
+    const d = { recommendations: [{ priority: 'medium', title: 't' }] };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('severity-medium');
+  });
+
+  test('priority low maps to severity-healthy class', () => {
+    const d = { recommendations: [{ priority: 'low', title: 't' }] };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('severity-healthy');
+  });
+
+  test('renders category', () => {
+    expect(buildTopRemediationActionsHtml(data, esc)).toContain('architecture');
+  });
+
+  test('renders title', () => {
+    expect(buildTopRemediationActionsHtml(data, esc)).toContain('Extract shared service');
+  });
+
+  test('renders rationale', () => {
+    expect(buildTopRemediationActionsHtml(data, esc)).toContain('Reduces coupling.');
+  });
+
+  test('omits rationale row when rationale absent', () => {
+    const d = { recommendations: [{ priority: 'high', title: 'Fix it' }] };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).toContain('Fix it');
+    expect(html).not.toContain('text-secondary');
+  });
+
+  test('renders without crash when priority is absent', () => {
+    const d = { recommendations: [{ title: 'No priority item' }] };
+    expect(() => buildTopRemediationActionsHtml(d, esc)).not.toThrow();
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('No priority item');
+  });
+
+  test('renders without crash when category is absent', () => {
+    const d = { recommendations: [{ priority: 'high', title: 'No category' }] };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('No category');
+  });
+});
+
+describe('buildTopRemediationActionsHtml — XSS escaping', () => {
+  test('escapes XSS in title', () => {
+    const d = { recommendations: [{ title: '<script>alert(1)</script>' }] };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  test('escapes XSS in priority', () => {
+    const d = { recommendations: [{ priority: '<b>bad</b>', title: 'x' }] };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).not.toContain('<b>');
+    expect(html).toContain('&lt;B&gt;'); // toUpperCase() is called before esc
+  });
+
+  test('escapes XSS in category', () => {
+    const d = { recommendations: [{ priority: 'high', category: '<img src=x>', title: 'x' }] };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+
+  test('escapes XSS in rationale', () => {
+    const d = { recommendations: [{ priority: 'low', title: 'x', rationale: '<script>bad</script>' }] };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('buildTopRemediationActionsHtml — actionPlan fallback', () => {
+  test('uses actionPlan.immediate when recommendations empty', () => {
+    const d = {
+      recommendations: [],
+      actionPlan: { immediate: [{ title: 'Rotate secrets', reason: 'Security' }] },
+    };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('Rotate secrets');
+  });
+
+  test('uses actionPlan.shortTerm when recommendations empty and immediate absent', () => {
+    const d = {
+      recommendations: [],
+      actionPlan: { shortTerm: [{ title: 'Add tests', reason: 'Coverage' }] },
+    };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('Add tests');
+  });
+
+  test('combines immediate then shortTerm items in order', () => {
+    const d = {
+      recommendations: [],
+      actionPlan: {
+        immediate: [{ title: 'First' }],
+        shortTerm: [{ title: 'Second' }],
+      },
+    };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html.indexOf('First')).toBeLessThan(html.indexOf('Second'));
+  });
+
+  test('caps combined fallback items at 5', () => {
+    const items = Array.from({ length: 4 }, function(_, i) { return { title: 'imm-' + i }; });
+    const stItems = Array.from({ length: 4 }, function(_, i) { return { title: 'st-' + i }; });
+    const d = { recommendations: [], actionPlan: { immediate: items, shortTerm: stItems } };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).toContain('imm-3');  // 4th immediate item — present
+    expect(html).toContain('st-0');   // 5th item overall (1st shortTerm) — present
+    expect(html).not.toContain('st-1'); // 6th item — beyond cap
+  });
+
+  test('renders reason from actionPlan item as rationale', () => {
+    const d = {
+      recommendations: [],
+      actionPlan: { immediate: [{ title: 'Fix dep', reason: 'Outdated library' }] },
+    };
+    expect(buildTopRemediationActionsHtml(d, esc)).toContain('Outdated library');
+  });
+
+  test('escapes XSS in fallback title', () => {
+    const d = {
+      recommendations: [],
+      actionPlan: { immediate: [{ title: '<script>bad</script>' }] },
+    };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  test('does not activate fallback when recommendations is non-empty', () => {
+    const d = {
+      recommendations: [{ priority: 'high', title: 'Primary rec' }],
+      actionPlan: { immediate: [{ title: 'Should not appear' }] },
+    };
+    const html = buildTopRemediationActionsHtml(d, esc);
+    expect(html).toContain('Primary rec');
+    expect(html).not.toContain('Should not appear');
+  });
+});
