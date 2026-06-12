@@ -6280,13 +6280,16 @@
 
     function buildAttentionDriversHtml(aq) {
       if (!aq || !Array.isArray(aq.drivers) || !aq.drivers.length) return '';
-      var rows = aq.drivers.map(function(d) {
-        return '<li class="attn-driver-row">'
-          + '<span class="attn-driver-label">' + esc(d.label) + '</span>'
-          + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
-          + '</li>';
-      }).join('');
-      return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Attention Drivers</div>'
+      var rows = aq.drivers.slice()
+        .sort(function(a, b) { return (b.contribution || 0) - (a.contribution || 0); })
+        .slice(0, 5)
+        .map(function(d) {
+          return '<li class="attn-driver-row">'
+            + '<span class="attn-driver-label">' + esc(d.label) + '</span>'
+            + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
+            + '</li>';
+        }).join('');
+      return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Top Risk Drivers</div>'
         + '<ul class="attn-driver-list">' + rows + '</ul>';
     }
 

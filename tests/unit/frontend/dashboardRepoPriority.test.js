@@ -1630,13 +1630,16 @@ function buildOverviewCardsHtml(repo, aq, archData, fcData) {
 // ── buildAttentionDriversHtml (copied verbatim from dashboard.html) ──────────
 function buildAttentionDriversHtml(aq) {
   if (!aq || !Array.isArray(aq.drivers) || !aq.drivers.length) return '';
-  var rows = aq.drivers.map(function(d) {
-    return '<li class="attn-driver-row">'
-      + '<span class="attn-driver-label">' + esc(d.label) + '</span>'
-      + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
-      + '</li>';
-  }).join('');
-  return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Attention Drivers</div>'
+  var rows = aq.drivers.slice()
+    .sort(function(a, b) { return (b.contribution || 0) - (a.contribution || 0); })
+    .slice(0, 5)
+    .map(function(d) {
+      return '<li class="attn-driver-row">'
+        + '<span class="attn-driver-label">' + esc(d.label) + '</span>'
+        + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
+        + '</li>';
+    }).join('');
+  return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Top Risk Drivers</div>'
     + '<ul class="attn-driver-list">' + rows + '</ul>';
 }
 
@@ -3269,11 +3272,12 @@ describe('buildAttentionDriversHtml — guard conditions', () => {
 });
 
 describe('buildAttentionDriversHtml — render', () => {
-  test('section heading "Attention Drivers" present when drivers non-empty', () => {
+  test('section heading "Top Risk Drivers" present when drivers non-empty', () => {
     const html = buildAttentionDriversHtml({
       drivers: [{ label: 'CI pipeline is failing', contribution: 40 }],
     });
-    expect(html).toContain('Attention Drivers');
+    expect(html).toContain('Top Risk Drivers');
+    expect(html).not.toContain('Attention Drivers');
   });
 
   test('single driver renders label and +N', () => {
@@ -3341,5 +3345,121 @@ describe('buildAttentionDriversHtml — render', () => {
     });
     expect(html).toContain('attn-driver-label');
     expect(html).toContain('attn-driver-pts');
+  });
+});
+
+describe('buildAttentionDriversHtml — sort by contribution descending', () => {
+  test('highest contribution appears before lower ones', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'Low driver',    contribution: 3  },
+        { label: 'High driver',   contribution: 50 },
+        { label: 'Medium driver', contribution: 15 },
+      ],
+    });
+    expect(html.indexOf('High driver')).toBeLessThan(html.indexOf('Medium driver'));
+    expect(html.indexOf('Medium driver')).toBeLessThan(html.indexOf('Low driver'));
+  });
+
+  test('already-sorted input renders in same order', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'First',  contribution: 40 },
+        { label: 'Second', contribution: 20 },
+        { label: 'Third',  contribution: 5  },
+      ],
+    });
+    expect(html.indexOf('First')).toBeLessThan(html.indexOf('Second'));
+    expect(html.indexOf('Second')).toBeLessThan(html.indexOf('Third'));
+  });
+
+  test('reverse-sorted input is re-sorted correctly', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'Low',    contribution: 2  },
+        { label: 'Medium', contribution: 18 },
+        { label: 'High',   contribution: 55 },
+      ],
+    });
+    expect(html.indexOf('High')).toBeLessThan(html.indexOf('Medium'));
+    expect(html.indexOf('Medium')).toBeLessThan(html.indexOf('Low'));
+  });
+
+  test('missing contribution treated as 0 during sort', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'No contribution' },
+        { label: 'Has contribution', contribution: 10 },
+      ],
+    });
+    expect(html.indexOf('Has contribution')).toBeLessThan(html.indexOf('No contribution'));
+  });
+});
+
+describe('buildAttentionDriversHtml — cap at 5', () => {
+  const sevenDrivers = [
+    { label: 'Driver A', contribution: 70 },
+    { label: 'Driver B', contribution: 60 },
+    { label: 'Driver C', contribution: 50 },
+    { label: 'Driver D', contribution: 40 },
+    { label: 'Driver E', contribution: 30 },
+    { label: 'Driver F', contribution: 20 },
+    { label: 'Driver G', contribution: 10 },
+  ];
+
+  test('renders exactly 5 rows when 7 drivers provided', () => {
+    const html = buildAttentionDriversHtml({ drivers: sevenDrivers });
+    const matches = html.match(/attn-driver-row/g);
+    expect(matches).toHaveLength(5);
+  });
+
+  test('top 5 by contribution are present, 6th and 7th are absent', () => {
+    const html = buildAttentionDriversHtml({ drivers: sevenDrivers });
+    expect(html).toContain('Driver A');
+    expect(html).toContain('Driver B');
+    expect(html).toContain('Driver C');
+    expect(html).toContain('Driver D');
+    expect(html).toContain('Driver E');
+    expect(html).not.toContain('Driver F');
+    expect(html).not.toContain('Driver G');
+  });
+
+  test('renders all rows when exactly 5 drivers provided', () => {
+    const fiveDrivers = sevenDrivers.slice(0, 5);
+    const html = buildAttentionDriversHtml({ drivers: fiveDrivers });
+    const matches = html.match(/attn-driver-row/g);
+    expect(matches).toHaveLength(5);
+  });
+
+  test('renders all rows when fewer than 5 drivers provided', () => {
+    const html = buildAttentionDriversHtml({
+      drivers: [
+        { label: 'Only one', contribution: 20 },
+      ],
+    });
+    const matches = html.match(/attn-driver-row/g);
+    expect(matches).toHaveLength(1);
+  });
+});
+
+describe('buildAttentionDriversHtml — does not mutate aq.drivers', () => {
+  test('original array order is unchanged after call', () => {
+    const drivers = [
+      { label: 'Low',    contribution: 5  },
+      { label: 'High',   contribution: 50 },
+      { label: 'Medium', contribution: 20 },
+    ];
+    const originalOrder = drivers.map(function(d) { return d.label; });
+    buildAttentionDriversHtml({ drivers });
+    const afterOrder = drivers.map(function(d) { return d.label; });
+    expect(afterOrder).toEqual(originalOrder);
+  });
+
+  test('original array length is unchanged after call', () => {
+    const drivers = Array.from({ length: 8 }, function(_, i) {
+      return { label: 'D' + i, contribution: i * 10 };
+    });
+    buildAttentionDriversHtml({ drivers });
+    expect(drivers).toHaveLength(8);
   });
 });
