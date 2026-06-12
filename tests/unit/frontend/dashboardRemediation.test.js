@@ -1318,3 +1318,273 @@ describe('buildRecentRegressionsHtml — XSS escaping', () => {
     expect(html).toContain('&lt;img&gt;');
   });
 });
+
+// ── buildRecentVersionChangesHtml (copied verbatim from dashboard.html) ───────
+function buildRecentVersionChangesHtml(fc, esc) {
+  if (!fc) return '';
+
+  var events = Array.isArray(fc.driftEvents) ? fc.driftEvents : [];
+
+  var changes = events
+    .filter(function(ev) { return ev && ev.type === 'version_change'; })
+    .sort(function(a, b) {
+      var da = a.snapshotAt ? new Date(a.snapshotAt).getTime() : 0;
+      var db = b.snapshotAt ? new Date(b.snapshotAt).getTime() : 0;
+      return db - da;
+    })
+    .slice(0, 5);
+
+  if (!changes.length) return '';
+
+  var ds = 'font-size:0.72rem;color:var(--text-muted);margin-top:2px;';
+  var h  = '<div class="arch-sub-panel" style="margin-bottom:12px;">';
+  h += '<div class="arch-sub-label">Recent Version Changes</div>';
+
+  changes.forEach(function(ev) {
+    var pa = ev.prevAnalyzerVersion || 'legacy';
+    var ca = ev.currAnalyzerVersion || 'legacy';
+    var ps = ev.prevScoringVersion  || 'legacy';
+    var cs = ev.currScoringVersion  || 'legacy';
+    var timeStr = ev.snapshotAt
+      ? new Date(ev.snapshotAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '—';
+
+    h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">';
+    h += '<span class="aq-badge severity-unknown" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;'
+      + 'letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">VERSION CHANGE</span>';
+    h += '<span style="font-size:0.70rem;color:var(--text-muted);">' + esc(timeStr) + '</span>';
+    h += '</div>';
+    h += '<div style="' + ds + '">Analyzer: ' + esc(pa) + ' → ' + esc(ca) + '</div>';
+    h += '<div style="' + ds + '">Scoring: '  + esc(ps) + ' → ' + esc(cs) + '</div>';
+    h += '</div>';
+  });
+
+  h += '</div>';
+  return h;
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+function makeVc(overrides) {
+  return Object.assign({
+    type:                'version_change',
+    severity:            'low',
+    snapshotAt:          '2026-05-15T12:00:00Z',
+    summary:             'Analyzer or scoring version changed.',
+    prevAnalyzerVersion: 'v2.0.0',
+    currAnalyzerVersion: 'v2.1.0',
+    prevScoringVersion:  'v1.3.0',
+    currScoringVersion:  'v1.4.0',
+  }, overrides);
+}
+
+describe('buildRecentVersionChangesHtml — null/empty states', () => {
+  test('null fc returns empty string', () => {
+    expect(buildRecentVersionChangesHtml(null, esc)).toBe('');
+  });
+
+  test('fc with no driftEvents returns empty string', () => {
+    expect(buildRecentVersionChangesHtml({ driftEvents: [] }, esc)).toBe('');
+  });
+
+  test('fc missing driftEvents property returns empty string', () => {
+    expect(buildRecentVersionChangesHtml({}, esc)).toBe('');
+  });
+
+  test('fc with only non-version_change events returns empty string', () => {
+    const fc = { driftEvents: [
+      { type: 'score_drop',  severity: 'high',   snapshotAt: '2026-05-01T00:00:00Z', summary: 'Drop.' },
+      { type: 'api_regression', severity: 'medium', snapshotAt: '2026-04-01T00:00:00Z', summary: 'API.' },
+    ]};
+    expect(buildRecentVersionChangesHtml(fc, esc)).toBe('');
+  });
+});
+
+describe('buildRecentVersionChangesHtml — section header', () => {
+  test('renders "Recent Version Changes" header when events present', () => {
+    const fc = { driftEvents: [makeVc()] };
+    expect(buildRecentVersionChangesHtml(fc, esc)).toContain('Recent Version Changes');
+  });
+
+  test('renders "VERSION CHANGE" badge', () => {
+    const fc = { driftEvents: [makeVc()] };
+    expect(buildRecentVersionChangesHtml(fc, esc)).toContain('VERSION CHANGE');
+  });
+});
+
+describe('buildRecentVersionChangesHtml — type filter', () => {
+  test('version_change event is included', () => {
+    const fc = { driftEvents: [makeVc({ summary: 'vc-event' })] };
+    expect(buildRecentVersionChangesHtml(fc, esc)).toContain('Recent Version Changes');
+  });
+
+  test('score_drop event is not included', () => {
+    const fc = { driftEvents: [
+      { type: 'score_drop', snapshotAt: '2026-05-01T00:00:00Z', summary: 'drop-event', severity: 'high' },
+      makeVc(),
+    ]};
+    expect(buildRecentVersionChangesHtml(fc, esc)).not.toContain('drop-event');
+  });
+
+  test('mixed events — only version_change rows rendered', () => {
+    const fc = { driftEvents: [
+      makeVc({ prevAnalyzerVersion: 'v1.0', currAnalyzerVersion: 'v2.0' }),
+      { type: 'new_risk', snapshotAt: '2026-04-01T00:00:00Z', summary: 'risk-summary', severity: 'high' },
+    ]};
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).toContain('v1.0');
+    expect(html).not.toContain('risk-summary');
+  });
+});
+
+describe('buildRecentVersionChangesHtml — sort order (most recent first)', () => {
+  test('more recent snapshotAt appears before older one', () => {
+    const fc = { driftEvents: [
+      makeVc({ snapshotAt: '2026-02-01T00:00:00Z', prevAnalyzerVersion: 'v1.0', currAnalyzerVersion: 'v1.1', summary: 'older' }),
+      makeVc({ snapshotAt: '2026-05-01T00:00:00Z', prevAnalyzerVersion: 'v2.0', currAnalyzerVersion: 'v2.1', summary: 'newer' }),
+    ]};
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html.indexOf('v2.0')).toBeLessThan(html.indexOf('v1.0'));
+  });
+
+  test('null snapshotAt sorts last', () => {
+    const fc = { driftEvents: [
+      makeVc({ snapshotAt: null,                   prevAnalyzerVersion: 'vNull', currAnalyzerVersion: 'vNull2' }),
+      makeVc({ snapshotAt: '2026-04-01T00:00:00Z', prevAnalyzerVersion: 'vDated', currAnalyzerVersion: 'vDated2' }),
+    ]};
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html.indexOf('vDated')).toBeLessThan(html.indexOf('vNull'));
+  });
+});
+
+describe('buildRecentVersionChangesHtml — cap at 5', () => {
+  const eightChanges = Array.from({ length: 8 }, function(_, i) {
+    return makeVc({
+      snapshotAt:          '2026-0' + (i + 1) + '-01T00:00:00Z',
+      prevAnalyzerVersion: 'v' + i + '.0',
+      currAnalyzerVersion: 'v' + (i + 1) + '.0',
+    });
+  });
+
+  test('renders exactly 5 rows when 8 version_change events provided', () => {
+    const fc = { driftEvents: eightChanges };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    // 5 most recent: indices 7,6,5,4,3 → v7.0, v6.0, v5.0, v4.0, v3.0
+    expect(html).toContain('v7.0');
+    expect(html).toContain('v3.0');
+    expect(html).not.toContain('v2.0');
+  });
+
+  test('does not mutate the original driftEvents array', () => {
+    const evs = Array.from({ length: 3 }, function(_, i) { return makeVc({ snapshotAt: '2026-0' + (i + 1) + '-01T00:00:00Z' }); });
+    const original = evs.slice();
+    buildRecentVersionChangesHtml({ driftEvents: evs }, esc);
+    expect(evs.length).toBe(original.length);
+  });
+});
+
+describe('buildRecentVersionChangesHtml — rendered fields', () => {
+  test('renders analyzer prevVersion → currVersion', () => {
+    const fc = { driftEvents: [makeVc({ prevAnalyzerVersion: 'v2.0.0', currAnalyzerVersion: 'v2.1.0' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).toContain('v2.0.0');
+    expect(html).toContain('v2.1.0');
+    expect(html).toContain('Analyzer:');
+  });
+
+  test('renders scoring prevVersion → currVersion', () => {
+    const fc = { driftEvents: [makeVc({ prevScoringVersion: 'v1.3.0', currScoringVersion: 'v1.4.0' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).toContain('v1.3.0');
+    expect(html).toContain('v1.4.0');
+    expect(html).toContain('Scoring:');
+  });
+
+  test('renders both analyzer and scoring lines for every event', () => {
+    const fc = { driftEvents: [makeVc()] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).toContain('Analyzer:');
+    expect(html).toContain('Scoring:');
+  });
+
+  test('renders both lines even when analyzer side is unchanged (prev === curr)', () => {
+    const fc = { driftEvents: [makeVc({ prevAnalyzerVersion: 'v2.0.0', currAnalyzerVersion: 'v2.0.0' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    const analyzerCount = (html.match(/Analyzer:/g) || []).length;
+    const scoringCount  = (html.match(/Scoring:/g)  || []).length;
+    expect(analyzerCount).toBe(1);
+    expect(scoringCount).toBe(1);
+  });
+
+  test('renders both lines even when scoring side is unchanged (prev === curr)', () => {
+    const fc = { driftEvents: [makeVc({ prevScoringVersion: 'v1.4.0', currScoringVersion: 'v1.4.0' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).toContain('Analyzer:');
+    expect(html).toContain('Scoring:');
+  });
+
+  test('formatted date rendered when snapshotAt present — raw ISO not shown', () => {
+    const fc = { driftEvents: [makeVc({ snapshotAt: '2026-05-15T12:00:00Z' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).not.toContain('2026-05-15T12:00:00Z');
+  });
+
+  test('renders "—" when snapshotAt is null', () => {
+    const fc = { driftEvents: [makeVc({ snapshotAt: null })] };
+    expect(buildRecentVersionChangesHtml(fc, esc)).toContain('>—<');
+  });
+});
+
+describe('buildRecentVersionChangesHtml — legacy fallbacks', () => {
+  test('absent prevAnalyzerVersion falls back to "legacy"', () => {
+    const ev = makeVc();
+    delete ev.prevAnalyzerVersion;
+    const html = buildRecentVersionChangesHtml({ driftEvents: [ev] }, esc);
+    expect(html).toContain('legacy');
+  });
+
+  test('absent currAnalyzerVersion falls back to "legacy"', () => {
+    const ev = makeVc();
+    delete ev.currAnalyzerVersion;
+    const html = buildRecentVersionChangesHtml({ driftEvents: [ev] }, esc);
+    expect(html).toContain('legacy');
+  });
+
+  test('absent prevScoringVersion falls back to "legacy"', () => {
+    const ev = makeVc();
+    delete ev.prevScoringVersion;
+    const html = buildRecentVersionChangesHtml({ driftEvents: [ev] }, esc);
+    expect(html).toContain('legacy');
+  });
+
+  test('absent currScoringVersion falls back to "legacy"', () => {
+    const ev = makeVc();
+    delete ev.currScoringVersion;
+    const html = buildRecentVersionChangesHtml({ driftEvents: [ev] }, esc);
+    expect(html).toContain('legacy');
+  });
+});
+
+describe('buildRecentVersionChangesHtml — XSS escaping', () => {
+  test('escapes XSS in prevAnalyzerVersion', () => {
+    const fc = { driftEvents: [makeVc({ prevAnalyzerVersion: '<script>bad</script>' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  test('escapes XSS in currScoringVersion', () => {
+    const fc = { driftEvents: [makeVc({ currScoringVersion: '<img src=x onerror=alert(1)>' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+
+  test('escapes XSS in currAnalyzerVersion', () => {
+    const fc = { driftEvents: [makeVc({ currAnalyzerVersion: '"onload="evil()"' })] };
+    const html = buildRecentVersionChangesHtml(fc, esc);
+    expect(html).not.toContain('"onload=');
+    expect(html).toContain('&quot;');
+  });
+});
