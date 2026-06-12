@@ -1985,6 +1985,9 @@
       </div>
     </div>
 
+    <!-- Portfolio Briefing -->
+    <div id="portfolio-briefing"></div>
+
     <!-- Portfolio tabs -->
     <div class="section" id="section-portfolio-tabs">
       <div class="repo-tabs" id="portfolio-tab-bar" role="tablist">
@@ -3816,6 +3819,99 @@
       return html;
     }
 
+    // ── Portfolio Briefing ────────────────────────────────────────────────────
+    // Compact bullet-list card rendered above the portfolio tabs.
+    // Pure: takes kpi, repos, repoIntel — never reads global state directly.
+
+    function buildPortfolioBriefingHtml(kpi, repos, repoIntel) {
+      if (!kpi) kpi = {};
+      if (!Array.isArray(repos)) repos = [];
+      if (!repoIntel || typeof repoIntel !== 'object') repoIntel = {};
+
+      var kpiHasData    = kpi.architectureScore != null || kpi.governanceScore != null
+        || kpi.forecastLevel != null || kpi.criticalRepos != null
+        || kpi.watchlistCount != null || kpi.snapshotCount != null;
+      var intelHasData  = Object.keys(repoIntel).length > 0;
+
+      if (!kpiHasData && !repos.length && !intelHasData) return '';
+
+      var bullets = [];
+
+      // 1. Repositories requiring immediate attention (from _repos labels)
+      var attnRepos = repos.filter(function(r) {
+        return r && (r.label === 'critical' || r.label === 'at-risk');
+      });
+      if (attnRepos.length > 0) {
+        var n = attnRepos.length;
+        bullets.push(n + ' ' + (n === 1 ? 'repository requires' : 'repositories require') + ' immediate attention');
+      }
+
+      // 2. Repos with risky architecture health (from _repoIntelligenceById)
+      var riskyIds = Object.keys(repoIntel).filter(function(id) {
+        return repoIntel[id] && repoIntel[id].architectureHealthLevel === 'risky';
+      });
+      if (riskyIds.length > 0) {
+        var nr = riskyIds.length;
+        bullets.push(nr + ' ' + (nr === 1 ? 'repository has' : 'repositories have') + ' risky architecture health');
+      }
+
+      // 3. Portfolio forecast level
+      if (kpi.forecastLevel) {
+        var fcLabels = {
+          none:     'No degradation forecast',
+          low:      'Low degradation forecast',
+          stable:   'Portfolio forecast stable',
+          watch:    'Portfolio forecast in watch state',
+          degrading:'Portfolio forecast degrading — structural risk elevated',
+          critical: 'Portfolio forecast critical — immediate intervention required',
+        };
+        bullets.push(fcLabels[kpi.forecastLevel] || ('Portfolio forecast: ' + kpi.forecastLevel));
+      }
+
+      // 4. Architecture watchlist repos (governance hotspots)
+      if (kpi.watchlistCount != null && kpi.watchlistCount > 0) {
+        var wn = kpi.watchlistCount;
+        bullets.push(wn + ' ' + (wn === 1 ? 'repository' : 'repositories') + ' on architecture watchlist');
+      }
+
+      // 5. Architecture snapshot coverage
+      var hasCov = kpi.snapshotCount != null && kpi.repoCount != null && kpi.repoCount > 0;
+      if (hasCov) {
+        var pct = Math.round(kpi.snapshotCount / kpi.repoCount * 100);
+        bullets.push('Architecture snapshot coverage: ' + pct + '% (' + kpi.snapshotCount + ' / ' + kpi.repoCount + ' repos)');
+      }
+
+      // 6. Highest-risk repository (lowest score among repos with a score)
+      var scored = repos.filter(function(r) { return r && r.score != null; });
+      if (scored.length > 0) {
+        var worst = scored.slice().sort(function(a, b) { return a.score - b.score; })[0];
+        if (worst && worst.fullName) {
+          bullets.push('Highest-risk repository: ' + worst.fullName);
+        }
+      }
+
+      if (!bullets.length) return '';
+
+      var sev = (kpi.forecastLevel === 'critical' || (kpi.criticalRepos != null && kpi.criticalRepos > 0))
+                  ? 'critical'
+              : (kpi.forecastLevel === 'degrading' || attnRepos.length > 0)
+                  ? 'high'
+              : (kpi.watchlistCount != null && kpi.watchlistCount > 0)
+                  ? 'medium'
+              : 'healthy';
+
+      var h = '<div class="exec-brief sev-' + esc(sev) + '" style="margin-bottom:16px;">';
+      h += '<div class="exec-brief-header">';
+      h += '<span class="exec-brief-label">Portfolio Briefing</span>';
+      h += '</div>';
+      h += '<ul class="exec-brief-list" style="margin-top:6px;">';
+      bullets.forEach(function(b) {
+        h += '<li class="exec-brief-item">' + esc(b) + '</li>';
+      });
+      h += '</ul></div>';
+      return h;
+    }
+
     // ── Executive Briefing ────────────────────────────────────────────────────
     // Synthesizes portfolio intelligence from _execKpi — no API call required.
 
@@ -4017,8 +4113,15 @@
       if (confEl) confEl.innerHTML = '';
     }
 
+    function renderPortfolioBriefing() {
+      var el = document.getElementById('portfolio-briefing');
+      if (!el) return;
+      el.innerHTML = buildPortfolioBriefingHtml(_execKpi, _repos, _repoIntelligenceById);
+    }
+
     function loadExecutiveSummary() {
       renderExecutiveBriefing();
+      renderPortfolioBriefing();
     }
 
     function _fmtDetectedAt(iso) {
@@ -4212,6 +4315,7 @@
             _execKpi.forecastLevel = d.portfolioForecastLevel;
             renderExecutiveKpis();
             renderExecutiveBriefing();
+            renderPortfolioBriefing();
           }
           // Populate per-repo forecast intel from projectedRiskRepos[]
           if (d) {
@@ -7028,6 +7132,7 @@
           }
           applyFilter();
           renderPortfolioTrend();
+          renderPortfolioBriefing();
 
           // Build chart points from risk scores (group by date, take avg)
           var byDate = {};
@@ -7609,6 +7714,7 @@
           if (_archCache.repoCount     != null) _execKpi.repoCount     = _archCache.repoCount;
           renderExecutiveKpis();
           renderExecutiveBriefing();
+          renderPortfolioBriefing();
           // Populate per-repo architecture intel from benchmarkedRepositories[]
           var benched = Array.isArray(d.benchmarkedRepositories) ? d.benchmarkedRepositories : [];
           benched.forEach(function(r) {
@@ -7958,6 +8064,7 @@
             _execKpi.governanceScore = d.governanceScore;
             renderExecutiveKpis();
             renderExecutiveBriefing();
+            renderPortfolioBriefing();
           }
         })
         .catch(function(err) {
@@ -8188,6 +8295,7 @@
             if (wlEsc.critical != null) _execKpi.criticalRepos = wlEsc.critical;
             renderExecutiveKpis();
             renderExecutiveBriefing();
+            renderPortfolioBriefing();
             // Populate per-repo watchlist intel from priorityQueue[] (has repoId)
             var wlQueue = Array.isArray(d.priorityQueue) ? d.priorityQueue : [];
             wlQueue.forEach(function(item) {
