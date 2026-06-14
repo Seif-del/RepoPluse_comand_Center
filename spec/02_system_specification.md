@@ -18,11 +18,11 @@ Modular Monolith with Real-Time Event Processing
 
 | Layer               | Technology                                   |
 | ------------------- | -------------------------------------------- |
-| Frontend            | React                                        |
+| Frontend            | Vanilla HTML/JS (Phase 1–5); React deferred to Phase 6+ — see ADR-001 |
 | Backend API         | Node.js + Express                            |
 | Database            | PostgreSQL                                   |
 | Authentication      | GitHub OAuth                                 |
-| Real-Time Transport | WebSocket                                    |
+| Real-Time Transport | 60-second polling (Phases 1–5); WebSocket deferred to Phase 6+ — see ADR-002 |
 | Background Jobs     | Redis Queue or RabbitMQ                      |
 | ORM                 | Prisma or Sequelize                          |
 | Hosting             | Cloud-based deployment                       |
@@ -38,7 +38,7 @@ Modular Monolith with Real-Time Event Processing
 
 The system consists of:
 
-1. React frontend dashboard
+1. Vanilla HTML/JS frontend dashboard (React deferred to Phase 6+ — see ADR-001)
 2. Express backend API
 3. PostgreSQL persistence layer
 4. Background ingestion workers
@@ -51,8 +51,9 @@ The system consists of:
 
 ```plaintext
 +-----------------------+
-| React Frontend        |
+| Vanilla HTML/JS       |
 | Dashboard UI          |
+| (React: Phase 6+)     |
 +----------+------------+
            |
            v
@@ -354,7 +355,7 @@ RBAC must be enforced:
 
 ## Transport
 
-WebSocket
+60-second polling (Phases 1–5); WebSocket deferred to Phase 6+ — see ADR-002
 
 ## Real-Time Events
 

@@ -7107,8 +7107,20 @@
         + '</div>';
     }
 
-    function loadRepos() {
-      fetch('/api/repos', { credentials: 'include' })
+    function buildReposUrl(options) {
+      if (options && options.riskLevel) {
+        return '/api/repos?riskLevel=' + encodeURIComponent(options.riskLevel);
+      }
+      return '/api/repos';
+    }
+
+    function filterToLoadOptions(activeFilter) {
+      if (activeFilter === 'Healthy') return { riskLevel: 'healthy' };
+      return null;
+    }
+
+    function loadRepos(options) {
+      fetch(buildReposUrl(options), { credentials: 'include' })
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok === false) {
@@ -7164,7 +7176,7 @@
       var btn = e.target.closest('.filter-btn');
       if (!btn) return;
       _activeFilter = btn.dataset.filter;
-      applyFilter();
+      loadRepos(filterToLoadOptions(_activeFilter));
     });
 
     // ── History ──────────────────────────────────────────────────────────────

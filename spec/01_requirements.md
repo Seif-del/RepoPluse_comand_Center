@@ -249,10 +249,11 @@ The system must support:
 1. Authentication must use GitHub OAuth for the MVP.
 2. Recommendations must be rule-based for the MVP.
 3. PostgreSQL must be the primary database.
-4. Frontend must use React.
+4. Frontend for the current release (Phases 1–5) is implemented in vanilla HTML/JS (`frontend/dashboard.html`). React migration is formally deferred to Phase 6+ and will be triggered by one of: (a) implementation of FR-007 WebSocket real-time updates, (b) `dashboard.html` exceeding maintainable complexity, or (c) multi-page shared-component requirements that cannot be met without a component model. See `docs/adr/ADR-001-frontend-technology.md`.
 5. Backend must use Node.js and Express.
 6. GitHub API availability is an external dependency.
 7. No automatic project intervention may occur without project manager approval.
+8. Dashboard refresh for the current release (Phases 1–5) uses 60-second polling (`setInterval(refresh, 60000)` in `frontend/dashboard.html`). This satisfies the FR-007 acceptance criterion ("without manual refresh") for the current phase. WebSocket push transport is formally deferred to Phase 6+ and will be triggered by one of: (a) `snapshotWorker` data change frequency dropping below 60 seconds, (b) a Redis pub/sub infrastructure being introduced, or (c) a product requirement for sub-60-second dashboard latency. See `docs/adr/ADR-002-realtime-transport.md`.
 
 ## Assumptions
 

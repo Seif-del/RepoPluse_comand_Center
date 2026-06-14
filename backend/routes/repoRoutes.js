@@ -66,6 +66,11 @@ router.use(authenticate);
 // Returns all active repositories for the logged-in user, each with its latest risk score.
 router.get('/', async (req, res, next) => {
   try {
+    const { riskLevel } = req.query || {};
+    const VALID_RISK_LABELS = new Set(['healthy', 'at-risk', 'critical']);
+    if (riskLevel !== undefined && !VALID_RISK_LABELS.has(riskLevel)) {
+      return res.status(400).json({ error: 'Invalid riskLevel. Must be healthy, at-risk, or critical.' });
+    }
     const result = await req.app.locals.db.query(
       `SELECT
          r.id,
@@ -110,8 +115,9 @@ router.get('/', async (req, res, next) => {
          LIMIT 1
        ) rm ON true
        WHERE r.user_id = $1 AND r.is_active = true
+         AND ($2::varchar IS NULL OR rs.label = $2)
        ORDER BY rs.score DESC NULLS LAST, r.github_full_name ASC`,
-      [req.user.userId]
+      [req.user.userId, riskLevel || null]
     );
 
     const repos = result.rows.map(r => ({

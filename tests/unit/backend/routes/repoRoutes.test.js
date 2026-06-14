@@ -186,6 +186,102 @@ describe('repoRoutes GET /', () => {
   });
 });
 
+// ── GET / — riskLevel filter ──────────────────────────────────────────────────
+
+describe('repoRoutes GET / — riskLevel filter', () => {
+  beforeEach(() => {
+    getRepoRiskFactors.mockReturnValue({ hasMetrics: true, triggered: [], notMeasured: [], allClear: true });
+    getTrendIndicator.mockReturnValue({ direction: 'stable', delta: 0, label: 'Operationally stable' });
+  });
+
+  it('passes null as the riskLevel SQL parameter when query param is absent', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null]
+    );
+  });
+
+  it('passes riskLevel=healthy to db.query as the second parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'healthy' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'healthy']
+    );
+  });
+
+  it('passes riskLevel=at-risk to db.query as the second parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'at-risk' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'at-risk']
+    );
+  });
+
+  it('passes riskLevel=critical to db.query as the second parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'critical' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'critical']
+    );
+  });
+
+  it('SQL query contains the riskLevel filter clause', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/\$2.*IS NULL.*OR.*rs\.label.*=.*\$2/s);
+  });
+
+  it('returns 400 when riskLevel is not a valid label value', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'unknown' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(String) })
+    );
+  });
+
+  it('does not call db.query when riskLevel is invalid', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'at_risk' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
 // ── GET /attention ────────────────────────────────────────────────────────────
 
 describe('repoRoutes GET /attention', () => {

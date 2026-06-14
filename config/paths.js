@@ -32,4 +32,13 @@ const PROJECT_SOURCE = process.env.PROJECT_SOURCE || 'file';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const GITHUB_ORG   = process.env.GITHUB_ORG   || '';
 
-module.exports = { HISTORY_FILE, REPO_HISTORY_FILE, PORT, PROJECTS_FILE, SNAPSHOT_INTERVAL_MS, STALE_DAYS, INACTIVE_DAYS, ISSUE_THRESHOLD, PROJECT_SOURCE, GITHUB_TOKEN, GITHUB_ORG };
+const ENABLE_PROACTIVE_ALERTS = process.env.ENABLE_PROACTIVE_ALERTS === 'true';
+const SLACK_WEBHOOK_URL        = process.env.SLACK_WEBHOOK_URL        || '';
+const SMTP_HOST                = process.env.SMTP_HOST                || '';
+const SMTP_PORT                = parseInt(process.env.SMTP_PORT, 10)  || 587;
+const SMTP_USER                = process.env.SMTP_USER                || '';
+const SMTP_PASS                = process.env.SMTP_PASS                || '';
+const ALERT_EMAIL_TO           = process.env.ALERT_EMAIL_TO           || '';
+const ALERT_EMAIL_FROM         = process.env.ALERT_EMAIL_FROM         || '';
+
+module.exports = { HISTORY_FILE, REPO_HISTORY_FILE, PORT, PROJECTS_FILE, SNAPSHOT_INTERVAL_MS, STALE_DAYS, INACTIVE_DAYS, ISSUE_THRESHOLD, PROJECT_SOURCE, GITHUB_TOKEN, GITHUB_ORG, ENABLE_PROACTIVE_ALERTS, SLACK_WEBHOOK_URL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, ALERT_EMAIL_TO, ALERT_EMAIL_FROM };
