@@ -41,3 +41,6 @@ execution/managedRepos.json
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 .claude/
+
+# ─── Local test tooling binaries ──────────────────────────────────────────────
+mailhog.exe

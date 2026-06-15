@@ -21,8 +21,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1",
-    "nodemailer": "^8.0.5"
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "jest": "^30.3.0",

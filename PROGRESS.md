@@ -3,17 +3,17 @@
 
 This is the authoritative implementation-state and maturity tracking file for RepoPulse Command Center.  
 It is maintained per the contract defined in `CLAUDE.md`.  
-Last updated: **2026-06-13**
+Last updated: **2026-06-15**
 
 ---
 
 ## Repository Status Classification
 
-**Current Phase:** Phase 5–7 (partial) — Architecture Intelligence complete; Real-Time accepted (ADR-002); Notifications integrated + tested (worker routing verified 2026-06-12; production delivery unverified; in-app absent); Operational Resilience incomplete; CI workflow added (2026-06-13)  
+**Current Phase:** Phase 5–7 (partial) — Architecture Intelligence complete; Real-Time accepted (ADR-002); Notifications integrated + partially verified (worker routing verified 2026-06-12; positive send paths + payload content unit-tested 2026-06-14; nodemailer dependency placement resolved 2026-06-15; SMTP sandbox delivery verified via Mailhog 2026-06-15; production relay unverified; in-app absent); Operational Resilience incomplete; CI workflow operational (2026-06-13)  
 **Overall Maturity:** Partially Implemented / Integrated  
-**Test Status:** 6,494 / 6,519 tests passing (25 skipped = integration; 2 suites skipped = integration) — verified 2026-06-13 (local CI dry-run: `NODE_ENV=test npm test`)  
+**Test Status:** 6,500 / 6,525 passing under `npm test` (25 skipped = integration DB; 2 suites skipped = integration DB) — updated 2026-06-15; SMTP integration suite (`tests/integration/notifications.smtp.integration.test.js`, 7 tests) adds 7 opt-in tests (skipped under `npm test`, 7/7 passing with `TEST_INTEGRATION=true` + Mailhog running)  
 **PROGRESS.md Status:** Created 2026-06-12 (first creation — was absent, violating CLAUDE.md Creation Rule)  
-**CI Status:** `.github/workflows/ci.yml` added 2026-06-13 — triggers on push to any branch and PR to main; Node 20; `npm ci` + `npm test`; `NODE_ENV=test`; no secrets; integration tests self-skip (no `TEST_INTEGRATION`)
+**CI Status:** `.github/workflows/ci.yml` added 2026-06-13 — triggers on push to any branch and PR to main; Node 20; `npm ci` + `npm test`; `NODE_ENV=test`; no secrets; integration tests self-skip (no `TEST_INTEGRATION`) — **first successful run 2026-06-13** (commit `4e58590`, push trigger, 32 s, 6,494/6,519 tests passed on ubuntu-latest)
 
 ---
 
@@ -31,7 +31,7 @@ Last updated: **2026-06-13**
 | FR-005 | Rule-Based Risk Scoring | Integrated |
 | FR-006 | Recommendations | Integrated |
 | FR-007 | Real-Time Dashboard Updates | ✅ **ACCEPTED (2026-06-12)** — 60-second polling satisfies "no manual refresh" acceptance criterion for Phases 1–5; WebSocket deferred to Phase 6+ — see ADR-002 |
-| FR-008 | Notifications (in-app + email) | Integrated / Tested — email + Slack channels implemented; worker call chain verified (20/20 unit tests passing: 15 channel delivery + 5 worker routing); production end-to-end delivery unverified (no real SMTP/Slack test); in-app channel absent (spec requires it) |
+| FR-008 | Notifications (in-app + email) | **Integrated / Partially Verified** — email + Slack channels implemented; worker call chain verified; 26/26 unit tests passing; `nodemailer` dependency placement resolved 2026-06-15; SMTP delivery verified via Mailhog sandbox 2026-06-15 (7/7 integration tests: direct delivery, To/From, subject, body, sendAlert orchestration, dedup gate, shouldAlert gate); production SMTP relay unverified; Slack webhook delivery unverified (unit-tested only); in-app channel absent (spec requires it) |
 | FR-009 | Search and Filtering | Partially Implemented — Healthy risk-filter path: **Integrated / Tested** (HTTP contract verified 2026-06-12); label/risk filter tested (29/29); backend riskLevel filter tested (236/236); frontend wiring tested (14/14); HTTP contract tests prove Express parses `?riskLevel=healthy` → `req.query.riskLevel` → `db.query([userId, 'healthy'])` → `{ repos: [...] }` response shape (10/10 passing 2026-06-12); At Risk semantics unchanged: client-side `critical \|\| at-risk` (by design in Option A); 5 spec dimensions still absent: repository name search, project status, assigned manager, activity recency, intern contributor |
 | FR-010 | Audit Logging | Integrated |
 | NFR-001 | Performance | Partially Verified — no load tests; dashboard polls every 60 s |
@@ -74,7 +74,9 @@ They are not bugs — they are implementation decisions that have been formally 
 - **Environment:** `NODE_ENV=test` (no database, no external service secrets)
 - **Integration tests:** excluded — jest.config.js discovers them but they self-skip when `TEST_INTEGRATION` is unset
 - **Local dry-run (2026-06-13):** `NODE_ENV=test npm test` → 6,494/6,519 passing; 25 skipped (integration); 2 suites skipped (integration); all coverage thresholds met (≥80% across branches/functions/lines/statements)
-- **Overall maturity:** Tested / Verified (unit layer); integration layer intentionally deferred
+- **First GitHub Actions run (2026-06-13):** commit `4e58590`; push trigger; ubuntu-latest; Node 20; `npm ci` + `npm test`; status: **Success**; runtime: 32 s; 6,494/6,519 tests passed; 25 skipped (integration, self-skipped — no `TEST_INTEGRATION`); no secrets used; coverage thresholds met
+- **Integration tests in CI:** opt-in only — not part of CI run; require live PostgreSQL via `TEST_INTEGRATION=true`; always self-skip in current workflow
+- **Overall maturity:** Verified — unit tests pass on GitHub-hosted runners; integration layer intentionally opt-in and not yet automated in CI
 
 ---
 
@@ -199,7 +201,7 @@ They are not bugs — they are implementation decisions that have been formally 
 - **Capability:** Audit Logging (FR-010) — Integrated / Tested
   - `execution/audit/logEvent.js`
   - Integration test: `tests/integration/audit.integration.test.js` (skipped without live DB)
-- **Capability:** Notifications (FR-008) — Integrated / Tested (email + Slack channels only; in-app absent)
+- **Capability:** Notifications (FR-008) — **Integrated / Partially Verified** (email + Slack channels only; SMTP delivery verified via Mailhog sandbox 2026-06-15; in-app absent)
   - `services/notifications/alertDecision.js` — alert routing logic
   - `services/notifications/emailNotifier.js` — nodemailer-based email
   - `services/notifications/slackNotifier.js` — Slack webhook
@@ -211,9 +213,20 @@ They are not bugs — they are implementation decisions that have been formally 
   - Prior 5 notification test failures (caused by missing `config/paths.js` exports) are resolved
   - `tests/unit/services/worker/snapshotWorker.test.js` — **5/5 routing tests passing** (added 2026-06-12)
     - Verifies: `sendAlert` called after snapshot; receives exact snapshot object; rejection does not crash worker; snapshot failure prevents `sendAlert`; repo-history failure does not suppress alert dispatch
+  - `tests/unit/services/notifications/emailNotifier.test.js` — **4/4 passing** (added 2026-06-14; `{ virtual: true }` removed 2026-06-15 — `nodemailer` now resolves from root `node_modules` via standard `require()`)
+    - Verifies: `sendMail` called when `SMTP_HOST` + `ALERT_EMAIL_TO` are configured (positive send path); `sendMail` receives `{ from, to, subject, text }`; subject contains `alertState` and `trend`; body text contains `alertState` and `trend`
+  - `tests/unit/services/notifications/slackNotifier.test.js` — **2/2 passing** (added 2026-06-14)
+    - Verifies: `fetch` body is valid JSON with a top-level `text` field; `text` contains `alertState` and `trend` values
+  - `tests/integration/notifications.smtp.integration.test.js` — **7/7 passing** (added 2026-06-15; opt-in: `TEST_INTEGRATION=true` + Mailhog on localhost:1025)
+    - `sendEmailAlert` direct delivery: one message captured; correct To/From; subject contains `[RepoPulse]`, `Critical`, `Worsening` (RFC 2047 decoded); body contains `Critical`, `Worsening`, `80%`, `8 / 10`
+    - `sendAlert` orchestration: Critical/Worsening sends one email; second identical call deduped (inbox count stays 1); Normal/Stable sends no email (shouldAlert gate confirmed)
+    - Slack intentionally not tested (no `SLACK_WEBHOOK_URL` in sandbox; `slackNotifier` self-skips cleanly)
+    - Production code unchanged; Mailhog REST API (`/api/v2/messages`) used for inbox assertion
 - **Gaps:**
-  - No integration test verifying production end-to-end alert delivery (real SMTP / real Slack webhook)
-  - `nodemailer` is only in `backend/package.json`, not root `package.json`
+  - ~~No integration test verifying SMTP delivery~~ — **resolved 2026-06-15**: 7/7 Mailhog integration tests passing (see above)
+  - ~~`nodemailer` is only in `backend/package.json`, not root `package.json`~~ — **resolved 2026-06-15**: `nodemailer` moved to root `package.json` dependencies; `requireNodemailer()` fallback loader removed; `{ virtual: true }` removed from `emailNotifier.test.js`; full CI-equivalent run passed (6,500 / 6,525, 0 failing)
+  - Production SMTP relay delivery unverified (Mailhog ≠ production relay; TLS/auth/routing not tested)
+  - Slack webhook delivery unverified against a real webhook endpoint (unit-tested only)
   - No in-app notification UI (only email + Slack channels implemented; spec FR-008 requires in-app channel)
 
 ---
@@ -238,8 +251,10 @@ They are not bugs — they are implementation decisions that have been formally 
 ---
 
 ### Phase 10 — Production Readiness
-- **Status:** Not Started
-- No CI/CD pipeline configuration (no `.github/workflows/`, no `Dockerfile`)
+- **Status:** Partially Started
+- ~~No CI/CD pipeline configuration~~ — **CI workflow operational (2026-06-13)**: `.github/workflows/ci.yml` runs `npm ci` + `npm test` on every push and PR to main; first successful run verified (commit `4e58590`, 32 s, 6,494 tests passed, no secrets)
+- Integration tests not yet automated in CI — require `TEST_INTEGRATION=true` and a live PostgreSQL instance; currently opt-in locally only
+- No `Dockerfile` or container build step
 - No production deployment documentation beyond README quick-start
 - No secrets management beyond `.env` / `.env.example`
 - No HTTPS enforcement at the application layer (expected at infrastructure level)
@@ -257,15 +272,16 @@ They are not bugs — they are implementation decisions that have been formally 
 | Execution — GitHub | ~7 | ~350 | All passing |
 | Backend (routes, middleware) | ~9 | ~617 | All passing |
 | Directives validation | 1 | ~12 | All passing |
-| Integration (audit, auth) | 2 | 25 | **Skipped** — require live PostgreSQL |
-| **Total** | **92** | **6,519** | **6,494 passing, 25 skipped, 0 failing** |
+| Integration — DB (audit, auth) | 2 | 25 | **Skipped** under `npm test` — require live PostgreSQL (`TEST_INTEGRATION=true`) |
+| Integration — SMTP notifications | 1 | 7 | **7/7 passing** opt-in — require Mailhog on localhost:1025 + `TEST_INTEGRATION=true`; skipped under `npm test` |
+| **Total (`npm test`)** | **93** | **6,532** | **6,500 passing, 32 skipped (25 DB + 7 SMTP, all opt-in), 0 failing** |
 
 ### Testing Gaps
 
 - No Playwright / browser E2E tests for dashboard golden path (required by CLAUDE.md)
 - ~~`snapshotWorker.js` has no unit tests~~ — **resolved 2026-06-12** (`tests/unit/services/worker/snapshotWorker.test.js`, 5 routing tests, all passing)
 - ~~FR-009 label filter has no unit tests~~ — **resolved 2026-06-12** (`tests/unit/frontend/dashboardFilter.test.js`, 29 tests, all passing); ~~backend riskLevel filter has no tests~~ — **resolved 2026-06-12** (`tests/unit/backend/routes/repoRoutes.test.js`, 7 new riskLevel tests, 236/236 total passing); ~~frontend not wired to backend riskLevel parameter~~ — **resolved 2026-06-12** (`tests/unit/frontend/dashboardFilterLoad.test.js`, 14 tests, 14/14 passing); ~~HTTP layer between URL query string and Express handler untested~~ — **resolved 2026-06-12** (`tests/unit/backend/routes/repoRoutes.http.test.js`, 10 supertest tests, 10/10 passing)
-- `emailNotifier.js`, `slackNotifier.js` unit delivery paths tested (10 tests in `tests/notifications.test.js`); production end-to-end with real SMTP/Slack remains unverified
+- ~~`emailNotifier.js` positive send path untested~~ — **resolved 2026-06-14** (`tests/unit/services/notifications/emailNotifier.test.js`, 4 tests: `sendMail` called; `{ from, to, subject, text }` shape; subject + body contain `alertState` and `trend`). ~~`slackNotifier.js` body content untested~~ — **resolved 2026-06-14** (`tests/unit/services/notifications/slackNotifier.test.js`, 2 tests: JSON `{ text }` shape; `text` contains `alertState` and `trend`). ~~SMTP delivery untested against a real SMTP sink~~ — **resolved 2026-06-15** (`tests/integration/notifications.smtp.integration.test.js`, 7 tests: direct delivery, To/From, subject, body, sendAlert orchestration, dedup, shouldAlert gate; 7/7 passing with Mailhog). Remaining: production SMTP relay unverified; Slack webhook delivery unverified (unit-tested only).
 - Integration tests always skip during `npm test` (no CI automation to run them with live DB)
 - No load or performance tests (NFR-001: "Dashboard initial load within 2 seconds under normal load" — unverified)
 
@@ -279,10 +295,10 @@ They are not bugs — they are implementation decisions that have been formally 
 | Frontend not React | ~~High~~ **Resolved** | ✅ ADR-001 accepted 2026-06-12. Vanilla JS accepted for Phases 1–5. React migration deferred to Phase 6+ with defined triggers. `spec/01_requirements.md` and `spec/02_system_specification.md` updated. |
 | FR-007 polling accepted | ~~High~~ **Resolved** | ✅ ADR-002 accepted 2026-06-12. 60-second polling accepted for Phases 1–5; satisfies "no manual refresh" acceptance criterion. WebSocket deferred to Phase 6+ with defined triggers. See `docs/adr/ADR-002-realtime-transport.md`. |
 | No queue/durability for background jobs | Medium | `snapshotWorker.js` uses `setInterval`; no retry, no persistence on crash |
-| Notification production delivery unverified | Medium | Worker routing now tested (2026-06-12) — 20/20 unit tests passing. Real SMTP / real Slack webhook delivery remains unverified (no integration test). In-app channel absent (spec FR-008 requires it). `nodemailer` only in `backend/package.json`. |
+| Notification production delivery unverified | Medium | Worker routing tested (2026-06-12, 20/20). Unit delivery paths tested (2026-06-14, 26/26). ~~`nodemailer` absent from root `package.json`~~ — **resolved 2026-06-15**. ~~SMTP delivery untested against real sink~~ — **resolved 2026-06-15**: Mailhog integration tests (7/7 passing) verify `sendEmailAlert` and `sendAlert` end-to-end against a real SMTP server process. Remaining: production SMTP relay delivery unverified (Mailhog ≠ production relay); Slack webhook delivery unverified against a real endpoint; in-app channel absent. |
 | FR-009 filter incomplete | Medium | Label/risk filter tested (29/29 passing, 2026-06-12). Backend riskLevel filter tested (236/236 passing, 2026-06-12). Frontend wiring tested (14/14, 2026-06-12). HTTP contract tests added (10/10 passing, 2026-06-12) — prove Express parses `?riskLevel=healthy` correctly and `{ repos: [...] }` response shape matches frontend expectation. **Healthy risk-filter path is now Integrated / Tested.** At Risk toggle intentionally uses client-side `critical \|\| at-risk` (by design in Option A). SQL filter correctness against real PostgreSQL unverified (no integration test yet). 5 spec dimensions still absent: repository name search, project status, assigned manager, activity recency, intern contributor. |
 | NFR-007 data governance absent | Medium | User deletion, project archival, data export not found in codebase |
-| No CI/CD pipeline | Medium | Tests run locally only; no automated pipeline detected |
+| ~~No CI/CD pipeline~~ | ~~Medium~~ **Resolved** | ✅ `.github/workflows/ci.yml` operational (2026-06-13). First successful GitHub Actions run: commit `4e58590`, push trigger, ubuntu-latest, Node 20, 32 s, 6,494/6,519 tests passed, no secrets. Integration tests self-skip (opt-in only). |
 | GitHub API rate-limit handling absent | Medium | NFR-004 requires graceful rate-limit handling; not implemented |
 | `backend/tmp/analyze.js` in wrong layer | Low | Should be under `/tmp` (scratch) per CLAUDE.md folder boundaries |
 | Redis not present | Low | Spec mentions Redis from Phase 3 onward; README lists it as a prerequisite; not installed or referenced |
@@ -290,6 +306,68 @@ They are not bugs — they are implementation decisions that have been formally 
 ---
 
 ## Recent Implementation History
+
+### 2026-06-15 — FR-008 SMTP Sandbox Integration Test (Mailhog)
+- **Files:** `tests/integration/notifications.smtp.integration.test.js` (new, 7 tests)
+- **Production code changed:** None.
+- **What changed:** Added opt-in SMTP integration test suite that verifies email delivery end-to-end against a live Mailhog SMTP sink (`localhost:1025`). Assertions are made via the Mailhog REST API (`GET /api/v2/messages`). Self-skips under `npm test` when `TEST_INTEGRATION` is not set; consistent with the existing integration test pattern (`describeSmtp = RUN ? describe : describe.skip`). Env vars (`SMTP_HOST`, `SMTP_PORT`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, `ENABLE_PROACTIVE_ALERTS`) are set programmatically before the first `require()` so they are captured by `config/paths.js` on module load. An `rfc2047Decode()` helper is included to handle RFC 2047 Q-encoded subject headers produced by nodemailer when the em dash (`—`) in the subject template is encoded for MIME transport.
+- **`sendEmailAlert` tests (4):**
+  - Captures exactly one message in Mailhog inbox
+  - Delivers to correct recipient (`oncall@test.local`) and sender (`repopulse@test.local`)
+  - Subject contains `[RepoPulse]`, `Critical`, and `Worsening` (decoded from RFC 2047)
+  - Body contains `Critical`, `Worsening`, `80%`, and `8 / 10`
+- **`sendAlert` orchestration tests (3):**
+  - Critical/Worsening snapshot delivers one email to Mailhog
+  - Second identical `sendAlert` call is deduped — inbox count remains 1 (proves `_sent` Set gate)
+  - Normal/Stable snapshot sends no email — inbox count remains 0 (proves `shouldAlert` gate)
+- **Slack:** Intentionally not tested. `SLACK_WEBHOOK_URL` is absent from sandbox env; `slackNotifier` self-skips with a logged message. This proves the `Promise.allSettled` isolation in `sendAlert` — email fires even when Slack is unconfigured.
+- **Exact command:** `$env:TEST_INTEGRATION = "true"; npx jest tests/integration/notifications.smtp.integration.test.js --no-coverage`
+- **Test results:** 7/7 passing (0.557 s). SMTP and REST API both confirmed live.
+- **Mid-run fix:** Initial subject assertion failed because Mailhog stores raw MIME headers — nodemailer encodes subjects containing the em dash as RFC 2047 quoted-printable (`=?UTF-8?Q?...?=`). Added `rfc2047Decode()` helper; test corrected in the same session before the final passing run.
+- **Capability maturity change:** FR-008 Notifications — **Integrated / Tested → Integrated / Partially Verified**. The SMTP transport path is now verified against a real SMTP server process (not a mock). Remaining gaps to "Verified": production SMTP relay test; Slack webhook integration test; in-app channel implementation.
+
+### 2026-06-15 — FR-008 nodemailer Dependency Placement Fix
+- **Files changed:**
+  - `package.json` — `nodemailer@^8.0.5` added to root `dependencies`
+  - `backend/package.json` — `nodemailer` removed from `dependencies`
+  - `package-lock.json` — updated (`npm install`; added 1 package, 388 audited)
+  - `services/notifications/emailNotifier.js` — `requireNodemailer()` wrapper and `Module.createRequire` fallback fully removed; replaced with `const nodemailer = require('nodemailer')` at top of file
+  - `tests/unit/services/notifications/emailNotifier.test.js` — `{ virtual: true }` option and its explanatory comment removed from `jest.mock('nodemailer', ...)`
+- **Production code behavior changed:** No. `sendEmailAlert` produces identical output — same `createTransport` arguments, same `sendMail` payload, same logging. Resolution path changes: `require('nodemailer')` now resolves from root `node_modules` on first attempt; no try/catch fallback.
+- **Tests:** No new tests added. All 6,500 tests continue to pass. `emailNotifier.test.js` now mocks `nodemailer` via standard `jest.mock()` — Jest resolves the real module from root `node_modules` before substituting the factory, proving the dependency is correctly installed.
+- **CI-equivalent run:** `NODE_ENV=test npm test` — 6,500 / 6,525 passing; 25 skipped (integration, unchanged); 0 failing; all global coverage thresholds met (statements 96.44%, branches 89.33%, functions 98.21%, lines 97.80%).
+- **Capability maturity change:** FR-008 Notifications — structural dependency risk resolved; `nodemailer` dependency placement is now correct and standard. Remaining gaps to next maturity level (Integrated / Partially Verified): Mailhog or Ethereal SMTP integration test; in-app notification channel.
+
+### 2026-06-14 — FR-008 Mocked Notification Channel Coverage
+- **Files:** `tests/unit/services/notifications/emailNotifier.test.js` (new, 4 tests), `tests/unit/services/notifications/slackNotifier.test.js` (new, 2 tests)
+- **Production code changed:** None
+- **What changed:** Added positive-path and payload-content unit tests for `emailNotifier.js` and `slackNotifier.js` that run under `npm test` (placed in `tests/unit/services/notifications/` to match `jest.config.js` `testMatch` — `tests/notifications.test.js` falls outside the pattern and was not modified)
+- **`emailNotifier.test.js` — 4 tests:**
+  - `sendMail` is called when `SMTP_HOST` and `ALERT_EMAIL_TO` are both configured (positive send path — previously untested; if the `sendMail` call were deleted, all prior tests would still pass)
+  - `sendMail` receives `{ from, to, subject, text }` with correct types
+  - `subject` contains `alertState` (`'Critical'`) and `trend` (`'Worsening'`)
+  - `text` body contains `alertState` and `trend` values
+- **`slackNotifier.test.js` — 2 tests:**
+  - `fetch` body is valid JSON with a top-level `text` field (proves `JSON.stringify({ text })` shape)
+  - `text` contains `alertState` and `trend` values
+- **Structural risk surfaced:** `jest.mock('nodemailer', factory)` requires `{ virtual: true }` because `nodemailer` is absent from root `node_modules`. This confirms the `nodemailer`-in-`backend/package.json`-only risk is real and will block any Mailhog/Ethereal integration test until the dependency is moved to root `package.json`.
+- **Tests:** 6/6 new tests passing. Full suite: **6,500/6,525** (was 6,494/6,519; +6 tests, 0 new failures, 25 skipped unchanged)
+- **Capability maturity change:** FR-008 Notifications — **Integrated / Tested** classification maintained; coverage is now more honest: positive send path and payload content are verified at the unit layer. Remaining gap to next maturity level (Integrated / Partially Verified): Mailhog or Ethereal SMTP integration test, and `nodemailer` dependency relocation.
+
+### 2026-06-13 — CI Workflow First Successful Run
+- **Workflow:** CI (`.github/workflows/ci.yml`)
+- **Commit:** `4e58590` — "Add CI workflow, notification fixes, FR-009 filtering, and ADR records"
+- **Trigger:** push to `main`
+- **Runner:** ubuntu-latest, Node 20
+- **Steps executed:** `actions/checkout@v4` → `actions/setup-node@v4` (npm cache) → `npm ci` → `npm test`
+- **Status:** Success
+- **Runtime:** 32 seconds
+- **Test results:** 6,494 passed / 6,519 total; 25 skipped (integration, self-skipped — no `TEST_INTEGRATION`); 2 suites skipped (integration); 0 failing
+- **Coverage thresholds:** Met (≥80% branches/functions/lines/statements — same as verified locally 2026-06-13)
+- **Secrets used:** None — no database, no Redis, no Slack, no SMTP, no GitHub token
+- **Integration tests:** Self-skipped by design; not yet part of automated CI
+- **Files changed:** None — this entry records CI execution evidence only
+- **Capability maturity change:** CI/CD — **Scaffolded / Locally Verified → Verified** — unit tests now run on GitHub-hosted runners on every push; first remote execution confirms workflow syntax, Node 20 compatibility, and test suite stability in a clean environment
 
 ### 2026-06-12 — FR-009 HTTP Contract Tests (supertest)
 - **Files:** `tests/unit/backend/routes/repoRoutes.http.test.js` (new)
@@ -386,7 +464,7 @@ ADR-001 accepted. Vanilla JS frontend accepted for Phases 1–5. Spec updated. R
 ADR-002 accepted. 60-second polling accepted for Phases 1–5; satisfies "no manual refresh" acceptance criterion. WebSocket transport deferred to Phase 6+ with defined triggers. Spec and PROGRESS.md updated. See `docs/adr/ADR-002-realtime-transport.md`.
 
 ### 1 — Complete FR-008 Notification Delivery Verification (Medium)
-Configuration fixed and unit delivery paths tested (2026-06-12 — 15/15 passing). Remaining gaps: (a) no integration test against a real SMTP server or live Slack webhook; (b) `nodemailer` only in `backend/package.json` — should be moved to root `package.json`; (c) no in-app notification channel (spec FR-008 requires in-app alongside email).
+Configuration fixed and unit delivery paths tested (2026-06-12 — 15/15 passing). Positive send paths + payload content unit-tested (2026-06-14 — 26/26 passing). ~~`nodemailer` must be moved from `backend/package.json` to root~~ — **resolved 2026-06-15**. ~~No integration test against a real SMTP sink~~ — **resolved 2026-06-15**: `tests/integration/notifications.smtp.integration.test.js` added; 7/7 Mailhog tests passing (`sendEmailAlert` delivery, To/From, subject, body, `sendAlert` orchestration, dedup, shouldAlert gate). Remaining gaps: (a) production SMTP relay delivery unverified (Mailhog ≠ production relay; TLS/auth/routing not exercised); (b) Slack webhook delivery unverified against a real endpoint (unit-tested only); (c) no in-app notification channel (spec FR-008 requires in-app alongside email).
 
 ### 2 — Complete FR-009 Filtering (Medium)
 Label/risk filter tested (29/29 passing, 2026-06-12). Backend riskLevel filter tested (236/236 passing, 2026-06-12). ~~Frontend not wired to backend parameter~~ — **resolved 2026-06-12** (Healthy filter now calls `GET /api/repos?riskLevel=healthy`; wiring tested 14/14). ~~HTTP layer contract untested~~ — **resolved 2026-06-12** (10 supertest tests; Healthy path elevated to Integrated / Tested). Remaining gaps: (a) At Risk toggle intentionally uses client-side `critical || at-risk` (by design in Option A — acceptable for Phases 1–5); (b) 5 spec dimensions entirely absent: repository name search, project status, assigned manager, activity recency, intern contributor; (c) SQL filter correctness against real PostgreSQL unverified (integration test against live DB not yet written).
@@ -400,8 +478,8 @@ User data deletion, project archival, repository disconnection, and data export 
 ### 5 — Add Playwright / E2E Tests (Medium)
 CLAUDE.md specifies browser automation tools (Playwright) for UI validation. At minimum: login → sync → dashboard load → repo selection → remediation tab golden path.
 
-### 6 — Add CI/CD Pipeline (Medium)
-No `.github/workflows/` or equivalent exists. Unit tests should run automatically on every push. Integration tests should run on a scheduled basis or on merge to main.
+### ~~6 — Add CI/CD Pipeline~~ ✅ RESOLVED (2026-06-13)
+`.github/workflows/ci.yml` created and verified. First successful GitHub Actions run on commit `4e58590` (push trigger, ubuntu-latest, Node 20, 32 s, 6,494/6,519 passing). Unit tests now run automatically on every push and every PR to main. Integration tests remain opt-in (not yet automated — require live PostgreSQL).
 
 ### 7 — Implement GitHub API Rate-Limit Handling (Medium)
 NFR-004 requires graceful rate-limit handling. GitHub returns HTTP 429 / 403 with `X-RateLimit-*` headers. Add retry with exponential backoff to the GitHub fetchers.

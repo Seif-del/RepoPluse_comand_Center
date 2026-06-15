@@ -1,16 +1,4 @@
-const { Module } = require('module');
-const path = require('path');
-
-function requireNodemailer() {
-  try {
-    return require('nodemailer');
-  } catch (_) {
-    // Fall back to resolving from backend/node_modules at runtime
-    const backendPkg = path.join(__dirname, '../../backend/package.json');
-    const req = Module.createRequire(backendPkg);
-    return req('nodemailer');
-  }
-}
+const nodemailer = require('nodemailer');
 
 /**
  * Sends an email notification for a RepoPulse alert snapshot.
@@ -24,8 +12,6 @@ async function sendEmailAlert(summary) {
     console.log(`[sendEmailAlert] SMTP_HOST or ALERT_EMAIL_TO not configured — email notification skipped.`);
     return;
   }
-
-  const nodemailer = requireNodemailer();
 
   const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
