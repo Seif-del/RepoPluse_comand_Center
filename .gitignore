@@ -17,6 +17,10 @@ npm-debug.log*
 # ─── Test output ──────────────────────────────────────────────────────────────
 coverage/
 *.test.js.snap
+test-results/
+
+# ─── Playwright E2E auth fixtures (contain live session tokens) ───────────────
+tests/e2e/.auth/
 
 # ─── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store

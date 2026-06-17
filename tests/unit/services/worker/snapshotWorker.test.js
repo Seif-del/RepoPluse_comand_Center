@@ -82,7 +82,7 @@ describe('snapshotWorker — notification dispatch routing', () => {
     startSnapshotWorker();
     jest.advanceTimersByTime(50);
 
-    expect(sendAlert).toHaveBeenCalledWith(SNAPSHOT);
+    expect(sendAlert).toHaveBeenCalledWith(SNAPSHOT, { db: undefined });
   });
 
   it('does not crash the worker when sendAlert rejects', async () => {
@@ -120,7 +120,29 @@ describe('snapshotWorker — notification dispatch routing', () => {
 
     // sendAlert is dispatched before the inner try/catch that guards repoHistory
     expect(sendAlert).toHaveBeenCalledTimes(1);
-    expect(sendAlert).toHaveBeenCalledWith(SNAPSHOT);
+    expect(sendAlert).toHaveBeenCalledWith(SNAPSHOT, { db: undefined });
+  });
+
+});
+
+// ── DB wiring tests ───────────────────────────────────────────────────────────
+
+describe('snapshotWorker — db wiring', () => {
+
+  it('passes { db } to sendAlert when db is provided to startSnapshotWorker', () => {
+    const mockDb = { query: jest.fn() };
+
+    startSnapshotWorker(mockDb);
+    jest.advanceTimersByTime(50);
+
+    expect(sendAlert).toHaveBeenCalledWith(SNAPSHOT, { db: mockDb });
+  });
+
+  it('passes { db: undefined } to sendAlert when no db is provided (backward compat)', () => {
+    startSnapshotWorker();
+    jest.advanceTimersByTime(50);
+
+    expect(sendAlert).toHaveBeenCalledWith(SNAPSHOT, { db: undefined });
   });
 
 });

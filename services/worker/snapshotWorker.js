@@ -5,7 +5,7 @@ const { SNAPSHOT_INTERVAL_MS, PROJECT_SOURCE } = require('../../config/paths');
 const syncGithubProjects = require('../../execution/syncGithubProjects');
 const { sendAlert } = require('../notifications/sendAlert');
 
-function startSnapshotWorker() {
+function startSnapshotWorker(db) {
   console.log(`[snapshotWorker] Started. Interval: ${SNAPSHOT_INTERVAL_MS}ms`);
 
   setInterval(async () => {
@@ -16,7 +16,7 @@ function startSnapshotWorker() {
       }
       const snapshot = appendSummarySnapshot();
       console.log(`[snapshotWorker] Snapshot recorded at ${snapshot.lastUpdated}`);
-      sendAlert(snapshot).catch(err => console.error(`[snapshotWorker] Alert failed: ${err.message}`));
+      sendAlert(snapshot, { db }).catch(err => console.error(`[snapshotWorker] Alert failed: ${err.message}`));
       try {
         const repoEntries = appendRepoHistorySnapshot();
         console.log(`[snapshotWorker] Repo history recorded: ${repoEntries.length} entries`);

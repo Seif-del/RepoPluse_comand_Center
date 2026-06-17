@@ -657,6 +657,9 @@
     .aq-badge.severity-elevated  { background: var(--sev-high-bg);     border: 1px solid var(--sev-high-border);     color: var(--sev-high-text);     }
     .aq-badge.severity-watch     { background: var(--sev-medium-bg);   border: 1px solid var(--sev-medium-border);   color: var(--sev-medium-text);   }
 
+    /* ── Notification count badge (overrides inline display to respect [hidden]) */
+    #notif-badge[hidden] { display: none !important; }
+
     /* ── Attention drivers list ──────────────────────────────────────────── */
     .attn-driver-list { list-style: none; margin: 6px 0 0; padding: 0; }
     .attn-driver-row  { display: flex; justify-content: space-between; align-items: baseline;
@@ -1961,6 +1964,9 @@
       color:var(--text-secondary);cursor:pointer;transition:background 0.1s,color 0.1s;">
       Sync Now
     </button>
+    <button id="notif-btn" onclick="toggleNotificationPanel()" aria-label="Notifications" style="position:relative;font-size:0.75rem;font-weight:600;padding:5px 10px;border-radius:99px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-secondary);cursor:pointer;margin-left:8px;">
+      &#x1F514;<span id="notif-badge" hidden style="display:inline-flex;align-items:center;justify-content:center;position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;border-radius:99px;background:var(--red);color:#fff;font-size:0.60rem;font-weight:700;padding:0 3px;line-height:1;"></span>
+    </button>
     <div class="pulse-indicator" style="margin-left:12px;">
       <div class="pulse-dot"></div>
       <span id="pulse-label">Live · 60s</span>
@@ -1987,6 +1993,21 @@
 
     <!-- Portfolio Briefing -->
     <div id="portfolio-briefing"></div>
+
+    <!-- Notifications -->
+    <div id="notification-section" class="section" hidden>
+      <div class="section-header">
+        <span class="section-title">Notifications</span>
+        <div class="section-divider"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>In-App Alerts</h2>
+          <span id="notif-count" class="panel-count">—</span>
+        </div>
+        <div class="panel-body" id="notification-list"></div>
+      </div>
+    </div>
 
     <!-- Portfolio tabs -->
     <div class="section" id="section-portfolio-tabs">
@@ -2103,6 +2124,52 @@
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+    }
+
+    // ── Notification UI pure functions ───────────────────────────────────────
+
+    function notificationPriorityClass(priority) {
+      if (priority === 'CRITICAL') return 'severity-critical';
+      if (priority === 'HIGH')     return 'severity-high';
+      if (priority === 'MEDIUM')   return 'severity-medium';
+      if (priority === 'LOW')      return 'severity-healthy';
+      return 'severity-unknown';
+    }
+
+    function buildNotificationBadgeText(unreadCount) {
+      if (!unreadCount || unreadCount <= 0) return '';
+      return unreadCount > 9 ? '9+' : String(unreadCount);
+    }
+
+    function buildNotificationListHtml(notifications) {
+      if (!Array.isArray(notifications) || notifications.length === 0) {
+        return '<p style="font-size:0.82rem;color:var(--text-muted);'
+          + 'font-style:italic;padding:8px 0;">No new notifications.</p>';
+      }
+
+      var html = '';
+      notifications.forEach(function(n) {
+        var isRead  = n.status === 'READ' || n.status === 'EXPIRED';
+        var sevCls  = notificationPriorityClass(n.priority);
+        var opacity = isRead ? 'opacity:0.55;' : '';
+
+        html += '<div style="padding:10px 0;border-bottom:1px solid var(--border);' + opacity + '">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
+        html += '<span class="aq-badge ' + sevCls + '" style="font-size:0.65rem;padding:1px 6px;">'
+          + esc(n.priority || 'MEDIUM') + '</span>';
+        html += '<span style="font-size:0.83rem;font-weight:600;color:var(--text-primary);">'
+          + esc(n.title || '') + '</span>';
+        if (!isRead) {
+          html += '<button onclick="markNotificationRead(' + Number(n.id) + ')" '
+            + 'style="margin-left:auto;font-size:0.7rem;color:var(--blue);'
+            + 'background:none;border:none;cursor:pointer;padding:0;">Mark read</button>';
+        }
+        html += '</div>';
+        html += '<div style="font-size:0.79rem;color:var(--text-secondary);padding-left:2px;">'
+          + esc(n.body || '') + '</div>';
+        html += '</div>';
+      });
+      return html;
     }
 
     // Returns "N singular" or "N plural" — e.g. pluralize(1,'repository','repositories') → "1 repository"
@@ -3026,10 +3093,12 @@
 
     // ── Repos table ───────────────────────────────────────────────────────────
 
-    var _repos = [];
-    var _selectedId = null;
-    var _activeFilter = 'All';
-    var _attentionMap = {};
+    var _repos         = [];
+    var _selectedId    = null;
+    var _activeFilter  = 'All';
+    var _attentionMap  = {};
+    var _notifications = [];
+    var _unreadCount   = 0;
     var _activeRepoTab = 'overview';
 
     // ── Architecture panel state ──────────────────────────────────────────────
@@ -7291,6 +7360,51 @@
         .catch(function() {});
     }
 
+    // ── Notification UI ──────────────────────────────────────────────────────
+
+    function loadNotifications() {
+      fetch('/api/notifications', { credentials: 'include' })
+        .then(function(r) {
+          if (r.status === 401 || r.status === 403) return null;
+          if (!r.ok) return null;
+          return r.json();
+        })
+        .then(function(d) {
+          if (!d) return;
+          _notifications = Array.isArray(d.notifications) ? d.notifications : [];
+          _unreadCount   = typeof d.unreadCount === 'number' ? d.unreadCount : 0;
+
+          var badge = document.getElementById('notif-badge');
+          if (badge) {
+            badge.textContent = buildNotificationBadgeText(_unreadCount);
+            badge.hidden      = _unreadCount === 0;
+          }
+
+          var panel = document.getElementById('notification-list');
+          if (panel) panel.innerHTML = buildNotificationListHtml(_notifications);
+
+          var count = document.getElementById('notif-count');
+          if (count) count.textContent = _notifications.length
+            + ' notification' + (_notifications.length !== 1 ? 's' : '');
+        })
+        .catch(function(e) { showError('notification-list', e.message); });
+    }
+
+    function toggleNotificationPanel() {
+      var section = document.getElementById('notification-section');
+      if (section) section.hidden = !section.hidden;
+    }
+
+    function markNotificationRead(id) {
+      fetch('/api/notifications/' + id + '/read', {
+        method: 'PATCH',
+        credentials: 'include',
+      })
+        .then(function(r) { if (!r.ok) throw new Error('mark-read failed'); })
+        .then(function() { loadNotifications(); })
+        .catch(function() {});
+    }
+
     // ── Behavioral Stability ─────────────────────────────────────────────────
 
     var _BSI_STABILITY_SEV = {
@@ -8338,6 +8452,7 @@
       loadPortfolioWatchlists();
       loadRepos();
       loadAttentionQueue();
+      loadNotifications();
       loadHistory();
       loadExecutiveSummary();
     }

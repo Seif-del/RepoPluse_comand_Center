@@ -9,9 +9,10 @@ const config        = require('../config');
 const db            = require('../execution/db');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler  = require('./middleware/errorHandler');
-const authRoutes       = require('./routes/authRoutes');
-const repoRoutes       = require('./routes/repoRoutes');
-const portfolioRoutes  = require('./routes/portfolioRoutes');
+const authRoutes          = require('./routes/authRoutes');
+const repoRoutes          = require('./routes/repoRoutes');
+const portfolioRoutes     = require('./routes/portfolioRoutes');
+const notificationRoutes  = require('./routes/notificationRoutes');
 const syncGithubProjects = require('../execution/syncGithubProjects');
 const summaryHistory     = require('../execution/summaryHistory');
 
@@ -30,9 +31,10 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(requestLogger);
 
-app.use('/auth',           authRoutes);
-app.use('/api/repos',      repoRoutes);
-app.use('/api/portfolio',  portfolioRoutes);
+app.use('/auth',               authRoutes);
+app.use('/api/repos',          repoRoutes);
+app.use('/api/portfolio',      portfolioRoutes);
+app.use('/api/notifications',  notificationRoutes);
 
 app.get('/', (req, res) => {
   res.send('RepoPulse backend is running');
@@ -86,7 +88,7 @@ if (require.main === module) {
     }
     if (process.env.ENABLE_SNAPSHOT_WORKER === 'true') {
       const startSnapshotWorker = require('../services/worker/snapshotWorker');
-      startSnapshotWorker();
+      startSnapshotWorker(db);
     }
     app.listen(PORT, () => {
       console.log(`Server listening on port ${PORT}`);

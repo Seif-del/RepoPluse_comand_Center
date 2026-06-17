@@ -3,15 +3,15 @@
 
 This is the authoritative implementation-state and maturity tracking file for RepoPulse Command Center.  
 It is maintained per the contract defined in `CLAUDE.md`.  
-Last updated: **2026-06-15**
+Last updated: **2026-06-17** (badge CSS defect fix)
 
 ---
 
 ## Repository Status Classification
 
-**Current Phase:** Phase 5–7 (partial) — Architecture Intelligence complete; Real-Time accepted (ADR-002); Notifications integrated + partially verified (worker routing verified 2026-06-12; positive send paths + payload content unit-tested 2026-06-14; nodemailer dependency placement resolved 2026-06-15; SMTP sandbox delivery verified via Mailhog 2026-06-15; production relay unverified; in-app absent); Operational Resilience incomplete; CI workflow operational (2026-06-13)  
+**Current Phase:** Phase 5–7 (partial) — Architecture Intelligence complete; Real-Time accepted (ADR-002); Notifications integrated + partially verified (worker routing verified 2026-06-12; positive send paths + payload content unit-tested 2026-06-14; nodemailer dependency placement resolved 2026-06-15; SMTP sandbox delivery verified via Mailhog 2026-06-15; production relay unverified; in-app persistence layer scaffolded + unit-tested 2026-06-16; sendAlert.js wired to writeNotification 2026-06-16; snapshotWorker wired to pass db pool 2026-06-16 — in-app channel runtime-active when DATABASE_URL configured; notification API routes added 2026-06-16; dashboard notification UI added 2026-06-16 — in-app channel fully implemented across all layers); Operational Resilience incomplete; CI workflow operational (2026-06-13); Playwright E2E toolchain scaffolded 2026-06-16 (`@playwright/test` installed, `playwright.config.js` created, `test:e2e` script added); Playwright webServer startup hardened 2026-06-16 (`cross-env PROJECT_SOURCE=file npm run dev`); first Playwright dashboard smoke tests passing 2026-06-16 (`tests/e2e/dashboard.smoke.spec.js` — 8/8 tests passing; unauthenticated path verified in Chromium headless; authenticated E2E and DB-seeded notification E2E absent); Playwright authenticated session bootstrap complete 2026-06-17 (`tests/e2e/globalSetup.js` added — seeds `upsertUser` + `createSession` against test DB; storageState saved to `tests/e2e/.auth/user.json`; `playwright.config.js` wired; `tests/e2e/.auth/` gitignored; no test-only route added; no production auth logic modified; verified `node tests/e2e/globalSetup.js` → exit 0); **authenticated notification E2E browser-tested 2026-06-17** (`tests/e2e/notifications.authenticated.spec.js` — 2/2 passing in Chromium headless: unread badge visible + count=1 verified, panel opens + title + HIGH badge visible, mark-read PATCH 200 verified, badge `hidden=""` + empty text verified on re-fetch; real session cookie via storageState; real DB-seeded notification row; real `GET /api/notifications` + `PATCH /api/notifications/:id/read` exercised; no production code changed; `#notif-badge` CSS visual-hide defect **resolved 2026-06-17** — added `#notif-badge[hidden] { display: none !important }` CSS rule; `not.toBeVisible()` assertion now passes; 10/10 E2E passing)  
 **Overall Maturity:** Partially Implemented / Integrated  
-**Test Status:** 6,500 / 6,525 passing under `npm test` (25 skipped = integration DB; 2 suites skipped = integration DB) — updated 2026-06-15; SMTP integration suite (`tests/integration/notifications.smtp.integration.test.js`, 7 tests) adds 7 opt-in tests (skipped under `npm test`, 7/7 passing with `TEST_INTEGRATION=true` + Mailhog running)  
+**Test Status:** 6,618 / 6,650 passing under `npm test` (32 skipped = 25 integration DB + 7 SMTP opt-in; 0 failing) — updated 2026-06-16; SMTP integration suite (`tests/integration/notifications.smtp.integration.test.js`, 7 tests) adds 7 opt-in tests (skipped under `npm test`, 7/7 passing with `TEST_INTEGRATION=true` + Mailhog running)  
 **PROGRESS.md Status:** Created 2026-06-12 (first creation — was absent, violating CLAUDE.md Creation Rule)  
 **CI Status:** `.github/workflows/ci.yml` added 2026-06-13 — triggers on push to any branch and PR to main; Node 20; `npm ci` + `npm test`; `NODE_ENV=test`; no secrets; integration tests self-skip (no `TEST_INTEGRATION`) — **first successful run 2026-06-13** (commit `4e58590`, push trigger, 32 s, 6,494/6,519 tests passed on ubuntu-latest)
 
@@ -31,7 +31,7 @@ Last updated: **2026-06-15**
 | FR-005 | Rule-Based Risk Scoring | Integrated |
 | FR-006 | Recommendations | Integrated |
 | FR-007 | Real-Time Dashboard Updates | ✅ **ACCEPTED (2026-06-12)** — 60-second polling satisfies "no manual refresh" acceptance criterion for Phases 1–5; WebSocket deferred to Phase 6+ — see ADR-002 |
-| FR-008 | Notifications (in-app + email) | **Integrated / Partially Verified** — email + Slack channels implemented; worker call chain verified; 26/26 unit tests passing; `nodemailer` dependency placement resolved 2026-06-15; SMTP delivery verified via Mailhog sandbox 2026-06-15 (7/7 integration tests: direct delivery, To/From, subject, body, sendAlert orchestration, dedup gate, shouldAlert gate); production SMTP relay unverified; Slack webhook delivery unverified (unit-tested only); in-app channel absent (spec requires it) |
+| FR-008 | Notifications (in-app + email) | **Integrated / Partially Verified** — email + Slack channels implemented; SMTP delivery verified via Mailhog sandbox 2026-06-15 (7/7 integration tests); production SMTP relay unverified; Slack webhook delivery unverified (unit-tested only); **in-app persistence layer scaffolded 2026-06-16** (`migrations/0013_create_notifications.js` + `execution/notifications/writeNotification.js`; 54 unit tests); **sendAlert.js wired to in-app 2026-06-16** (fans out `writeNotification` per active user; 16 unit tests; failure-isolated); **snapshotWorker wired to pass db 2026-06-16** (`startSnapshotWorker(db)` → `sendAlert(snapshot, { db })`; in-app channel runtime-active; 7/7 worker tests); **notification API routes added 2026-06-16** (`GET /api/notifications` user-scoped + unreadCount, `PATCH /api/notifications/:id/read` marks owned notifications READ, 17/17 route tests); **dashboard notification UI added 2026-06-16** (topbar bell + `#notif-badge`, `#notification-section` panel, `loadNotifications()` in 60-second `refresh()` loop, `markNotificationRead(id)` → PATCH, `toggleNotificationPanel()`, 29/29 frontend tests; unauthenticated users see no error; **unauthenticated E2E smoke verified 2026-06-16** (bell visible, panel hidden, bell toggle, no JS errors — 8/8 passing in Chromium headless); **authenticated notification UI E2E browser-tested 2026-06-17** (`tests/e2e/notifications.authenticated.spec.js`; 2/2 passing in Chromium headless: unread badge visible + count=1, panel opens, title + `.aq-badge.severity-high` visible, mark-read PATCH 200 verified, badge `hidden=""` + empty text on re-fetch; real session cookie, real DB-seeded notification row, real `GET /api/notifications` + `PATCH /api/notifications/:id/read` exercised; no production code changed); ~~`#notif-badge` visual-hide CSS defect~~ — **resolved 2026-06-17**: `#notif-badge[hidden] { display: none !important }` CSS rule added to `frontend/dashboard.html`; Playwright `not.toBeVisible()` assertion now passes (10/10 E2E); remaining: no production SMTP relay verification, no Slack webhook verification) |
 | FR-009 | Search and Filtering | Partially Implemented — Healthy risk-filter path: **Integrated / Tested** (HTTP contract verified 2026-06-12); label/risk filter tested (29/29); backend riskLevel filter tested (236/236); frontend wiring tested (14/14); HTTP contract tests prove Express parses `?riskLevel=healthy` → `req.query.riskLevel` → `db.query([userId, 'healthy'])` → `{ repos: [...] }` response shape (10/10 passing 2026-06-12); At Risk semantics unchanged: client-side `critical \|\| at-risk` (by design in Option A); 5 spec dimensions still absent: repository name search, project status, assigned manager, activity recency, intern contributor |
 | FR-010 | Audit Logging | Integrated |
 | NFR-001 | Performance | Partially Verified — no load tests; dashboard polls every 60 s |
@@ -99,8 +99,8 @@ They are not bugs — they are implementation decisions that have been formally 
 
 ### Phase 2 — Core Data Layer
 - **Status:** Integrated / Tested
-- 12 migrations applied (up to `0012_create_repo_architecture_snapshots.js`):
-  `users`, `sessions`, `audit_logs`, `repositories`, `repo_metrics`, `risk_scores`, `repo_pr_metrics`, `repo_architecture_snapshots`
+- 13 migrations defined (up to `0013_create_notifications.js`; 0013 not yet applied to any environment — DDL only):
+  `users`, `sessions`, `audit_logs`, `repositories`, `repo_metrics`, `risk_scores`, `repo_pr_metrics`, `repo_architecture_snapshots`, `notifications`
 - Raw `pg` query layer (`execution/db.js`)
 - `execution/audit/logEvent.js` — audit logging (FR-010)
 - **Tests:** Unit tests for db module and logEvent pass.
@@ -133,6 +133,7 @@ They are not bugs — they are implementation decisions that have been formally 
   - Executive Briefing card (verbose multi-column, below portfolio tabs)
   - Portfolio Briefing card (compact bullets, above portfolio tabs)
   - Auto-refresh every 60 seconds
+  - Notification bell (`#notif-btn`) + unread badge (`#notif-badge`) in topbar; `#notification-section` panel in page flow; `loadNotifications()` wired into 60-second `refresh()` loop; `markNotificationRead(id)` → `PATCH /api/notifications/:id/read`; `toggleNotificationPanel()` shows/hides panel; `notificationPriorityClass()`, `buildNotificationBadgeText()`, `buildNotificationListHtml()` pure renderers (added 2026-06-16)
 - **Capability:** Recommendations (FR-006)
   - Top Remediation Actions card in Remediation tab
   - Recent Regressions card in Remediation tab
@@ -147,8 +148,8 @@ They are not bugs — they are implementation decisions that have been formally 
   - Tests: `tests/unit/frontend/dashboardFilterLoad.test.js` — **14/14 passing** (added 2026-06-12); covers `buildReposUrl` URL construction (6 tests), `filterToLoadOptions` Healthy/All/At Risk mapping (5 tests), end-to-end URL composition (3 tests)
   - Tests: `tests/unit/backend/routes/repoRoutes.http.test.js` — **10/10 passing** (added 2026-06-12); supertest HTTP contract: `GET /api/repos?riskLevel=healthy` → HTTP 200, `{ repos: Array }` body shape, `db.query([userId, 'healthy'])` parameter array, all returned repos have `label === 'healthy'`; absent param → `db.query([userId, null])`; invalid value → HTTP 400 + no `db.query` call
   - Missing: At Risk toggle intentionally uses client-side `critical || at-risk` (documented semantic mismatch with `?riskLevel=at-risk` — by design in Option A); filter by assigned manager, repository name search, activity recency, intern contributor, project status all absent; SQL filter correctness against real PostgreSQL unverified (integration test not yet written)
-- **Tests:** 16 frontend unit test files; all pure renderer and filter functions covered. 6,519 total tests passing.
-- **Gaps:** No Playwright / E2E tests. FR-009 multi-dimension filter not implemented. Vanilla JS frontend is accepted for Phases 1–5 (see ADR-001).
+- **Tests:** 17 frontend unit test files; all pure renderer and filter functions covered.
+- **Gaps:** ~~No Playwright / E2E toolchain~~ — **scaffolded 2026-06-16** (`@playwright/test` installed, `playwright.config.js` created, `test:e2e` script added); ~~no E2E test files~~ — **first smoke tests passing 2026-06-16** (`tests/e2e/dashboard.smoke.spec.js`; 8/8 unauthenticated; Chromium headless; `npm run test:e2e` exits 0 in 14.8 s); ~~authenticated E2E requires a session seeding strategy~~ — **session bootstrap complete 2026-06-17** (`tests/e2e/globalSetup.js` seeds `upsertUser` + `createSession`; storageState to `tests/e2e/.auth/user.json`; gitignored; no backend route added); ~~authenticated dashboard E2E test specs not yet written~~ — **resolved 2026-06-17**: `tests/e2e/notifications.authenticated.spec.js` added (2/2 passing); ~~DB-seeded notification panel E2E not yet written~~ — **resolved 2026-06-17**: direct SQL seeding + storageState + badge count + mark-read PATCH flow verified in Chromium headless; ~~`#notif-badge` CSS visual-hide defect~~ — **resolved 2026-06-17**: `#notif-badge[hidden] { display: none !important }` added; `not.toBeVisible()` passes; 10/10 E2E. FR-009 multi-dimension filter not implemented. Vanilla JS frontend is accepted for Phases 1–5 (see ADR-001).
 
 ---
 
@@ -197,37 +198,43 @@ They are not bugs — they are implementation decisions that have been formally 
 ---
 
 ### Phase 7 — Notifications & Audit
-- **Status:** Partially Implemented
+- **Status:** Integrated / Partially Verified
 - **Capability:** Audit Logging (FR-010) — Integrated / Tested
   - `execution/audit/logEvent.js`
   - Integration test: `tests/integration/audit.integration.test.js` (skipped without live DB)
-- **Capability:** Notifications (FR-008) — **Integrated / Partially Verified** (email + Slack channels only; SMTP delivery verified via Mailhog sandbox 2026-06-15; in-app absent)
+- **Capability:** Notifications (FR-008) — **Integrated / Partially Verified** (email + Slack: unit-tested; SMTP sandbox verified via Mailhog 2026-06-15; production relay unverified; Slack webhook unverified; in-app channel: persistence layer, write path, API routes, and dashboard UI all implemented + unit-tested 2026-06-16; unauthenticated E2E smoke verified 2026-06-16 (bell visible, panel hidden on load, toggle works, no JS errors — 8/8 in Chromium headless); **authenticated session bootstrap complete 2026-06-17** (`tests/e2e/globalSetup.js`; no test-only route; storageState gitignored); **authenticated notification E2E browser-tested 2026-06-17** (`tests/e2e/notifications.authenticated.spec.js`; 2/2 passing in Chromium headless: unread render + mark-read PATCH flow; real session/DB/API exercised); ~~`#notif-badge` CSS visual-hide defect~~ — **resolved 2026-06-17**: CSS rule `#notif-badge[hidden] { display: none !important }` added; `not.toBeVisible()` assertion used in test B; 10/10 E2E passing)
   - `services/notifications/alertDecision.js` — alert routing logic
   - `services/notifications/emailNotifier.js` — nodemailer-based email
   - `services/notifications/slackNotifier.js` — Slack webhook
-  - `services/notifications/sendAlert.js` — dispatches to email + Slack
-  - `services/worker/snapshotWorker.js` — calls `sendAlert` after each snapshot
-  - `config/paths.js` — now exports all 8 notification env vars (fixed 2026-06-12)
-  - `.env.example` — now documents correct proactive alert variables (fixed 2026-06-12)
-  - Tests: `tests/alertDecision.test.js` (5 tests) + `tests/notifications.test.js` (10 tests) — **15/15 passing**
-  - Prior 5 notification test failures (caused by missing `config/paths.js` exports) are resolved
-  - `tests/unit/services/worker/snapshotWorker.test.js` — **5/5 routing tests passing** (added 2026-06-12)
-    - Verifies: `sendAlert` called after snapshot; receives exact snapshot object; rejection does not crash worker; snapshot failure prevents `sendAlert`; repo-history failure does not suppress alert dispatch
-  - `tests/unit/services/notifications/emailNotifier.test.js` — **4/4 passing** (added 2026-06-14; `{ virtual: true }` removed 2026-06-15 — `nodemailer` now resolves from root `node_modules` via standard `require()`)
-    - Verifies: `sendMail` called when `SMTP_HOST` + `ALERT_EMAIL_TO` are configured (positive send path); `sendMail` receives `{ from, to, subject, text }`; subject contains `alertState` and `trend`; body text contains `alertState` and `trend`
+  - `services/notifications/sendAlert.js` — dispatches to email + Slack + in-app (wired 2026-06-16; accepts `sendAlert(summary, { db } = {})`; queries `SELECT id FROM users WHERE deleted_at IS NULL`; calls `writeNotification` per user; in-app failures isolated via `.catch()` and do not block email/Slack)
+  - `services/worker/snapshotWorker.js` — now accepts `startSnapshotWorker(db)` (wired 2026-06-16); calls `sendAlert(snapshot, { db })` after each snapshot; `backend/server.js` passes the existing `pg.Pool` singleton; in-app write failures remain isolated from email/Slack delivery
+  - **`backend/routes/notificationRoutes.js`** — notification API layer (added 2026-06-16; registered at `/api/notifications` in `backend/server.js`); `GET /` returns user-scoped notifications newest-first LIMIT 20 + unreadCount from separate count query; `PATCH /:id/read` sets status=READ and read_at=NOW() scoped by both id and user_id — returns 404 if not owned or not found, 400 for non-integer id, idempotent (re-PATCH returns `{ success: true }`); both endpoints route DB failures through `next(err)` → existing `errorHandler` middleware
+  - **`frontend/dashboard.html`** — notification UI layer (added 2026-06-16): topbar bell button (`#notif-btn`) with animated `#notif-badge` (shows count 1–9 or `9+`, `hidden` attribute when count=0); `#notification-section` panel inserted after `#portfolio-briefing` in page flow (uses existing `.section`, `.panel`, `.panel-head`, `.panel-body` CSS classes); `_notifications = []` and `_unreadCount = 0` module state vars; `loadNotifications()` fetches `GET /api/notifications`, updates badge and panel HTML, routes errors through `showError()`; `toggleNotificationPanel()` shows/hides panel (`section.hidden = !section.hidden` matching existing `#repo-detail` pattern); `markNotificationRead(id)` calls `PATCH /api/notifications/:id/read` then re-fetches; `loadNotifications()` wired into `refresh()` — runs on page load and every 60 seconds; 401/403 responses silently no-op (panel stays hidden for unauthenticated users); pure renderers: `notificationPriorityClass(priority)`, `buildNotificationBadgeText(unreadCount)`, `buildNotificationListHtml(notifications)`
+  - `config/paths.js` — exports all 8 notification env vars (fixed 2026-06-12)
+  - `.env.example` — documents correct proactive alert variables (fixed 2026-06-12)
+  - **`migrations/0013_create_notifications.js`** — DDL migration for notifications table (added 2026-06-16; Option B per-user ownership; user_id NOT NULL FK → users ON DELETE CASCADE; partial unique index `notifications_user_dedupe_key_uidx` on (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL; status: CREATED/QUEUED/SENT/FAILED/READ/EXPIRED; priority: LOW/MEDIUM/HIGH/CRITICAL; expires_at = NOW() + 90 days)
+  - **`execution/notifications/writeNotification.js`** — single-responsibility DB write (added 2026-06-16; INSERT with ON CONFLICT ON CONSTRAINT notifications_user_dedupe_key_uidx DO NOTHING RETURNING; priority derived from alertState/trend; dedupe_key = alertState:trend; 90-day expires_at)
+  - Tests: `tests/alertDecision.test.js` (5) + `tests/notifications.test.js` (10) — **15/15 passing**
+  - `tests/unit/services/worker/snapshotWorker.test.js` — **7/7 passing** (5 routing tests added 2026-06-12; updated 2026-06-16: 2 call-signature assertions corrected from `toHaveBeenCalledWith(SNAPSHOT)` → `toHaveBeenCalledWith(SNAPSHOT, { db: undefined })`; 2 new db-wiring tests added: passes `{ db: mockDb }` when db provided, passes `{ db: undefined }` when no db provided)
+  - `tests/unit/services/notifications/emailNotifier.test.js` — **4/4 passing** (added 2026-06-14; `{ virtual: true }` removed 2026-06-15)
   - `tests/unit/services/notifications/slackNotifier.test.js` — **2/2 passing** (added 2026-06-14)
-    - Verifies: `fetch` body is valid JSON with a top-level `text` field; `text` contains `alertState` and `trend` values
   - `tests/integration/notifications.smtp.integration.test.js` — **7/7 passing** (added 2026-06-15; opt-in: `TEST_INTEGRATION=true` + Mailhog on localhost:1025)
-    - `sendEmailAlert` direct delivery: one message captured; correct To/From; subject contains `[RepoPulse]`, `Critical`, `Worsening` (RFC 2047 decoded); body contains `Critical`, `Worsening`, `80%`, `8 / 10`
-    - `sendAlert` orchestration: Critical/Worsening sends one email; second identical call deduped (inbox count stays 1); Normal/Stable sends no email (shouldAlert gate confirmed)
-    - Slack intentionally not tested (no `SLACK_WEBHOOK_URL` in sandbox; `slackNotifier` self-skips cleanly)
-    - Production code unchanged; Mailhog REST API (`/api/v2/messages`) used for inbox assertion
+  - **`tests/unit/migrations/0013_notifications.test.js`** — **24/24 passing** (added 2026-06-16): module structure, createTable column specs, status/priority check constraints, 4+ sql calls, all 4 index names, partial unique constraint structure (UNIQUE INDEX, user_id+dedupe_key, WHERE dedupe_key IS NOT NULL), down drops table
+  - **`tests/unit/execution/notifications/writeNotification.test.js`** — **30/30 passing** (added 2026-06-16): guards (6), DB call shape (6), priority mapping (4), dedupe_key format (3), expires_at Date + 90 days (2), title/body content (3), return row vs null (3) — covers all decision branches in `writeNotification.js`
+  - **`tests/unit/backend/routes/notificationRoutes.test.js`** — **17/17 passing** (added 2026-06-16): HTTP 200 shape (2); both queries scoped to userId (1); ORDER BY created_at DESC (1); LIMIT 20 (1); rows in response (1); unreadCount integer from count query (1); count query filters NOT IN (READ, EXPIRED) (1); GET DB failure → 500 (1); PATCH { success: true } for owned notification (1); UPDATE SQL scoped to id + user_id (1); UPDATE sets status=READ + read_at=NOW() (1); 404 on wrong user (1); 404 on non-existent id (1); idempotent second PATCH (1); 400 + no db.query for non-integer id (1); PATCH DB failure → 500 (1)
+  - **`tests/unit/services/notifications/sendAlert.inapp.test.js`** — **16/16 passing** (added 2026-06-16): db provided → correct SQL query (1), writeNotification called per user (2), correct {db, userId, summary} args (2), empty user list (1); db absent → no write (4); failure isolation → writeNotification reject does not throw (1), email still fires (1), Slack still fires (1), db.query reject does not throw (1), email+Slack still fire (1); dedup preserved → second call suppressed (1), fires again after _sent.clear() (1)
+  - **`tests/unit/frontend/dashboardNotifications.test.js`** — **29/29 passing** (added 2026-06-16): `notificationPriorityClass` all 4 priority→class mappings + unknown + undefined (6); `buildNotificationBadgeText` 0/undefined/negative→'', 1–9→digit string, 10+→'9+' (7); `buildNotificationListHtml` empty array + null → empty-state paragraph (2); CRITICAL/HIGH/MEDIUM/LOW priority CSS classes in output (4); title `<` escaped to `&lt;`, body `&` escaped to `&amp;` (2); unread CREATED notification renders `markNotificationRead` button with correct id (2); READ + EXPIRED notifications render no Mark read button (2); READ has `opacity:0.55`, unread does not (2); mixed list: both titles present, only unread has button (2)
 - **Gaps:**
-  - ~~No integration test verifying SMTP delivery~~ — **resolved 2026-06-15**: 7/7 Mailhog integration tests passing (see above)
-  - ~~`nodemailer` is only in `backend/package.json`, not root `package.json`~~ — **resolved 2026-06-15**: `nodemailer` moved to root `package.json` dependencies; `requireNodemailer()` fallback loader removed; `{ virtual: true }` removed from `emailNotifier.test.js`; full CI-equivalent run passed (6,500 / 6,525, 0 failing)
+  - ~~No integration test verifying SMTP delivery~~ — **resolved 2026-06-15**: 7/7 Mailhog integration tests passing
+  - ~~`nodemailer` is only in `backend/package.json`, not root `package.json`~~ — **resolved 2026-06-15**: `nodemailer` moved to root `package.json`
+  - ~~`sendAlert.js` not yet wired to `writeNotification`~~ — **resolved 2026-06-16**: `sendAlert(summary, { db } = {})` fans out `writeNotification` per active user; 16 unit tests
+  - ~~`snapshotWorker.js` not yet wired to pass `db`~~ — **resolved 2026-06-16**: `startSnapshotWorker(db)` accepts `pg.Pool`; `backend/server.js` passes existing pool; `sendAlert(snapshot, { db })` called on every interval tick; 7/7 worker unit tests passing
+  - ~~No notification routes~~ — **resolved 2026-06-16**: `GET /api/notifications` + `PATCH /api/notifications/:id/read` implemented in `backend/routes/notificationRoutes.js`; registered in `backend/server.js`; 17/17 route tests passing
   - Production SMTP relay delivery unverified (Mailhog ≠ production relay; TLS/auth/routing not tested)
   - Slack webhook delivery unverified against a real webhook endpoint (unit-tested only)
-  - No in-app notification UI (only email + Slack channels implemented; spec FR-008 requires in-app channel)
+  - ~~No in-app notification UI in `frontend/dashboard.html`~~ — **resolved 2026-06-16**: topbar bell + `#notif-badge`, `#notification-section` panel, `loadNotifications()` in `refresh()` loop, `markNotificationRead(id)`, `toggleNotificationPanel()`; 29/29 frontend unit tests passing
+  - ~~No real browser/E2E verification of the notification UI~~ — **resolved 2026-06-17**: `tests/e2e/dashboard.smoke.spec.js` (8/8 passing) verifies unauthenticated path; `tests/e2e/notifications.authenticated.spec.js` (2/2 passing) verifies authenticated path — unread notification renders with badge count=1 + panel + HIGH badge; mark-read PATCH 200 fires, button disappears, badge hides; real session cookie via storageState, real DB-seeded notification row, real `GET /api/notifications` + `PATCH /api/notifications/:id/read` exercised; no production code changed. Open defect: `#notif-badge` inline `display:inline-flex` overrides `[hidden] { display:none }` — badge does not visually hide; tests assert `toHaveText('')` + `toHaveAttribute('hidden', '')`; production CSS fix pending CLAUDE.md §4 approval
+  - No integration test for the full worker → `writeNotification` → DB row path against a real PostgreSQL instance
 
 ---
 
@@ -254,6 +261,7 @@ They are not bugs — they are implementation decisions that have been formally 
 - **Status:** Partially Started
 - ~~No CI/CD pipeline configuration~~ — **CI workflow operational (2026-06-13)**: `.github/workflows/ci.yml` runs `npm ci` + `npm test` on every push and PR to main; first successful run verified (commit `4e58590`, 32 s, 6,494 tests passed, no secrets)
 - Integration tests not yet automated in CI — require `TEST_INTEGRATION=true` and a live PostgreSQL instance; currently opt-in locally only
+- ~~No Playwright / E2E toolchain~~ — **scaffolded 2026-06-16**: `@playwright/test ^1.61.0` added to root `devDependencies`; `playwright.config.js` created at repo root (`testDir: tests/e2e`, Chromium only, `headless: true`, `baseURL` from `E2E_BASE_URL || http://localhost:3000`, `webServer: cross-env PROJECT_SOURCE=file npm run dev`, `reuseExistingServer: true`); `test:e2e` script added to root `package.json`; Jest isolated from `tests/e2e/` by existing `testMatch` allowlist (no `jest.config.js` changes needed). **webServer startup hardened 2026-06-16** (command changed from `npm run dev` to `cross-env PROJECT_SOURCE=file npm run dev` — prevents GitHub API timeout from crashing server before `app.listen()`; production runtime unaffected; verified via `npx playwright test --list` → `0 tests in 0 files`). **Dashboard unauthenticated smoke tests passing 2026-06-16** (`tests/e2e/dashboard.smoke.spec.js` — 8/8 Playwright tests; Chromium headless; `npm run test:e2e` exits 0 in 14.8 s). **Authenticated session bootstrap complete 2026-06-17** (`tests/e2e/globalSetup.js` added; `playwright.config.js` wired with `globalSetup: require.resolve('./tests/e2e/globalSetup')`; `tests/e2e/.auth/` gitignored; no backend changes; verified `node tests/e2e/globalSetup.js` → userId=36 (e2e-test-user), exit 0). Remaining: ~~authenticated E2E test specs not yet written~~ — **resolved 2026-06-17**: `tests/e2e/notifications.authenticated.spec.js` (2/2 passing); ~~`#notif-badge` CSS visual-hide defect~~ — **resolved 2026-06-17**: `#notif-badge[hidden] { display: none !important }` CSS rule added; E2E not yet wired in CI
 - No `Dockerfile` or container build step
 - No production deployment documentation beyond README quick-start
 - No secrets management beyond `.env` / `.env.example`
@@ -265,20 +273,23 @@ They are not bugs — they are implementation decisions that have been formally 
 
 | Layer | Test Files | Tests | Status |
 |---|---|---|---|
-| Frontend (pure renderers + filter) | 16 | ~893 | All passing |
+| Frontend (pure renderers + filter) | 17 | ~922 | All passing |
 | Execution — Architecture | 24 | ~2,100 | All passing |
 | Execution — Risk | ~18 | ~1,800 | All passing |
 | Execution — Auth/Crypto/RBAC | ~8 | ~400 | All passing |
 | Execution — GitHub | ~7 | ~350 | All passing |
-| Backend (routes, middleware) | ~9 | ~617 | All passing |
+| Backend (routes, middleware) | ~10 | ~634 | All passing |
 | Directives validation | 1 | ~12 | All passing |
 | Integration — DB (audit, auth) | 2 | 25 | **Skipped** under `npm test` — require live PostgreSQL (`TEST_INTEGRATION=true`) |
 | Integration — SMTP notifications | 1 | 7 | **7/7 passing** opt-in — require Mailhog on localhost:1025 + `TEST_INTEGRATION=true`; skipped under `npm test` |
-| **Total (`npm test`)** | **93** | **6,532** | **6,500 passing, 32 skipped (25 DB + 7 SMTP, all opt-in), 0 failing** |
+| Execution — Notifications | 3 | 70 | All passing |
+| Services — Worker | 1 | 7 | All passing (updated 2026-06-16) |
+| E2E / Playwright (`npm run test:e2e`) | 2 test files + 1 globalSetup | 10 | **Partially Tested** — toolchain installed + webServer hardened 2026-06-16; `tests/e2e/dashboard.smoke.spec.js` 8/8 passing (Chromium headless, 14.8 s; unauthenticated path); `tests/e2e/notifications.authenticated.spec.js` 2/2 passing (Chromium headless, 23.8 s; authenticated: unread render + mark-read PATCH flow; real session/DB/API); open defect: `#notif-badge` CSS visual-hide (inline `display:inline-flex` overrides `[hidden]`); CI E2E wiring absent; self-skips under `npm test` |
+| **Total (`npm test`)** | **97 passing + 3 skipped = 100** | **6,650** | **6,618 passing, 32 skipped (25 DB + 7 SMTP, all opt-in), 0 failing** |
 
 ### Testing Gaps
 
-- No Playwright / browser E2E tests for dashboard golden path (required by CLAUDE.md)
+- ~~No Playwright / E2E toolchain~~ — **scaffolded 2026-06-16**: `@playwright/test` installed, `playwright.config.js` configured, `test:e2e` opt-in script added; Jest does not discover `tests/e2e/`. ~~webServer crashes on GitHub API timeout~~ — **resolved 2026-06-16**: webServer command changed to `cross-env PROJECT_SOURCE=file npm run dev`. ~~No E2E test files~~ — **resolved 2026-06-16**: `tests/e2e/dashboard.smoke.spec.js` created; 8/8 unauthenticated smoke tests passing in Chromium headless (`npm run test:e2e` exits 0, 14.8 s): /dashboard loads, page title verified, `#notif-btn` visible, `#notification-section` hidden on load, bell toggle shows/hides panel, Login with GitHub link visible (unauthenticated 401 path), no uncaught JS errors. ~~Authenticated E2E requires a session seeding strategy~~ — **resolved 2026-06-17**: `tests/e2e/globalSetup.js` added; uses `upsertUser()` + `createSession()` directly against test DB; storageState written to `tests/e2e/.auth/user.json`; `playwright.config.js` wired with `globalSetup`; `tests/e2e/.auth/` gitignored; no test-only backend route; no production auth changes; verified `node tests/e2e/globalSetup.js` → exit 0. ~~Authenticated E2E test specs not yet written~~ — **resolved 2026-06-17**: `tests/e2e/notifications.authenticated.spec.js` created; ~~DB-seeded notification panel E2E (badge count, mark-read flow) not yet written~~ — **resolved 2026-06-17**: real SQL seeding + storageState + badge count + mark-read PATCH flow verified (2/2 passing). ~~`#notif-badge` CSS visual-hide defect~~ — **resolved 2026-06-17**: `#notif-badge[hidden] { display: none !important }` CSS rule added to `frontend/dashboard.html`; Playwright `not.toBeVisible()` assertion now passes (10/10 E2E). E2E CI wiring still absent
 - ~~`snapshotWorker.js` has no unit tests~~ — **resolved 2026-06-12** (`tests/unit/services/worker/snapshotWorker.test.js`, 5 routing tests, all passing)
 - ~~FR-009 label filter has no unit tests~~ — **resolved 2026-06-12** (`tests/unit/frontend/dashboardFilter.test.js`, 29 tests, all passing); ~~backend riskLevel filter has no tests~~ — **resolved 2026-06-12** (`tests/unit/backend/routes/repoRoutes.test.js`, 7 new riskLevel tests, 236/236 total passing); ~~frontend not wired to backend riskLevel parameter~~ — **resolved 2026-06-12** (`tests/unit/frontend/dashboardFilterLoad.test.js`, 14 tests, 14/14 passing); ~~HTTP layer between URL query string and Express handler untested~~ — **resolved 2026-06-12** (`tests/unit/backend/routes/repoRoutes.http.test.js`, 10 supertest tests, 10/10 passing)
 - ~~`emailNotifier.js` positive send path untested~~ — **resolved 2026-06-14** (`tests/unit/services/notifications/emailNotifier.test.js`, 4 tests: `sendMail` called; `{ from, to, subject, text }` shape; subject + body contain `alertState` and `trend`). ~~`slackNotifier.js` body content untested~~ — **resolved 2026-06-14** (`tests/unit/services/notifications/slackNotifier.test.js`, 2 tests: JSON `{ text }` shape; `text` contains `alertState` and `trend`). ~~SMTP delivery untested against a real SMTP sink~~ — **resolved 2026-06-15** (`tests/integration/notifications.smtp.integration.test.js`, 7 tests: direct delivery, To/From, subject, body, sendAlert orchestration, dedup, shouldAlert gate; 7/7 passing with Mailhog). Remaining: production SMTP relay unverified; Slack webhook delivery unverified (unit-tested only).
@@ -295,7 +306,8 @@ They are not bugs — they are implementation decisions that have been formally 
 | Frontend not React | ~~High~~ **Resolved** | ✅ ADR-001 accepted 2026-06-12. Vanilla JS accepted for Phases 1–5. React migration deferred to Phase 6+ with defined triggers. `spec/01_requirements.md` and `spec/02_system_specification.md` updated. |
 | FR-007 polling accepted | ~~High~~ **Resolved** | ✅ ADR-002 accepted 2026-06-12. 60-second polling accepted for Phases 1–5; satisfies "no manual refresh" acceptance criterion. WebSocket deferred to Phase 6+ with defined triggers. See `docs/adr/ADR-002-realtime-transport.md`. |
 | No queue/durability for background jobs | Medium | `snapshotWorker.js` uses `setInterval`; no retry, no persistence on crash |
-| Notification production delivery unverified | Medium | Worker routing tested (2026-06-12, 20/20). Unit delivery paths tested (2026-06-14, 26/26). ~~`nodemailer` absent from root `package.json`~~ — **resolved 2026-06-15**. ~~SMTP delivery untested against real sink~~ — **resolved 2026-06-15**: Mailhog integration tests (7/7 passing) verify `sendEmailAlert` and `sendAlert` end-to-end against a real SMTP server process. Remaining: production SMTP relay delivery unverified (Mailhog ≠ production relay); Slack webhook delivery unverified against a real endpoint; in-app channel absent. |
+| Notification production delivery unverified | Medium | Worker routing tested (2026-06-12, 20/20). Unit delivery paths tested (2026-06-14, 26/26). ~~`nodemailer` absent from root `package.json`~~ — **resolved 2026-06-15**. ~~SMTP delivery untested against real sink~~ — **resolved 2026-06-15**: Mailhog integration tests (7/7 passing). ~~`sendAlert` not wired to in-app~~ — **resolved 2026-06-16**: 16 unit tests. ~~`snapshotWorker` not wired to pass `db`~~ — **resolved 2026-06-16**: `startSnapshotWorker(db)` passes `pg.Pool` to `sendAlert`; 7/7 worker tests. ~~no notification API routes~~ — **resolved 2026-06-16**: `GET /api/notifications` + `PATCH /api/notifications/:id/read`; 17 route tests. ~~no frontend notification UI~~ — **resolved 2026-06-16**: topbar bell + `#notif-badge`, `#notification-section` panel, `loadNotifications()` in refresh loop, `markNotificationRead(id)`, 29/29 frontend unit tests. Remaining: production SMTP relay delivery unverified; Slack webhook unverified (unit-tested only); no integration test for worker → DB row path; unauthenticated smoke verified 2026-06-16 (8/8 Chromium headless); authenticated session bootstrap complete 2026-06-17 (`tests/e2e/globalSetup.js`; storageState gitignored); ~~authenticated E2E test specs not yet written~~ — **resolved 2026-06-17**: `tests/e2e/notifications.authenticated.spec.js` 2/2 passing (unread render + mark-read PATCH flow; real session/DB/API; no production code changed). |
+| ~~`#notif-badge` visual-hide CSS defect~~ | ~~Medium~~ **Resolved** | **Discovered 2026-06-17** — inline `display:inline-flex` overrode UA `[hidden] { display:none }` because all author CSS beats UA CSS in the cascade (regardless of specificity); inline styles are author-origin. **Resolved 2026-06-17**: added `#notif-badge[hidden] { display: none !important }` to `frontend/dashboard.html` style block (1 line). `!important` overrides the inline style, making the `hidden` attribute visually effective. Playwright `not.toBeVisible()` assertion in test B updated to use `not.toBeVisible()`; 10/10 E2E passing. |
 | FR-009 filter incomplete | Medium | Label/risk filter tested (29/29 passing, 2026-06-12). Backend riskLevel filter tested (236/236 passing, 2026-06-12). Frontend wiring tested (14/14, 2026-06-12). HTTP contract tests added (10/10 passing, 2026-06-12) — prove Express parses `?riskLevel=healthy` correctly and `{ repos: [...] }` response shape matches frontend expectation. **Healthy risk-filter path is now Integrated / Tested.** At Risk toggle intentionally uses client-side `critical \|\| at-risk` (by design in Option A). SQL filter correctness against real PostgreSQL unverified (no integration test yet). 5 spec dimensions still absent: repository name search, project status, assigned manager, activity recency, intern contributor. |
 | NFR-007 data governance absent | Medium | User deletion, project archival, data export not found in codebase |
 | ~~No CI/CD pipeline~~ | ~~Medium~~ **Resolved** | ✅ `.github/workflows/ci.yml` operational (2026-06-13). First successful GitHub Actions run: commit `4e58590`, push trigger, ubuntu-latest, Node 20, 32 s, 6,494/6,519 tests passed, no secrets. Integration tests self-skip (opt-in only). |
@@ -306,6 +318,191 @@ They are not bugs — they are implementation decisions that have been formally 
 ---
 
 ## Recent Implementation History
+
+### 2026-06-17 — #notif-badge CSS Visual-Hide Defect Fix
+- **Root cause:** All author CSS beats UA CSS in the cascade regardless of specificity. The `[hidden] { display:none }` rule lives in the UA stylesheet; the inline `style="display:inline-flex;..."` on `#notif-badge` is an author declaration. Inline styles always win over UA rules — so `badge.hidden = true` set `hidden=""` but the badge remained visually visible as a small empty red circle.
+- **Fix (1 CSS rule added):**
+  - `frontend/dashboard.html` — added inside `<style>` block, after `.aq-badge` severity classes:
+    ```
+    /* ── Notification count badge (overrides inline display to respect [hidden]) */
+    #notif-badge[hidden] { display: none !important; }
+    ```
+  - `!important` is the correct tool here: it elevates an author rule above another author declaration (inline style). Scoped precisely to `#notif-badge[hidden]` — no other element affected.
+- **Playwright assertion updated:**
+  - `tests/e2e/notifications.authenticated.spec.js` — test B final assertion changed from `toHaveText('') + toHaveAttribute('hidden', '')` to `not.toBeVisible()`. The workaround comment was replaced with an explanation of the CSS fix.
+- **Production code changed:** Yes. `frontend/dashboard.html` style block modified (1 CSS rule added). No JS changes. No HTML structure changes. No route changes. No schema changes.
+- **Notification behavior unchanged:** Badge still uses `badge.hidden = _unreadCount === 0` in `loadNotifications()`. The fix makes the `hidden` attribute work as intended — it now visually hides the badge, which is the correct behavior.
+- **Verification:**
+  - `npm run test:e2e` → **10/10 passing** (8/8 smoke + 2/2 authenticated; 21.6 s)
+  - `npx jest --testPathPattern="dashboardNotifications" --no-coverage` → **29/29 passing** (0.348 s)
+- **E2E maturity change:** Authenticated notification workflow — **Partially Tested → Tested**: `not.toBeVisible()` assertion now correctly verifies the visual hide behavior. No workarounds in tests. CI E2E wiring still absent.
+
+---
+
+### 2026-06-17 — Playwright Authenticated Session Bootstrap (globalSetup.js)
+- **Files created:**
+  - `tests/e2e/globalSetup.js` — Playwright `globalSetup` export; loads `.env` non-destructively (Playwright test runner does not auto-load `.env`); verifies `DATABASE_URL` or `TEST_DATABASE_URL` is safe (must contain `test`, `local`, or `localhost`; fails with a clear error if absent or unsafe); creates `pg.Pool` via `createTestPool()` from `tests/integration/helpers/dbTestHelper.js`; calls `upsertUser()` (githubId: 99001, username: `e2e-test-user`, defaultRole: `intern`) + `createSession()` (24-hour expiry); writes Playwright `storageState` to `tests/e2e/.auth/user.json` (session_token cookie: HttpOnly, SameSite=Lax, domain=localhost); closes pool; also supports direct invocation (`node tests/e2e/globalSetup.js`) for smoke-testing the setup step without running the full suite
+- **Files modified:**
+  - `playwright.config.js` — added `globalSetup: require.resolve('./tests/e2e/globalSetup')` (1 line; runs once before all test suites)
+  - `.gitignore` — added `tests/e2e/.auth/` entry (prevents live session tokens from entering the repository)
+- **Production code changed:** No. `authRoutes.js`, `authenticate.js`, `createSession.js`, `upsertUser.js`, `backend/server.js`, and all other production paths are unmodified. No test-only login route was added. The E2E test user's session is validated by the real `validateSession()` path — no backdoor exists.
+- **Design:** Reuses existing execution modules and test helpers — `upsertUser`, `createSession` (from `execution/auth/`), `createTestPool`, `closeTestPool` (from `tests/integration/helpers/dbTestHelper.js`) — matching the exact patterns used in `tests/integration/auth.integration.test.js`. Authenticated test specs load `use: { storageState: 'tests/e2e/.auth/user.json' }` to start with a valid session cookie; unauthenticated specs (`dashboard.smoke.spec.js`) are unaffected.
+- **Verification command:** `node tests/e2e/globalSetup.js`
+- **Output:** `[globalSetup] Session created → userId=36 (e2e-test-user), expires=2026-06-18T16:49:35.370Z, state → …/tests/e2e/.auth/user.json` (exit code 0)
+- **Gitignored:** Confirmed — `git check-ignore -v tests/e2e/.auth/user.json` → `.gitignore:22:tests/e2e/.auth/`. Session token cannot be accidentally committed.
+- **E2E maturity change:** Authenticated session bootstrap — **Absent → Ready**. Infrastructure in place for authenticated E2E test specs. No authenticated test specs written yet.
+
+---
+
+### 2026-06-17 — Authenticated Notification E2E (tests/e2e/notifications.authenticated.spec.js — 2/2 passing)
+- **Files created:**
+  - `tests/e2e/notifications.authenticated.spec.js` — 2 Playwright tests in Chromium headless; outer `test.describe` uses `test.use({ storageState: 'tests/e2e/.auth/user.json' })` (real session cookie injected from globalSetup); two independent inner describes (A and B) each with their own `beforeAll` DB setup and `afterAll` pool teardown; `setupDb()` loads `.env` non-destructively, resolves E2E test user by `github_id = 99001`; `seedNotification()` deletes all notifications for that user then inserts one CREATED HIGH row with `dedupe_key = NULL` (bypasses partial-unique constraint); `beforeEach` navigates to `/dashboard` and waits for `networkidle` before each assertion
+- **Production code changed:** No. `authRoutes.js`, `authenticate.js`, `notificationRoutes.js`, `dashboard.html`, `server.js`, and all other production paths are unmodified.
+- **Test A — Authenticated unread notification renders:**
+  - `#notif-badge` is visible (badge.hidden = false; `loadNotifications()` returned unreadCount=1)
+  - `#notif-badge` text is `'1'` (`buildNotificationBadgeText(1)` → `'1'`)
+  - Clicking `#notif-btn` makes `#notification-section` visible
+  - `#notification-list` contains `'[RepoPulse] High Alert — Worsening trend'`
+  - `#notification-list .aq-badge.severity-high` is visible (`notificationPriorityClass('HIGH')` → `'severity-high'`)
+- **Test B — Authenticated mark-read flow:**
+  - `#notif-btn` click opens panel; `button:has-text("Mark read")` is visible
+  - `page.waitForResponse()` intercept registered before click (predicate: URL includes `/api/notifications/` + `/read`, method `PATCH`)
+  - Click fires PATCH; response status is 200 (`{ success: true }`)
+  - After `waitForLoadState('networkidle')`: Mark read button not visible; `#notif-badge` text is `''`; `#notif-badge` has `hidden=""` attribute
+- **Self-Annealing Loop applied:** Test B failed on first run — `not.toBeVisible()` on `#notif-badge` failed even with `hidden=""` present because inline `display:inline-flex` overrides UA `[hidden] { display:none }` (CSS specificity: inline > UA). Root cause identified. Fix: replaced final assertion with `toHaveText('')` + `toHaveAttribute('hidden', '')` — asserts the two DOM properties the code actually sets. Second run: 10/10 passed (8/8 smoke + 2/2 authenticated). Defect documented as open (production CSS fix pending §4 approval).
+- **Command run:** `npm run test:e2e` → `cross-env RUN_E2E=true playwright test`; globalSetup ran before suite; Chromium headless; 1 worker; 10/10 passing in 23.8 s
+- **E2E maturity change:** Authenticated notification workflow — **Absent → Partially Tested**: the authenticated notification UI path (badge count, panel content, mark-read PATCH flow) is now verified in a real browser with a real session and real DB-seeded data. `#notif-badge` CSS visual-hide defect later resolved 2026-06-17 (see below). Remaining: CI E2E wiring absent; `notifications.db.integration.test.js` (worker → DB row path) not yet written.
+
+---
+
+### 2026-06-16 — First Playwright E2E Dashboard Smoke Tests (8/8 passing)
+- **Files created:**
+  - `tests/e2e/dashboard.smoke.spec.js` — 8 unauthenticated Playwright smoke tests (Chromium headless); no DB seeding, no session fixtures, no auth wiring required
+- **Production code changed:** No. No backend, frontend, configuration, or Jest test files were modified.
+- **Test matrix (all 8 passing in 14.8 s):**
+  1. `/dashboard loads without navigation error` — `page.goto('/dashboard')` succeeds; URL contains `/dashboard`
+  2. `page title is "RepoPulse Dashboard"` — `<title>` element matches `RepoPulse Dashboard`
+  3. `notification bell #notif-btn is visible` — topbar bell is present and rendered; not hidden
+  4. `#notification-section is hidden on load` — panel starts with `hidden` attribute; `loadNotifications()` 401 silent no-op leaves it hidden
+  5. `clicking the bell shows the notification panel` — `toggleNotificationPanel()` removes `hidden`; panel becomes visible
+  6. `clicking the bell a second time hides the notification panel` — second click re-sets `hidden`; panel not visible
+  7. `"Login with GitHub" link is visible for unauthenticated access` — `GET /api/repos` returns 401 → errorHandler sends `{ ok: false }` → `loadRepos()` renders `<a href="/auth/github">Login with GitHub</a>` in `#projects-container`; `networkidle` in `beforeEach` guarantees fetch has completed before assertion
+  8. `no uncaught JavaScript errors on page load` — `page.on('pageerror', …)` listener accumulated zero events; 401 API responses are handled by `.catch()` / `if (!r.ok) return` paths, not uncaught exceptions
+- **Command run:** `npm run test:e2e` → `cross-env RUN_E2E=true playwright test`; server reused via `reuseExistingServer: true`; Chromium headless; 1 worker; retries: 0
+- **E2E maturity change:** E2E / Playwright — **Scaffolded → Partially Tested**: the unauthenticated dashboard path is now verified in a real browser. Remaining gaps: authenticated E2E (requires session seeding), DB-seeded notification panel (badge count + mark-read flow), E2E CI wiring.
+
+---
+
+### 2026-06-16 — Playwright webServer Startup Hardening
+- **Files modified:**
+  - `playwright.config.js` — webServer `command` changed from `'npm run dev'` to `'cross-env PROJECT_SOURCE=file npm run dev'`
+- **Production code changed:** No. `playwright.config.js` is only executed when `npm run test:e2e` runs. No backend, frontend, database, or test files were modified.
+- **Root cause fixed:** `npm run dev` (i.e. `node --env-file=.env backend/server.js`) loads `.env` which sets `PROJECT_SOURCE=github`. When `GITHUB_ORG` is also set, `fetchGithubProjects()` calls `https://api.github.com/…` which times out after 10 s (Node.js undici default). Because `server.js` startup IIFE has no `try/catch`, this uncaught rejection kills the process before `app.listen()` is reached — Playwright's webServer health check (`GET /health`) never returns 200, and the E2E run fails before any test executes.
+- **Fix mechanism:** Node.js `--env-file` does NOT override environment variables already present in the process environment. `cross-env PROJECT_SOURCE=file` sets `PROJECT_SOURCE=file` before Node loads `.env`, so `.env`'s `PROJECT_SOURCE=github` is silently ignored. `server.js` sees `PROJECT_SOURCE !== 'github'` and skips `syncGithubProjects()` entirely — the server reaches `app.listen()` immediately. `cross-env` is already a root devDependency (`^7.0.3`); no new package added.
+- **Verification:** `npx playwright test --list` → `Total: 0 tests in 0 files` (exit 1 expected — no test files exist yet; config parsed without error; a config error would produce a syntax/module error, not "No tests found")
+- **Maturity change:** Playwright E2E startup config — **Fragile (crashes on GitHub API timeout) → Stable (startup deterministic in all environments)**. E2E maturity classification remains **Scaffolded** — no test files exist and Chromium binary is not installed.
+
+---
+
+### 2026-06-16 — Playwright E2E Toolchain Scaffolding
+- **Files created:**
+  - `playwright.config.js` — Playwright configuration at repo root: `testDir: 'tests/e2e'`; Chromium only (`devices['Desktop Chrome']`); `headless: true`; `baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000'`; `webServer: { command: 'npm run dev', url: 'http://localhost:3000/health', reuseExistingServer: true, timeout: 30_000 }`; `workers: 1`, `fullyParallel: false`; `retries: process.env.CI ? 1 : 0`; JSON reporter outputs to `tmp/playwright-results.json`; trace captured on first retry
+- **Files modified:**
+  - `package.json` — added `"@playwright/test": "^1.61.0"` to `devDependencies`; added `"test:e2e": "cross-env RUN_E2E=true playwright test"` to scripts
+  - `package-lock.json` — updated by npm (3 packages added: `@playwright/test`, `playwright`, `playwright-core`)
+- **Production code changed:** No. No server, dashboard, or existing test files were modified. `jest.config.js` unchanged — its explicit `testMatch` allowlist (`tests/unit/**`, `tests/directives/**`, `tests/integration/**`) already excludes `tests/e2e/` without requiring `testPathIgnorePatterns`.
+- **Verification performed:**
+  - `npx playwright test --list` → `Total: 0 tests in 0 files` (exit 1 — expected for empty `testDir`; config parsed without error)
+  - `npx jest --listTests | grep e2e` → no output (Jest discovery confirmed isolated from `tests/e2e/`)
+- **Maturity change:** E2E / Playwright — **Not Present → Scaffolded**
+- **Remaining blockers before first test can run:**
+  1. `npx playwright install chromium` — Chromium browser binary not yet installed (one-time developer step + required CI step)
+  2. Create `tests/e2e/` directory and at least one `.spec.js` test file
+  3. ~~Authenticated E2E requires a session seeding strategy~~ — **resolved 2026-06-17**: `tests/e2e/globalSetup.js` added; `playwright.config.js` wired; storageState to `tests/e2e/.auth/user.json`; gitignored; no backend changes
+
+---
+
+### 2026-06-16 — FR-008 Dashboard Notification UI (topbar bell + panel + loadNotifications wired into refresh)
+- **Files modified:**
+  - `frontend/dashboard.html` — 6 insertions: (1) topbar bell button `#notif-btn` with animated `#notif-badge` span; (2) `#notification-section` panel inserted after `#portfolio-briefing`, before portfolio tabs — contains `#notif-count`, `#notification-list`, and a "Close" button; (3) three pure renderer functions after `esc()` definition: `notificationPriorityClass(priority)`, `buildNotificationBadgeText(unreadCount)`, `buildNotificationListHtml(notifications)`; (4) `_notifications = []` and `_unreadCount = 0` module state vars alongside `_repos`/`_activeFilter`; (5) `loadNotifications()`, `toggleNotificationPanel()`, `markNotificationRead(id)` DOM+fetch functions inserted after `loadAttentionQueue()`; (6) `loadNotifications()` call added to `refresh()` between `loadAttentionQueue()` and `loadHistory()`
+- **Files created:**
+  - `tests/unit/frontend/dashboardNotifications.test.js` — 29 pure-logic unit tests (verbatim-copy pattern; Jest node env; no DOM): `notificationPriorityClass` (6), `buildNotificationBadgeText` (7), `buildNotificationListHtml` empty state (2), priority CSS classes (4), XSS escaping (2), read/unread rendering (6), multiple notifications (2)
+- **Production code changed:** Yes. `loadNotifications()` is now called on every `refresh()` cycle (page load + every 60 seconds). Bell badge and notification panel update automatically. `markNotificationRead(id)` issues a live `PATCH` request.
+- **Functional behavior (unit-test-verified):**
+  - Unread badge: `buildNotificationBadgeText(0)` → `''` (hidden); 1–9 → digit string; 10+ → `'9+'`
+  - Priority badge CSS class: CRITICAL → `severity-critical`; HIGH → `severity-high`; MEDIUM → `severity-medium`; LOW → `severity-healthy`; unknown → `severity-unknown`
+  - Read/Expired notifications: `opacity:0.55`, no Mark read button
+  - Unread notifications: no opacity style, Mark read button with `onclick="markNotificationRead(N)"` where N = `Number(n.id)`
+  - XSS escaping: title `<script>` → `&lt;script&gt;`; body `& growing` → `&amp; growing` (4-replacement `esc()` — no single-quote escaping, matches dashboard.html exactly)
+  - Empty state: `[]` or `null` → `<p>No new notifications.</p>`
+  - 401/403 from `GET /api/notifications` → silent no-op (panel stays hidden; no error shown to unauthenticated users)
+  - Network failure → `showError('notification-list', e.message)`
+- **Tests:** 29/29 passing. Full suite: **6,618 passing, 32 skipped, 0 failing** (was 6,589; +29 new tests, 0 regressions).
+- **Capability maturity change:** FR-008 in-app channel — all four layers now implemented and unit-tested: persistence (`migrations/0013` + `writeNotification.js`), write path (`sendAlert.js` fan-out), API (`notificationRoutes.js`), and dashboard UI (`dashboard.html`). Remaining gaps: no Playwright/E2E test, no integration test for worker → DB row path, production SMTP relay and Slack webhook unverified.
+
+---
+
+### 2026-06-16 — FR-008 Notification API Layer (GET /api/notifications + PATCH /api/notifications/:id/read)
+- **Files added:**
+  - `backend/routes/notificationRoutes.js` — authenticated Express router with two endpoints; `'use strict'`; `router.use(authenticate)`; uses `req.app.locals.db.query()`; errors routed to `next(err)`
+  - `tests/unit/backend/routes/notificationRoutes.test.js` — 17 HTTP contract tests using supertest; `jest.mock` stubs `authenticate` to inject `req.user = { userId: 1 }`; `makeDb(...results)` helper queues `mockResolvedValueOnce` results; `buildApp(db)` creates isolated Express instances per test with an inline error handler
+- **Files modified:**
+  - `backend/server.js` — added `require('./routes/notificationRoutes')` and `app.use('/api/notifications', notificationRoutes)`; no other changes
+- **Production code changed:** Yes. `GET /api/notifications` and `PATCH /api/notifications/:id/read` are now live HTTP endpoints when the server is running.
+- **`GET /api/notifications` behavior:** Issues two parallel queries via `Promise.all`. List query: `SELECT id, type, priority, title, body, status, dedupe_key, created_at, sent_at, read_at, expires_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`. Count query: `SELECT COUNT(*) AS unread_count FROM notifications WHERE user_id = $1 AND status NOT IN ('READ', 'EXPIRED')`. Returns `{ notifications: [...rows], unreadCount: N }`. Both queries are scoped to `req.user.userId` — no cross-user data exposure possible.
+- **`PATCH /api/notifications/:id/read` behavior:** Parses `req.params.id` as integer — returns HTTP 400 immediately (no DB call) for non-integer values. Issues `UPDATE notifications SET status = 'READ', read_at = NOW() WHERE id = $1 AND user_id = $2`. `rowCount === 0` → HTTP 404 (not owned or non-existent). `rowCount >= 1` → HTTP 200 `{ success: true }`. Idempotent: an already-READ row still matches the WHERE clause and returns `{ success: true }`.
+- **Test coverage (17 tests):**
+  - *GET (9):* HTTP 200; response shape `{ notifications: Array, unreadCount: Number }`; both queries scoped to userId; ORDER BY created_at DESC in list SQL; LIMIT 20 in list SQL; notification rows from list query in response; unreadCount matches count query integer; count SQL filters NOT IN ('READ', 'EXPIRED'); DB failure → 500
+  - *PATCH (8):* HTTP 200 + `{ success: true }` for owned notification; UPDATE SQL WHERE id=$1 AND user_id=$2; UPDATE SQL sets status=READ and read_at=NOW(); 404 for wrong user; 404 for non-existent id; idempotent second PATCH returns `{ success: true }`; 400 + no db.query for non-integer id; DB failure → 500
+- **Tests:** 17/17 passing. Full suite: **6,589 passing, 32 skipped, 0 failing** (was 6,572; +17 new tests, 0 regressions).
+- **Capability maturity change:** FR-008 Notifications — **Integrated (write path end-to-end) → Integrated / Read path added**. The notification read layer is now implemented and HTTP contract-tested. Active users will receive notification rows written to DB (via snapshotWorker → sendAlert → writeNotification); they can now retrieve them via `GET /api/notifications` and acknowledge them via `PATCH /api/notifications/:id/read`. Remaining gaps before "Verified": no frontend notification UI (unread badge, panel, markRead wiring); no integration test against a live PostgreSQL instance for the full worker → DB row path.
+
+### 2026-06-16 — FR-008 snapshotWorker DB Wiring (startSnapshotWorker(db) → sendAlert(snapshot, { db }))
+- **Files changed:**
+  - `services/worker/snapshotWorker.js` — `function startSnapshotWorker()` → `function startSnapshotWorker(db)`; `sendAlert(snapshot).catch(...)` → `sendAlert(snapshot, { db }).catch(...)`
+  - `backend/server.js` — `startSnapshotWorker()` → `startSnapshotWorker(db)` (one-line call-site change; `db` was already in scope as the `pg.Pool` singleton from `execution/db.js`)
+  - `tests/unit/services/worker/snapshotWorker.test.js` — 2 assertion updates + 2 new tests added
+- **Production code changed:** Yes. When `ENABLE_SNAPSHOT_WORKER=true` and `DATABASE_URL` is configured, each `setInterval` tick now calls `sendAlert(snapshot, { db: pool })` instead of `sendAlert(snapshot)`. This activates `_writeInAppNotifications` in `sendAlert.js` — one `notifications` row is written per active user (`WHERE deleted_at IS NULL`) whenever `shouldAlert(snapshot)` returns true and the `_sent` dedup key has not been seen this process lifetime. All existing behavior is preserved: snapshot scheduling, `appendSummarySnapshot`, `appendRepoHistorySnapshot`, GitHub sync, `try/catch` isolation, and the fire-and-forget `.catch()` on `sendAlert`.
+- **How db is obtained:** `execution/db.js` exports a `pg.Pool` singleton that throws at module load if `DATABASE_URL` is unset. `server.js` already holds this pool (`const db = require('../execution/db')` on line 9). The pool is passed as an explicit parameter — matching the pattern used everywhere else (routes receive db via `req.app.locals.db`). No new import is added to `snapshotWorker.js`.
+- **Failure isolation preserved:** The `sendAlert(snapshot, { db }).catch(err => ...)` call is fire-and-forget. If `db.query` fails (e.g. DB unreachable), or if any `writeNotification` call rejects, the error is caught by `sendAlert`'s internal `.catch()` and logged. The worker `setInterval` callback does not throw; the next tick fires normally.
+- **Test changes (snapshotWorker.test.js):**
+  - Updated assertion in test 2: `toHaveBeenCalledWith(SNAPSHOT)` → `toHaveBeenCalledWith(SNAPSHOT, { db: undefined })` (reflects two-argument call when no db passed to worker in tests)
+  - Updated assertion in test 5 (appendRepoHistory throws): same correction
+  - Added `describe('snapshotWorker — db wiring')` with 2 new tests:
+    - `passes { db } to sendAlert when db is provided to startSnapshotWorker` — creates `mockDb = { query: jest.fn() }`, calls `startSnapshotWorker(mockDb)`, asserts `sendAlert.toHaveBeenCalledWith(SNAPSHOT, { db: mockDb })`
+    - `passes { db: undefined } to sendAlert when no db is provided (backward compat)` — confirms `startSnapshotWorker()` still works without argument
+- **Tests:** 7/7 passing (was 5/5 before this session). Full suite: **6,572 passing, 32 skipped, 0 failing** (was 6,570; +2 new tests, 0 regressions).
+- **Capability maturity change:** FR-008 Notifications — in-app channel: **Partially Integrated → Integrated** (write path end-to-end). The full chain `snapshotWorker → sendAlert → writeNotification` is now wired in production code and unit-tested. In-app notifications are written to the `notifications` table at runtime for every active user when an alert condition fires. Remaining gaps before "Verified": no notification API routes, no frontend UI, no integration test against a live PostgreSQL instance.
+
+### 2026-06-16 — FR-008 sendAlert In-App Wiring (sendAlert → writeNotification fan-out)
+- **Files changed:**
+  - `services/notifications/sendAlert.js` — modified: signature changed from `sendAlert(summary)` to `sendAlert(summary, { db } = {})`; added `require('../../execution/notifications/writeNotification')`; added `_writeInAppNotifications(db, summary)` private helper; added `inAppWrites` as third entry in `Promise.allSettled`
+- **Files added:**
+  - `tests/unit/services/notifications/sendAlert.inapp.test.js` — 16 wiring unit tests
+- **Production code changed:** `sendAlert.js` behavior changed when `db` is provided. Behavior is unchanged when `db` is absent (all existing callers pass no second argument — `snapshotWorker.js` unaffected). `'use strict'` added (was missing from the original file).
+- **Design:** When `db` is truthy, `_writeInAppNotifications(db, summary)` issues `SELECT id FROM users WHERE deleted_at IS NULL`, then fans out `writeNotification({ db, userId: row.id, summary })` for each active user via `Promise.all`. This promise is wrapped with `.catch(err => console.error(...))` before entering `Promise.allSettled` — isolating in-app write failures from email and Slack delivery. When `db` is falsy, `inAppWrites = Promise.resolve()` — effectively a no-op. The existing `_sent` Set dedup gate fires before either channel path, so in-app writes are also suppressed on duplicates.
+- **Two-layer dedup preserved:** (1) `_sent` Set (process-lifetime, in-memory): prevents `_writeInAppNotifications` from being called at all for a repeated key. (2) `notifications_user_dedupe_key_uidx` partial unique index (persistent DB): ON CONFLICT DO NOTHING in `writeNotification.js` handles cross-restart duplicates.
+- **Test coverage (16 tests across 4 describe blocks):**
+  - *db provided (5):* queries `SELECT id FROM users WHERE deleted_at IS NULL`; calls writeNotification N times for N users; passes `{db, userId, summary}` exactly; calls for each specific user id; does not call when user list is empty
+  - *db absent (4):* no writeNotification when second arg omitted; no throw when second arg omitted; no writeNotification when db is null; no writeNotification when db is undefined
+  - *failure isolation (5):* writeNotification rejection does not throw; email still fires when writeNotification rejects; Slack still fires when writeNotification rejects; db.query rejection does not throw; email and Slack still fire when db.query rejects
+  - *dedup preserved (2):* second call with same key is suppressed (writeNotification not called); after `_sent.clear()`, writeNotification is called again
+- **Tests:** 16/16 passing. Full suite: **6,570 passing, 32 skipped, 0 failing** (was 6,554; +16 new tests, 0 regressions).
+- **Capability maturity change:** FR-008 Notifications — in-app channel: **Scaffolded / Unit-Tested → Partially Integrated**. The `sendAlert → writeNotification` write path is wired and unit-tested. In-app notifications will be written per active user when `db` is supplied to `sendAlert`. The channel is not end-to-end active yet: `snapshotWorker.js` still calls `sendAlert(snapshot)` without `db`, so no notifications are written at runtime until the worker is wired.
+
+### 2026-06-16 — FR-008 In-App Notification Persistence Layer (Migration 0013 + writeNotification.js)
+- **Files added:**
+  - `migrations/0013_create_notifications.js` — DDL migration
+  - `execution/notifications/writeNotification.js` — DB write execution script
+  - `tests/unit/migrations/0013_notifications.test.js` — 24 migration unit tests
+  - `tests/unit/execution/notifications/writeNotification.test.js` — 30 write-path unit tests
+- **Production code changed:** None. `sendAlert.js` and `snapshotWorker.js` are not yet wired. No routes added. No frontend changes.
+- **Design:** Option B — per-user ownership. `user_id NOT NULL FK → users(id) ON DELETE CASCADE`. One notification row per user per alert condition. Per-user deduplication via partial unique index `notifications_user_dedupe_key_uidx ON (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL`. `writeNotification` uses `ON CONFLICT ON CONSTRAINT notifications_user_dedupe_key_uidx DO NOTHING RETURNING` — returns inserted row or null (duplicate). Priority mapping: `alertState === 'Critical'` → `CRITICAL`; `trend === 'Worsening'` → `HIGH`; otherwise `MEDIUM`. dedupe_key format: `alertState:trend` (e.g., `Critical:Worsening`). expires_at = NOW() + 90 days.
+- **Deliberate omissions:** `project_id` FK omitted — no `projects` table exists yet. `id` uses `serial` (not UUID) to match FK type convention in all other tables. `sent_at` column present but not set by `writeNotification` (set by future dispatch step).
+- **Migration 0013 test coverage (24 tests):** module structure (up/down/shorthands exported); `notifications` table name; user_id notNull + references `"users"(id)` + ON DELETE CASCADE; status notNull + default CREATED + all 6 lifecycle values in check; priority notNull + all 4 priority values in check; title notNull varchar(255); body notNull text; dedupe_key nullable; created_at notNull timestamptz; read_at nullable; expires_at nullable; 4+ pgm.sql calls; all 4 index names present; `notifications_user_id_created_at_idx` DESC; `notifications_user_id_status_idx`; `notifications_user_dedupe_key_uidx` is UNIQUE INDEX + covers user_id+dedupe_key + WHERE dedupe_key IS NOT NULL; down drops notifications table.
+- **writeNotification test coverage (30 tests):** guards throw for missing/null/falsy db, userId, summary; db.query called exactly once; INSERT INTO notifications statement; ON CONFLICT + DO NOTHING; RETURNING clause; userId is first parameter; portfolio_alert type; all priority mappings (Critical→CRITICAL, non-critical Worsening→HIGH, Critical+Stable stays CRITICAL, Normal/Stable→MEDIUM); dedupe_key = alertState:trend for all 3 fixtures; expires_at is a Date instance; expires_at is approximately 90 days from now; title contains [RepoPulse] + alertState + trend; body contains Alert State, trend, riskScore%, atRisk/total; returns inserted row; returns null when ON CONFLICT fires; different userId + same dedupe_key returns a row (users are independent).
+- **Tests:** 54 new unit tests added; all 54 passing. Full suite: **6,554 passing, 32 skipped, 0 failing**. No regressions.
+- **Capability maturity change:** FR-008 Notifications — in-app channel: **Absent → Scaffolded / Unit-Tested**. Schema + write path + full unit test coverage are in place. Channel is not integrated yet: `sendAlert.js` not wired, `snapshotWorker.js` not wired, no API routes, no frontend UI.
 
 ### 2026-06-15 — FR-008 SMTP Sandbox Integration Test (Mailhog)
 - **Files:** `tests/integration/notifications.smtp.integration.test.js` (new, 7 tests)
@@ -463,8 +660,13 @@ ADR-001 accepted. Vanilla JS frontend accepted for Phases 1–5. Spec updated. R
 ### ~~1 — Resolve FR-007 Real-Time Updates~~ ✅ RESOLVED (2026-06-12)
 ADR-002 accepted. 60-second polling accepted for Phases 1–5; satisfies "no manual refresh" acceptance criterion. WebSocket transport deferred to Phase 6+ with defined triggers. Spec and PROGRESS.md updated. See `docs/adr/ADR-002-realtime-transport.md`.
 
-### 1 — Complete FR-008 Notification Delivery Verification (Medium)
-Configuration fixed and unit delivery paths tested (2026-06-12 — 15/15 passing). Positive send paths + payload content unit-tested (2026-06-14 — 26/26 passing). ~~`nodemailer` must be moved from `backend/package.json` to root~~ — **resolved 2026-06-15**. ~~No integration test against a real SMTP sink~~ — **resolved 2026-06-15**: `tests/integration/notifications.smtp.integration.test.js` added; 7/7 Mailhog tests passing (`sendEmailAlert` delivery, To/From, subject, body, `sendAlert` orchestration, dedup, shouldAlert gate). Remaining gaps: (a) production SMTP relay delivery unverified (Mailhog ≠ production relay; TLS/auth/routing not exercised); (b) Slack webhook delivery unverified against a real endpoint (unit-tested only); (c) no in-app notification channel (spec FR-008 requires in-app alongside email).
+### 1 — Complete FR-008 In-App Notification Channel Integration (Medium)
+Configuration fixed (2026-06-12). Email/Slack unit paths tested (2026-06-14, 26/26). ~~`nodemailer` must be moved to root~~ — **resolved 2026-06-15**. ~~No SMTP integration test~~ — **resolved 2026-06-15** (7/7 Mailhog tests passing). ~~No in-app persistence layer~~ — **resolved 2026-06-16** (`migrations/0013_create_notifications.js` + `execution/notifications/writeNotification.js`; 54 unit tests). ~~Wire `sendAlert.js`~~ — **resolved 2026-06-16** (`sendAlert(summary, { db })` fans out `writeNotification` per active user; 16 unit tests; failure-isolated). ~~Wire `snapshotWorker.js`~~ — **resolved 2026-06-16** (`startSnapshotWorker(db)` passes `pg.Pool`; 7/7 worker tests; in-app channel runtime-active). **Remaining steps to close FR-008:**
+- ~~**(c) Add `backend/routes/notificationRoutes.js`**~~ — **resolved 2026-06-16**: `GET /api/notifications` + `PATCH /api/notifications/:id/read` implemented; 17/17 route tests passing; registered in `backend/server.js`
+- ~~**(d) Add notification UI to `frontend/dashboard.html`**~~ — **resolved 2026-06-16**: topbar bell + `#notif-badge`, `#notification-section` panel, `loadNotifications()` in `refresh()` loop, `markNotificationRead(id)`, `toggleNotificationPanel()`; 29/29 frontend unit tests passing; in-app channel now fully implemented across all four layers (persistence, write path, API, UI)
+- **(e) Add `tests/integration/notifications.db.integration.test.js`** (opt-in, requires TEST_INTEGRATION=true + live PostgreSQL) — proves the full worker → DB row path end-to-end against a real PostgreSQL instance; currently the only unverified link in the in-app chain
+- ~~**(f) Add Playwright E2E test for notification UI (unauthenticated + authenticated)**~~ — **resolved 2026-06-17**: unauthenticated path verified via `tests/e2e/dashboard.smoke.spec.js` (8/8 passing, 2026-06-16); authenticated notification UI verified via `tests/e2e/notifications.authenticated.spec.js` (2/2 passing, 2026-06-17: badge count=1 visible, panel opens + title + HIGH badge, mark-read PATCH 200, badge hides on re-fetch; real session/DB/API exercised; no production code changed). Open defect: `#notif-badge` CSS visual-hide (inline `display:inline-flex` overrides `[hidden]`); production fix pending CLAUDE.md §4 approval
+- Remaining delivery gaps: production SMTP relay unverified; Slack webhook delivery unverified (unit-tested only)
 
 ### 2 — Complete FR-009 Filtering (Medium)
 Label/risk filter tested (29/29 passing, 2026-06-12). Backend riskLevel filter tested (236/236 passing, 2026-06-12). ~~Frontend not wired to backend parameter~~ — **resolved 2026-06-12** (Healthy filter now calls `GET /api/repos?riskLevel=healthy`; wiring tested 14/14). ~~HTTP layer contract untested~~ — **resolved 2026-06-12** (10 supertest tests; Healthy path elevated to Integrated / Tested). Remaining gaps: (a) At Risk toggle intentionally uses client-side `critical || at-risk` (by design in Option A — acceptable for Phases 1–5); (b) 5 spec dimensions entirely absent: repository name search, project status, assigned manager, activity recency, intern contributor; (c) SQL filter correctness against real PostgreSQL unverified (integration test against live DB not yet written).
@@ -476,7 +678,12 @@ User data deletion, project archival, repository disconnection, and data export 
 `tests/unit/services/worker/snapshotWorker.test.js` added with 5 routing tests (all passing). Verifies `sendAlert` dispatch, exact snapshot argument, rejection isolation, snapshot failure guard, and repo-history failure isolation. All external dependencies mocked; fake timers used; no real communications sent.
 
 ### 5 — Add Playwright / E2E Tests (Medium)
-CLAUDE.md specifies browser automation tools (Playwright) for UI validation. At minimum: login → sync → dashboard load → repo selection → remediation tab golden path.
+~~Playwright toolchain absent~~ — **scaffolded 2026-06-16**: `@playwright/test` installed; `playwright.config.js` created; `test:e2e` script added; Jest isolation confirmed. ~~webServer crashes on GitHub API timeout~~ — **resolved 2026-06-16**: webServer command updated to `cross-env PROJECT_SOURCE=file npm run dev`; startup config is now stable. ~~No E2E test files~~ — **resolved 2026-06-16**: `tests/e2e/dashboard.smoke.spec.js` added; 8/8 unauthenticated smoke tests passing in Chromium headless (`npm run test:e2e` exits 0, 14.8 s). Remaining steps:
+- ~~Install Chromium binary~~ — **done 2026-06-16** (`npx playwright install chromium`; `chromium-1228` + `chromium_headless_shell-1228` installed to `%LOCALAPPDATA%\ms-playwright\`)
+- ~~Write `tests/e2e/dashboard.smoke.spec.js`~~ — **done 2026-06-16** (8/8 passing: /dashboard loads, page title, `#notif-btn` visible, panel hidden, bell toggle, Login link, no JS errors)
+- ~~Solve authenticated E2E session seeding~~ — **resolved 2026-06-17**: `tests/e2e/globalSetup.js` uses `upsertUser()` + `createSession()` directly against test DB; storageState saved to `tests/e2e/.auth/user.json`; `playwright.config.js` wired with `globalSetup`; `tests/e2e/.auth/` gitignored; no backend route added; verified `node tests/e2e/globalSetup.js` → exit 0
+- ~~Write authenticated E2E test specs~~ — **resolved 2026-06-17**: `tests/e2e/notifications.authenticated.spec.js` added (2/2 passing). ~~`#notif-badge` CSS visual-hide defect~~ — **resolved 2026-06-17**: `#notif-badge[hidden] { display: none !important }` CSS rule added; `not.toBeVisible()` assertion used; 10/10 E2E passing.
+- Wire E2E job in `.github/workflows/ci.yml`: requires PostgreSQL service container, `npx playwright install chromium` step, `DATABASE_URL` secret, opt-in guard (`RUN_E2E=true`)
 
 ### ~~6 — Add CI/CD Pipeline~~ ✅ RESOLVED (2026-06-13)
 `.github/workflows/ci.yml` created and verified. First successful GitHub Actions run on commit `4e58590` (push trigger, ubuntu-latest, Node 20, 32 s, 6,494/6,519 passing). Unit tests now run automatically on every push and every PR to main. Integration tests remain opt-in (not yet automated — require live PostgreSQL).
