@@ -66,7 +66,7 @@ router.use(authenticate);
 // Returns all active repositories for the logged-in user, each with its latest risk score.
 router.get('/', async (req, res, next) => {
   try {
-    const { riskLevel, search } = req.query || {};
+    const { riskLevel, search, activeSince } = req.query || {};
     const VALID_RISK_LABELS = new Set(['healthy', 'at-risk', 'critical']);
     if (riskLevel !== undefined && !VALID_RISK_LABELS.has(riskLevel)) {
       return res.status(400).json({ error: 'Invalid riskLevel. Must be healthy, at-risk, or critical.' });
@@ -77,6 +77,18 @@ router.get('/', async (req, res, next) => {
     const trimmedSearch = typeof search === 'string' ? search.trim() : undefined;
     if (trimmedSearch !== undefined && trimmedSearch.length > 200) {
       return res.status(400).json({ error: 'search must be 200 characters or fewer.' });
+    }
+    const VALID_ACTIVE_SINCE = new Set(['7d', '30d', '90d', 'stale']);
+    if (activeSince !== undefined && activeSince !== '' && !VALID_ACTIVE_SINCE.has(activeSince)) {
+      return res.status(400).json({ error: 'Invalid activeSince. Must be 7d, 30d, 90d, or stale.' });
+    }
+    const DAY_MS = 86400000;
+    let lowerBound = null;
+    let upperBound = null;
+    if (activeSince === 'stale') {
+      upperBound = new Date(Date.now() - 30 * DAY_MS).toISOString();
+    } else if (activeSince === '7d' || activeSince === '30d' || activeSince === '90d') {
+      lowerBound = new Date(Date.now() - parseInt(activeSince, 10) * DAY_MS).toISOString();
     }
     const result = await req.app.locals.db.query(
       `SELECT
@@ -124,8 +136,10 @@ router.get('/', async (req, res, next) => {
        WHERE r.user_id = $1 AND r.is_active = true
          AND ($2::varchar IS NULL OR rs.label = $2)
          AND ($3::varchar IS NULL OR r.github_full_name ILIKE '%' || $3 || '%')
+         AND ($4::timestamptz IS NULL OR r.last_synced_at >= $4::timestamptz)
+         AND ($5::timestamptz IS NULL OR r.last_synced_at IS NULL OR r.last_synced_at < $5::timestamptz)
        ORDER BY rs.score DESC NULLS LAST, r.github_full_name ASC`,
-      [req.user.userId, riskLevel || null, trimmedSearch || null]
+      [req.user.userId, riskLevel || null, trimmedSearch || null, lowerBound, upperBound]
     );
 
     const repos = result.rows.map(r => ({

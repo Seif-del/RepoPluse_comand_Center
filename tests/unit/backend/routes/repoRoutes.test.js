@@ -201,7 +201,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null]
+      [MOCK_USER.userId, null, null, null, null]
     );
   });
 
@@ -215,7 +215,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy', null]
+      [MOCK_USER.userId, 'healthy', null, null, null]
     );
   });
 
@@ -229,7 +229,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'at-risk', null]
+      [MOCK_USER.userId, 'at-risk', null, null, null]
     );
   });
 
@@ -243,7 +243,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'critical', null]
+      [MOCK_USER.userId, 'critical', null, null, null]
     );
   });
 
@@ -297,7 +297,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null]
+      [MOCK_USER.userId, null, null, null, null]
     );
   });
 
@@ -311,7 +311,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, 'myrepo']
+      [MOCK_USER.userId, null, 'myrepo', null, null]
     );
   });
 
@@ -325,7 +325,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, 'myrepo']
+      [MOCK_USER.userId, null, 'myrepo', null, null]
     );
   });
 
@@ -339,7 +339,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null]
+      [MOCK_USER.userId, null, null, null, null]
     );
   });
 
@@ -353,7 +353,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy', 'myrepo']
+      [MOCK_USER.userId, 'healthy', 'myrepo', null, null]
     );
   });
 
@@ -389,6 +389,182 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     const sql = db.query.mock.calls[0][0];
     expect(sql).toMatch(/\$3.*IS NULL.*OR.*github_full_name.*ILIKE/s);
+  });
+});
+
+// ── GET / — activeSince filter ────────────────────────────────────────────────
+
+describe('repoRoutes GET / — activeSince filter', () => {
+  const DAY_MS = 86400000;
+  const FIXED_NOW = 1000000000000;
+  let dateSpy;
+
+  beforeEach(() => {
+    getRepoRiskFactors.mockReturnValue({ hasMetrics: true, triggered: [], notMeasured: [], allClear: true });
+    getTrendIndicator.mockReturnValue({ direction: 'stable', delta: 0, label: 'Operationally stable' });
+    dateSpy = jest.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    dateSpy.mockRestore();
+  });
+
+  it('passes null lowerBound and upperBound when activeSince is absent', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null]
+    );
+  });
+
+  it('sets lowerBound to 7 days ago and upperBound to null for activeSince=7d', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: '7d' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const expected = new Date(FIXED_NOW - 7 * DAY_MS).toISOString();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, expected, null]
+    );
+  });
+
+  it('sets lowerBound to 30 days ago and upperBound to null for activeSince=30d', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: '30d' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, expected, null]
+    );
+  });
+
+  it('sets lowerBound to 90 days ago and upperBound to null for activeSince=90d', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: '90d' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const expected = new Date(FIXED_NOW - 90 * DAY_MS).toISOString();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, expected, null]
+    );
+  });
+
+  it('sets lowerBound to null and upperBound to 30 days ago for activeSince=stale', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: 'stale' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, expected]
+    );
+  });
+
+  it('combines activeSince=30d with riskLevel and search', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'healthy', search: 'myrepo', activeSince: '30d' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'healthy', 'myrepo', expected, null]
+    );
+  });
+
+  it('combines activeSince=stale with riskLevel', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'healthy', activeSince: 'stale' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'healthy', null, null, expected]
+    );
+  });
+
+  it('returns 400 when activeSince is an unrecognised value', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: '45d' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(String) })
+    );
+  });
+
+  it('does not call db.query when activeSince is invalid', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: 'invalid' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('SQL query contains the activeSince lower-bound clause', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/\$4.*IS NULL.*OR.*last_synced_at.*>=.*\$4/s);
+  });
+
+  it('SQL query contains the activeSince upper-bound stale clause', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/\$5.*IS NULL.*OR.*last_synced_at.*IS NULL.*OR.*last_synced_at.*<.*\$5/s);
+  });
+
+  it('treats empty string activeSince as absent with no filter applied', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { activeSince: '' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null]
+    );
   });
 });
 

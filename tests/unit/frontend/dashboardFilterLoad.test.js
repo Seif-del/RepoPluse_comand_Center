@@ -18,6 +18,10 @@ function buildReposUrl(options) {
   if (search) {
     params.push('search=' + encodeURIComponent(search));
   }
+  var activeSince = options && typeof options.activeSince === 'string' ? options.activeSince : '';
+  if (activeSince) {
+    params.push('activeSince=' + encodeURIComponent(activeSince));
+  }
   return '/api/repos' + (params.length ? '?' + params.join('&') : '');
 }
 
@@ -158,5 +162,74 @@ describe('filterToLoadOptions + buildReposUrl — filter with search composition
     var opts = filterToLoadOptions('At Risk') || {};
     opts.search = 'myrepo';
     expect(buildReposUrl(opts)).toBe('/api/repos?search=myrepo');
+  });
+});
+
+// ── buildReposUrl — activeSince parameter ────────────────────────────────────
+
+describe('buildReposUrl — activeSince parameter', () => {
+  test('appends activeSince=7d for { activeSince: "7d" }', () => {
+    expect(buildReposUrl({ activeSince: '7d' })).toBe('/api/repos?activeSince=7d');
+  });
+
+  test('appends activeSince=30d for { activeSince: "30d" }', () => {
+    expect(buildReposUrl({ activeSince: '30d' })).toBe('/api/repos?activeSince=30d');
+  });
+
+  test('appends activeSince=90d for { activeSince: "90d" }', () => {
+    expect(buildReposUrl({ activeSince: '90d' })).toBe('/api/repos?activeSince=90d');
+  });
+
+  test('appends activeSince=stale for { activeSince: "stale" }', () => {
+    expect(buildReposUrl({ activeSince: 'stale' })).toBe('/api/repos?activeSince=stale');
+  });
+
+  test('omits activeSince param when activeSince is empty string', () => {
+    expect(buildReposUrl({ activeSince: '' })).toBe('/api/repos');
+  });
+
+  test('orders riskLevel before activeSince in the URL', () => {
+    expect(buildReposUrl({ riskLevel: 'healthy', activeSince: '30d' })).toBe(
+      '/api/repos?riskLevel=healthy&activeSince=30d'
+    );
+  });
+
+  test('orders search before activeSince in the URL', () => {
+    expect(buildReposUrl({ search: 'myrepo', activeSince: '7d' })).toBe(
+      '/api/repos?search=myrepo&activeSince=7d'
+    );
+  });
+
+  test('orders riskLevel, search, activeSince correctly when all three are present', () => {
+    expect(buildReposUrl({ riskLevel: 'healthy', search: 'myrepo', activeSince: '30d' })).toBe(
+      '/api/repos?riskLevel=healthy&search=myrepo&activeSince=30d'
+    );
+  });
+
+  test('URL-encodes activeSince value (stale has no special chars but encoding is applied)', () => {
+    expect(buildReposUrl({ activeSince: 'stale' })).toBe('/api/repos?activeSince=stale');
+  });
+});
+
+// ── filterToLoadOptions + buildReposUrl — filter with activeSince ─────────────
+
+describe('filterToLoadOptions + buildReposUrl — filter with activeSince composition', () => {
+  test('Healthy + activeSince=30d produces ?riskLevel=healthy&activeSince=30d', () => {
+    var opts = filterToLoadOptions('Healthy') || {};
+    opts.activeSince = '30d';
+    expect(buildReposUrl(opts)).toBe('/api/repos?riskLevel=healthy&activeSince=30d');
+  });
+
+  test('At Risk + activeSince=stale produces ?activeSince=stale (no riskLevel, client-side filter)', () => {
+    var opts = filterToLoadOptions('At Risk') || {};
+    opts.activeSince = 'stale';
+    expect(buildReposUrl(opts)).toBe('/api/repos?activeSince=stale');
+  });
+
+  test('All + search + activeSince=7d produces ?search=myrepo&activeSince=7d', () => {
+    var opts = filterToLoadOptions('All') || {};
+    opts.search = 'myrepo';
+    opts.activeSince = '7d';
+    expect(buildReposUrl(opts)).toBe('/api/repos?search=myrepo&activeSince=7d');
   });
 });

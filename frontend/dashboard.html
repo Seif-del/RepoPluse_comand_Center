@@ -579,6 +579,20 @@
       border-color: var(--border-focus);
     }
 
+    #repo-recency-select {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    #repo-recency-select:focus {
+      border-color: var(--border-focus);
+    }
+
     /* ── Repo detail ─────────────────────────────────────────────────────── */
     .repo-detail {
       margin-top: 20px;
@@ -2073,6 +2087,13 @@
             <button class="filter-btn" data-filter="At Risk">At Risk</button>
             <button class="filter-btn" data-filter="Healthy">Healthy</button>
             <input type="search" id="repo-search-input" placeholder="Search repositories…">
+            <select id="repo-recency-select">
+              <option value="">Any time</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+              <option value="stale">Stale (30+ days)</option>
+            </select>
           </div>
           <div id="projects-container"><p class="error-msg">Loading…</p></div>
           <div id="repo-detail" class="repo-detail" hidden></div>
@@ -7201,6 +7222,10 @@
       if (search) {
         params.push('search=' + encodeURIComponent(search));
       }
+      var activeSince = options && typeof options.activeSince === 'string' ? options.activeSince : '';
+      if (activeSince) {
+        params.push('activeSince=' + encodeURIComponent(activeSince));
+      }
       return '/api/repos' + (params.length ? '?' + params.join('&') : '');
     }
 
@@ -7268,17 +7293,35 @@
       _activeFilter = btn.dataset.filter;
       var searchEl = document.getElementById('repo-search-input');
       var searchVal = searchEl ? searchEl.value.trim() : '';
+      var recencyEl = document.getElementById('repo-recency-select');
+      var recencyVal = recencyEl ? recencyEl.value : '';
       var opts = filterToLoadOptions(_activeFilter) || {};
       if (searchVal) opts.search = searchVal;
+      if (recencyVal) opts.activeSince = recencyVal;
       loadRepos(opts);
     });
 
     // ── Repository search wiring ─────────────────────────────────────────────
 
     document.getElementById('repo-search-input').addEventListener('input', function() {
+      var recencyEl = document.getElementById('repo-recency-select');
+      var recencyVal = recencyEl ? recencyEl.value : '';
       var opts = filterToLoadOptions(_activeFilter) || {};
       var searchVal = this.value.trim();
       if (searchVal) opts.search = searchVal;
+      if (recencyVal) opts.activeSince = recencyVal;
+      loadRepos(opts);
+    });
+
+    // ── Repository recency wiring ─────────────────────────────────────────────
+
+    document.getElementById('repo-recency-select').addEventListener('change', function() {
+      var recencyVal = this.value;
+      var searchEl = document.getElementById('repo-search-input');
+      var searchVal = searchEl ? searchEl.value.trim() : '';
+      var opts = filterToLoadOptions(_activeFilter) || {};
+      if (searchVal) opts.search = searchVal;
+      if (recencyVal) opts.activeSince = recencyVal;
       loadRepos(opts);
     });
 
