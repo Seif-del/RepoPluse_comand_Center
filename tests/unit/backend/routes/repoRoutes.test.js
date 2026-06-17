@@ -201,7 +201,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null]
+      [MOCK_USER.userId, null, null]
     );
   });
 
@@ -215,7 +215,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy']
+      [MOCK_USER.userId, 'healthy', null]
     );
   });
 
@@ -229,7 +229,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'at-risk']
+      [MOCK_USER.userId, 'at-risk', null]
     );
   });
 
@@ -243,7 +243,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'critical']
+      [MOCK_USER.userId, 'critical', null]
     );
   });
 
@@ -279,6 +279,116 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     const res = makeRes();
     await getReposHandler(req, res, next);
     expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+// ── GET / — search filter ─────────────────────────────────────────────────────
+
+describe('repoRoutes GET / — search filter', () => {
+  beforeEach(() => {
+    getRepoRiskFactors.mockReturnValue({ hasMetrics: true, triggered: [], notMeasured: [], allClear: true });
+    getTrendIndicator.mockReturnValue({ direction: 'stable', delta: 0, label: 'Operationally stable' });
+  });
+
+  it('passes null as the search SQL parameter when query param is absent', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null]
+    );
+  });
+
+  it('passes search term to db.query as the third parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { search: 'myrepo' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, 'myrepo']
+    );
+  });
+
+  it('trims leading and trailing whitespace from the search term', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { search: '  myrepo  ' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, 'myrepo']
+    );
+  });
+
+  it('passes null as search when the trimmed value is empty', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { search: '   ' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null]
+    );
+  });
+
+  it('can combine riskLevel and search filters', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'healthy', search: 'myrepo' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'healthy', 'myrepo']
+    );
+  });
+
+  it('returns 400 when search exceeds 200 characters', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { search: 'a'.repeat(201) },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(String) })
+    );
+  });
+
+  it('does not call db.query when search exceeds 200 characters', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { search: 'b'.repeat(201) },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('SQL query contains the search filter clause', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/\$3.*IS NULL.*OR.*github_full_name.*ILIKE/s);
   });
 });
 

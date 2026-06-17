@@ -564,6 +564,21 @@
       color: #fff;
     }
 
+    #repo-search-input {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-primary);
+      outline: none;
+      min-width: 160px;
+    }
+
+    #repo-search-input:focus {
+      border-color: var(--border-focus);
+    }
+
     /* ── Repo detail ─────────────────────────────────────────────────────── */
     .repo-detail {
       margin-top: 20px;
@@ -2057,6 +2072,7 @@
             <button class="filter-btn active" data-filter="All">All</button>
             <button class="filter-btn" data-filter="At Risk">At Risk</button>
             <button class="filter-btn" data-filter="Healthy">Healthy</button>
+            <input type="search" id="repo-search-input" placeholder="Search repositories…">
           </div>
           <div id="projects-container"><p class="error-msg">Loading…</p></div>
           <div id="repo-detail" class="repo-detail" hidden></div>
@@ -7177,10 +7193,15 @@
     }
 
     function buildReposUrl(options) {
+      var params = [];
       if (options && options.riskLevel) {
-        return '/api/repos?riskLevel=' + encodeURIComponent(options.riskLevel);
+        params.push('riskLevel=' + encodeURIComponent(options.riskLevel));
       }
-      return '/api/repos';
+      var search = options && typeof options.search === 'string' ? options.search.trim() : '';
+      if (search) {
+        params.push('search=' + encodeURIComponent(search));
+      }
+      return '/api/repos' + (params.length ? '?' + params.join('&') : '');
     }
 
     function filterToLoadOptions(activeFilter) {
@@ -7245,7 +7266,20 @@
       var btn = e.target.closest('.filter-btn');
       if (!btn) return;
       _activeFilter = btn.dataset.filter;
-      loadRepos(filterToLoadOptions(_activeFilter));
+      var searchEl = document.getElementById('repo-search-input');
+      var searchVal = searchEl ? searchEl.value.trim() : '';
+      var opts = filterToLoadOptions(_activeFilter) || {};
+      if (searchVal) opts.search = searchVal;
+      loadRepos(opts);
+    });
+
+    // ── Repository search wiring ─────────────────────────────────────────────
+
+    document.getElementById('repo-search-input').addEventListener('input', function() {
+      var opts = filterToLoadOptions(_activeFilter) || {};
+      var searchVal = this.value.trim();
+      if (searchVal) opts.search = searchVal;
+      loadRepos(opts);
     });
 
     // ── History ──────────────────────────────────────────────────────────────

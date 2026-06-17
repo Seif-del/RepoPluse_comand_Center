@@ -112,12 +112,12 @@ describe('GET /api/repos?riskLevel=healthy — HTTP contract', () => {
     expect(Array.isArray(res.body.repos)).toBe(true);
   });
 
-  test('db.query receives [userId, "healthy"] as the SQL parameter array', async () => {
+  test('db.query receives [userId, "healthy", null] as the SQL parameter array', async () => {
     const db = makeDb({ rows: [] });
     await supertest(buildApp(db)).get('/api/repos?riskLevel=healthy');
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, 'healthy']
+      [TEST_USER_ID, 'healthy', null]
     );
   });
 
@@ -142,12 +142,12 @@ describe('GET /api/repos (absent riskLevel) — backward compatibility', () => {
     expect(res.status).toBe(200);
   });
 
-  test('db.query receives [userId, null] when riskLevel param is absent', async () => {
+  test('db.query receives [userId, null, null] when no filter params are present', async () => {
     const db = makeDb({ rows: [] });
     await supertest(buildApp(db)).get('/api/repos');
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, null]
+      [TEST_USER_ID, null, null]
     );
   });
 
@@ -181,6 +181,55 @@ describe('GET /api/repos?riskLevel=<invalid> — HTTP 400 rejection', () => {
   test('db.query is not called when riskLevel is invalid', async () => {
     const db = makeDb({ rows: [] });
     await supertest(buildApp(db)).get('/api/repos?riskLevel=bad');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+// ── GET /api/repos?search=<term> — HTTP contract ──────────────────────────────
+
+describe('GET /api/repos?search=<term> — HTTP contract', () => {
+  test('returns HTTP 200 with search param', async () => {
+    const db  = makeDb({ rows: [] });
+    const res = await supertest(buildApp(db)).get('/api/repos?search=myrepo');
+    expect(res.status).toBe(200);
+  });
+
+  test('response body has { repos: Array } with search param', async () => {
+    const db  = makeDb({ rows: [] });
+    const res = await supertest(buildApp(db)).get('/api/repos?search=myrepo');
+    expect(res.body).toHaveProperty('repos');
+    expect(Array.isArray(res.body.repos)).toBe(true);
+  });
+
+  test('db.query receives [userId, null, "myrepo"] as the SQL parameter array', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?search=myrepo');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, null, 'myrepo']
+    );
+  });
+
+  test('db.query receives [userId, "healthy", "myrepo"] when both filters are present', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?riskLevel=healthy&search=myrepo');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, 'healthy', 'myrepo']
+    );
+  });
+
+  test('returns HTTP 400 when search exceeds 200 characters', async () => {
+    const db  = makeDb({ rows: [] });
+    const longSearch = 'a'.repeat(201);
+    const res = await supertest(buildApp(db)).get(`/api/repos?search=${longSearch}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('db.query is not called when search exceeds 200 characters', async () => {
+    const db = makeDb({ rows: [] });
+    const longSearch = 'b'.repeat(201);
+    await supertest(buildApp(db)).get(`/api/repos?search=${longSearch}`);
     expect(db.query).not.toHaveBeenCalled();
   });
 });

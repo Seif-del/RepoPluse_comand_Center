@@ -10,10 +10,15 @@
 
 // ── buildReposUrl (copied verbatim from dashboard.html) ──────────────────────
 function buildReposUrl(options) {
+  var params = [];
   if (options && options.riskLevel) {
-    return '/api/repos?riskLevel=' + encodeURIComponent(options.riskLevel);
+    params.push('riskLevel=' + encodeURIComponent(options.riskLevel));
   }
-  return '/api/repos';
+  var search = options && typeof options.search === 'string' ? options.search.trim() : '';
+  if (search) {
+    params.push('search=' + encodeURIComponent(search));
+  }
+  return '/api/repos' + (params.length ? '?' + params.join('&') : '');
 }
 
 // ── filterToLoadOptions (copied verbatim from dashboard.html) ─────────────────
@@ -95,5 +100,63 @@ describe('filterToLoadOptions + buildReposUrl — end-to-end URL', () => {
 
   test('At Risk maps to /api/repos', () => {
     expect(buildReposUrl(filterToLoadOptions('At Risk'))).toBe('/api/repos');
+  });
+});
+
+// ── buildReposUrl — search parameter ─────────────────────────────────────────
+
+describe('buildReposUrl — search parameter', () => {
+  test('appends search=myrepo for { search: "myrepo" }', () => {
+    expect(buildReposUrl({ search: 'myrepo' })).toBe('/api/repos?search=myrepo');
+  });
+
+  test('trims leading and trailing whitespace from search value', () => {
+    expect(buildReposUrl({ search: ' myrepo ' })).toBe('/api/repos?search=myrepo');
+  });
+
+  test('omits search param when search is empty string', () => {
+    expect(buildReposUrl({ search: '' })).toBe('/api/repos');
+  });
+
+  test('omits search param when search is whitespace only', () => {
+    expect(buildReposUrl({ search: '   ' })).toBe('/api/repos');
+  });
+
+  test('URL-encodes a search value containing a space', () => {
+    expect(buildReposUrl({ search: 'my repo' })).toBe('/api/repos?search=my%20repo');
+  });
+
+  test('appends riskLevel before search when both are present', () => {
+    expect(buildReposUrl({ riskLevel: 'healthy', search: 'myrepo' })).toBe(
+      '/api/repos?riskLevel=healthy&search=myrepo'
+    );
+  });
+
+  test('URL-encodes at-risk in riskLevel and encodes search', () => {
+    expect(buildReposUrl({ riskLevel: 'at-risk', search: 'my repo' })).toBe(
+      '/api/repos?riskLevel=at-risk&search=my%20repo'
+    );
+  });
+});
+
+// ── filterToLoadOptions + buildReposUrl — filter with search ─────────────────
+
+describe('filterToLoadOptions + buildReposUrl — filter with search composition', () => {
+  test('Healthy + search produces ?riskLevel=healthy&search=myrepo', () => {
+    var opts = filterToLoadOptions('Healthy') || {};
+    opts.search = 'myrepo';
+    expect(buildReposUrl(opts)).toBe('/api/repos?riskLevel=healthy&search=myrepo');
+  });
+
+  test('All + search produces ?search=myrepo (no riskLevel)', () => {
+    var opts = filterToLoadOptions('All') || {};
+    opts.search = 'myrepo';
+    expect(buildReposUrl(opts)).toBe('/api/repos?search=myrepo');
+  });
+
+  test('At Risk + search produces ?search=myrepo (no riskLevel, client-side filter)', () => {
+    var opts = filterToLoadOptions('At Risk') || {};
+    opts.search = 'myrepo';
+    expect(buildReposUrl(opts)).toBe('/api/repos?search=myrepo');
   });
 });

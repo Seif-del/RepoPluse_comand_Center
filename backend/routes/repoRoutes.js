@@ -66,10 +66,17 @@ router.use(authenticate);
 // Returns all active repositories for the logged-in user, each with its latest risk score.
 router.get('/', async (req, res, next) => {
   try {
-    const { riskLevel } = req.query || {};
+    const { riskLevel, search } = req.query || {};
     const VALID_RISK_LABELS = new Set(['healthy', 'at-risk', 'critical']);
     if (riskLevel !== undefined && !VALID_RISK_LABELS.has(riskLevel)) {
       return res.status(400).json({ error: 'Invalid riskLevel. Must be healthy, at-risk, or critical.' });
+    }
+    if (search !== undefined && typeof search !== 'string') {
+      return res.status(400).json({ error: 'search must be a string.' });
+    }
+    const trimmedSearch = typeof search === 'string' ? search.trim() : undefined;
+    if (trimmedSearch !== undefined && trimmedSearch.length > 200) {
+      return res.status(400).json({ error: 'search must be 200 characters or fewer.' });
     }
     const result = await req.app.locals.db.query(
       `SELECT
@@ -116,8 +123,9 @@ router.get('/', async (req, res, next) => {
        ) rm ON true
        WHERE r.user_id = $1 AND r.is_active = true
          AND ($2::varchar IS NULL OR rs.label = $2)
+         AND ($3::varchar IS NULL OR r.github_full_name ILIKE '%' || $3 || '%')
        ORDER BY rs.score DESC NULLS LAST, r.github_full_name ASC`,
-      [req.user.userId, riskLevel || null]
+      [req.user.userId, riskLevel || null, trimmedSearch || null]
     );
 
     const repos = result.rows.map(r => ({
