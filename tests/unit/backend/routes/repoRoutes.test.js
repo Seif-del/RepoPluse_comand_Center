@@ -27,10 +27,17 @@ jest.mock('../../../../execution/architecture/buildRemediationRecommendations');
 jest.mock('../../../../execution/architecture/predictChangeRisk');
 jest.mock('../../../../backend/middleware/authenticate', () => (req, res, next) => next());
 jest.mock('../../../../backend/middleware/authorize',     () => () => (req, res, next) => next());
+jest.mock('../../../../execution/logger', () => ({
+  info:  jest.fn(),
+  warn:  jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+}));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
 const router                 = require('../../../../backend/routes/repoRoutes');
+const logger                 = require('../../../../execution/logger');
 const { decrypt }            = require('../../../../execution/crypto/encryptToken');
 const { syncUserRepos }      = require('../../../../execution/github/syncUserRepos');
 const { parseGithubUrl }     = require('../../../../execution/github/parseGithubUrl');
@@ -201,7 +208,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, null, null]
+      [MOCK_USER.userId, null, null, null, null, null]
     );
   });
 
@@ -215,7 +222,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy', null, null, null]
+      [MOCK_USER.userId, 'healthy', null, null, null, null]
     );
   });
 
@@ -229,7 +236,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'at-risk', null, null, null]
+      [MOCK_USER.userId, 'at-risk', null, null, null, null]
     );
   });
 
@@ -243,7 +250,7 @@ describe('repoRoutes GET / — riskLevel filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'critical', null, null, null]
+      [MOCK_USER.userId, 'critical', null, null, null, null]
     );
   });
 
@@ -297,7 +304,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, null, null]
+      [MOCK_USER.userId, null, null, null, null, null]
     );
   });
 
@@ -311,7 +318,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, 'myrepo', null, null]
+      [MOCK_USER.userId, null, 'myrepo', null, null, null]
     );
   });
 
@@ -325,7 +332,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, 'myrepo', null, null]
+      [MOCK_USER.userId, null, 'myrepo', null, null, null]
     );
   });
 
@@ -339,7 +346,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, null, null]
+      [MOCK_USER.userId, null, null, null, null, null]
     );
   });
 
@@ -353,7 +360,7 @@ describe('repoRoutes GET / — search filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy', 'myrepo', null, null]
+      [MOCK_USER.userId, 'healthy', 'myrepo', null, null, null]
     );
   });
 
@@ -416,7 +423,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, null, null]
+      [MOCK_USER.userId, null, null, null, null, null]
     );
   });
 
@@ -431,7 +438,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     const expected = new Date(FIXED_NOW - 7 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, expected, null]
+      [MOCK_USER.userId, null, null, expected, null, null]
     );
   });
 
@@ -446,7 +453,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, expected, null]
+      [MOCK_USER.userId, null, null, expected, null, null]
     );
   });
 
@@ -461,7 +468,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     const expected = new Date(FIXED_NOW - 90 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, expected, null]
+      [MOCK_USER.userId, null, null, expected, null, null]
     );
   });
 
@@ -476,7 +483,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, null, expected]
+      [MOCK_USER.userId, null, null, null, expected, null]
     );
   });
 
@@ -491,7 +498,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy', 'myrepo', expected, null]
+      [MOCK_USER.userId, 'healthy', 'myrepo', expected, null, null]
     );
   });
 
@@ -506,7 +513,7 @@ describe('repoRoutes GET / — activeSince filter', () => {
     const expected = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, 'healthy', null, null, expected]
+      [MOCK_USER.userId, 'healthy', null, null, expected, null]
     );
   });
 
@@ -563,8 +570,190 @@ describe('repoRoutes GET / — activeSince filter', () => {
     await getReposHandler(req, res, next);
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [MOCK_USER.userId, null, null, null, null]
+      [MOCK_USER.userId, null, null, null, null, null]
     );
+  });
+});
+
+// ── GET / — projectStatus filter ─────────────────────────────────────────────
+
+describe('repoRoutes GET / — projectStatus filter', () => {
+  beforeEach(() => {
+    getRepoRiskFactors.mockReturnValue({ hasMetrics: true, triggered: [], notMeasured: [], allClear: true });
+    getTrendIndicator.mockReturnValue({ direction: 'stable', delta: 0, label: 'Operationally stable' });
+  });
+
+  it('passes null as the projectStatus SQL parameter when query param is absent', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null, null]
+    );
+  });
+
+  it('passes projectStatus=active to db.query as the sixth parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { projectStatus: 'active' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null, 'active']
+    );
+  });
+
+  it('passes projectStatus=inactive to db.query as the sixth parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { projectStatus: 'inactive' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null, 'inactive']
+    );
+  });
+
+  it('passes projectStatus=archived to db.query as the sixth parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { projectStatus: 'archived' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null, 'archived']
+    );
+  });
+
+  it('passes projectStatus=unknown to db.query as the sixth parameter', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { projectStatus: 'unknown' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, null, null, null, 'unknown']
+    );
+  });
+
+  it('returns 400 when projectStatus is not a valid value', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { projectStatus: 'pending' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(String) })
+    );
+  });
+
+  it('does not call db.query when projectStatus is invalid', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { projectStatus: 'deleted' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('SQL query contains the projectStatus filter clause', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({ app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/\$6.*IS NULL.*OR.*project_status.*=.*\$6/s);
+  });
+
+  it('can combine projectStatus and riskLevel', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { riskLevel: 'healthy', projectStatus: 'active' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, 'healthy', null, null, null, 'active']
+    );
+  });
+
+  it('can combine projectStatus and search', async () => {
+    const db  = makeDb({ rows: [] });
+    const req = makeReq({
+      query: { search: 'myrepo', projectStatus: 'inactive' },
+      app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+    });
+    const res = makeRes();
+    await getReposHandler(req, res, next);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [MOCK_USER.userId, null, 'myrepo', null, null, 'inactive']
+    );
+  });
+
+  it('can combine projectStatus and activeSince', async () => {
+    const DAY_MS  = 86400000;
+    const fixedNow = 1000000000000;
+    const dateSpy  = jest.spyOn(Date, 'now').mockReturnValue(fixedNow);
+    try {
+      const db  = makeDb({ rows: [] });
+      const req = makeReq({
+        query: { activeSince: '30d', projectStatus: 'archived' },
+        app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+      });
+      const res = makeRes();
+      await getReposHandler(req, res, next);
+      const expectedLower = new Date(fixedNow - 30 * DAY_MS).toISOString();
+      expect(db.query).toHaveBeenCalledWith(
+        expect.any(String),
+        [MOCK_USER.userId, null, null, expectedLower, null, 'archived']
+      );
+    } finally {
+      dateSpy.mockRestore();
+    }
+  });
+
+  it('can combine all four filters: riskLevel, search, activeSince, projectStatus', async () => {
+    const DAY_MS  = 86400000;
+    const fixedNow = 1000000000000;
+    const dateSpy  = jest.spyOn(Date, 'now').mockReturnValue(fixedNow);
+    try {
+      const db  = makeDb({ rows: [] });
+      const req = makeReq({
+        query: { riskLevel: 'healthy', search: 'myrepo', activeSince: '7d', projectStatus: 'active' },
+        app:   { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } },
+      });
+      const res = makeRes();
+      await getReposHandler(req, res, next);
+      const expectedLower = new Date(fixedNow - 7 * DAY_MS).toISOString();
+      expect(db.query).toHaveBeenCalledWith(
+        expect.any(String),
+        [MOCK_USER.userId, 'healthy', 'myrepo', expectedLower, null, 'active']
+      );
+    } finally {
+      dateSpy.mockRestore();
+    }
   });
 });
 
@@ -985,6 +1174,25 @@ describe('repoRoutes POST /register', () => {
     const res = makeRes();
     await postRegisterHandler(req, res, next);
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it('includes project_status in INSERT column list, VALUES, and ON CONFLICT DO UPDATE SET to prevent check constraint violations', async () => {
+    let capturedSql = null;
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('SELECT access_token_enc'))  return { rows: [{ access_token_enc: 'enc' }] };
+        if (sql.includes('INSERT INTO repositories')) { capturedSql = sql; return { rows: [{ id: 1, fullName: 'o/r', linkedAt: new Date() }] }; }
+        return { rows: [] };
+      }),
+    };
+    const req = makeReq({ body: { url: 'https://github.com/o/r' }, app: { locals: { db, config: MOCK_CONFIG, fetchFn: jest.fn() } } });
+    const res = makeRes();
+    await postRegisterHandler(req, res, next);
+    expect(capturedSql).toMatch(/INSERT INTO repositories[\s\S]*project_status[\s\S]*VALUES/);
+    expect(capturedSql).toMatch(/VALUES[\s\S]*'active'/);
+    expect(capturedSql).toMatch(/DO UPDATE SET[\s\S]*project_status/);
+    expect(capturedSql).toContain("project_status   = 'active'");
+    expect(capturedSql).not.toContain("'''active'''");
   });
 });
 
@@ -1443,6 +1651,39 @@ describe('repoRoutes POST /sync', () => {
       globalThis.fetch = origFetch;
     }
     expect(res.status).toHaveBeenCalledWith(503);
+  });
+
+  it('logs error when background sync fails', async () => {
+    logger.error.mockReset();
+    syncUserRepos.mockRejectedValue(Object.assign(new Error('GitHub 401'), { code: 'GITHUB_REPOS_FETCH_FAILED' }));
+    const req = makeSyncReq();
+    const res = makeRes();
+    await postSyncHandler(req, res, next);
+    await Promise.resolve();
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      msg:   'sync:background:failed',
+      error: 'GitHub 401',
+    }));
+  });
+
+  it('includes error code in logged sync failure', async () => {
+    logger.error.mockReset();
+    syncUserRepos.mockRejectedValue(Object.assign(new Error('fetch failed'), { code: 'GITHUB_REPOS_FETCH_FAILED' }));
+    const req = makeSyncReq();
+    const res = makeRes();
+    await postSyncHandler(req, res, next);
+    await Promise.resolve();
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'GITHUB_REPOS_FETCH_FAILED',
+    }));
+  });
+
+  it('still returns 202 when background sync will fail', async () => {
+    syncUserRepos.mockRejectedValue(new Error('GitHub 401'));
+    const req = makeSyncReq();
+    const res = makeRes();
+    await postSyncHandler(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(202);
   });
 });
 

@@ -117,7 +117,7 @@ describe('GET /api/repos?riskLevel=healthy — HTTP contract', () => {
     await supertest(buildApp(db)).get('/api/repos?riskLevel=healthy');
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, 'healthy', null, null, null]
+      [TEST_USER_ID, 'healthy', null, null, null, null]
     );
   });
 
@@ -147,7 +147,7 @@ describe('GET /api/repos (absent riskLevel) — backward compatibility', () => {
     await supertest(buildApp(db)).get('/api/repos');
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, null, null, null, null]
+      [TEST_USER_ID, null, null, null, null, null]
     );
   });
 
@@ -206,7 +206,7 @@ describe('GET /api/repos?search=<term> — HTTP contract', () => {
     await supertest(buildApp(db)).get('/api/repos?search=myrepo');
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, null, 'myrepo', null, null]
+      [TEST_USER_ID, null, 'myrepo', null, null, null]
     );
   });
 
@@ -215,7 +215,7 @@ describe('GET /api/repos?search=<term> — HTTP contract', () => {
     await supertest(buildApp(db)).get('/api/repos?riskLevel=healthy&search=myrepo');
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, 'healthy', 'myrepo', null, null]
+      [TEST_USER_ID, 'healthy', 'myrepo', null, null, null]
     );
   });
 
@@ -274,7 +274,7 @@ describe('GET /api/repos?activeSince=<value> — HTTP contract', () => {
     const expectedLower = new Date(FIXED_NOW - 7 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, null, null, expectedLower, null]
+      [TEST_USER_ID, null, null, expectedLower, null, null]
     );
   });
 
@@ -284,7 +284,7 @@ describe('GET /api/repos?activeSince=<value> — HTTP contract', () => {
     const expectedLower = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, null, null, expectedLower, null]
+      [TEST_USER_ID, null, null, expectedLower, null, null]
     );
   });
 
@@ -306,7 +306,7 @@ describe('GET /api/repos?activeSince=<value> — HTTP contract', () => {
     const expectedUpper = new Date(FIXED_NOW - 30 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, null, null, null, expectedUpper]
+      [TEST_USER_ID, null, null, null, expectedUpper, null]
     );
   });
 
@@ -316,7 +316,7 @@ describe('GET /api/repos?activeSince=<value> — HTTP contract', () => {
     const expectedLower = new Date(FIXED_NOW - 7 * DAY_MS).toISOString();
     expect(db.query).toHaveBeenCalledWith(
       expect.any(String),
-      [TEST_USER_ID, 'healthy', null, expectedLower, null]
+      [TEST_USER_ID, 'healthy', null, expectedLower, null, null]
     );
   });
 
@@ -330,5 +330,81 @@ describe('GET /api/repos?activeSince=<value> — HTTP contract', () => {
     const db = makeDb({ rows: [] });
     await supertest(buildApp(db)).get('/api/repos?activeSince=invalid');
     expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+// ── GET /api/repos?projectStatus=<value> — HTTP contract ─────────────────────
+
+describe('GET /api/repos?projectStatus=<value> — HTTP contract', () => {
+  test('returns HTTP 200 for projectStatus=active', async () => {
+    const db  = makeDb({ rows: [] });
+    const res = await supertest(buildApp(db)).get('/api/repos?projectStatus=active');
+    expect(res.status).toBe(200);
+  });
+
+  test('db.query receives [userId, null, null, null, null, "active"] for projectStatus=active', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?projectStatus=active');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, null, null, null, null, 'active']
+    );
+  });
+
+  test('db.query receives sixth param "inactive" for projectStatus=inactive', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?projectStatus=inactive');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, null, null, null, null, 'inactive']
+    );
+  });
+
+  test('db.query receives sixth param "archived" for projectStatus=archived', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?projectStatus=archived');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, null, null, null, null, 'archived']
+    );
+  });
+
+  test('db.query receives sixth param "unknown" for projectStatus=unknown', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?projectStatus=unknown');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, null, null, null, null, 'unknown']
+    );
+  });
+
+  test('returns HTTP 400 for an invalid projectStatus value', async () => {
+    const db  = makeDb({ rows: [] });
+    const res = await supertest(buildApp(db)).get('/api/repos?projectStatus=pending');
+    expect(res.status).toBe(400);
+  });
+
+  test('db.query is not called when projectStatus is invalid', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?projectStatus=deleted');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  test('combines projectStatus=active with riskLevel=healthy', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?riskLevel=healthy&projectStatus=active');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, 'healthy', null, null, null, 'active']
+    );
+  });
+
+  test('combines projectStatus=inactive with search param', async () => {
+    const db = makeDb({ rows: [] });
+    await supertest(buildApp(db)).get('/api/repos?search=myrepo&projectStatus=inactive');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [TEST_USER_ID, null, 'myrepo', null, null, 'inactive']
+    );
   });
 });

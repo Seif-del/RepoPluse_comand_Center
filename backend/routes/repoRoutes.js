@@ -5,6 +5,7 @@ const authenticate         = require('../middleware/authenticate');
 const authorize            = require('../middleware/authorize');
 const { decrypt }          = require('../../execution/crypto/encryptToken');
 const { syncUserRepos }    = require('../../execution/github/syncUserRepos');
+const logger               = require('../../execution/logger');
 const { parseGithubUrl }     = require('../../execution/github/parseGithubUrl');
 const { fetchRepo }          = require('../../execution/github/fetchRepo');
 const { getRepoRiskFactors }      = require('../../execution/risk/getRepoRiskFactors');
@@ -66,7 +67,7 @@ router.use(authenticate);
 // Returns all active repositories for the logged-in user, each with its latest risk score.
 router.get('/', async (req, res, next) => {
   try {
-    const { riskLevel, search, activeSince } = req.query || {};
+    const { riskLevel, search, activeSince, projectStatus } = req.query || {};
     const VALID_RISK_LABELS = new Set(['healthy', 'at-risk', 'critical']);
     if (riskLevel !== undefined && !VALID_RISK_LABELS.has(riskLevel)) {
       return res.status(400).json({ error: 'Invalid riskLevel. Must be healthy, at-risk, or critical.' });
@@ -81,6 +82,10 @@ router.get('/', async (req, res, next) => {
     const VALID_ACTIVE_SINCE = new Set(['7d', '30d', '90d', 'stale']);
     if (activeSince !== undefined && activeSince !== '' && !VALID_ACTIVE_SINCE.has(activeSince)) {
       return res.status(400).json({ error: 'Invalid activeSince. Must be 7d, 30d, 90d, or stale.' });
+    }
+    const VALID_PROJECT_STATUSES = new Set(['active', 'inactive', 'archived', 'unknown']);
+    if (projectStatus !== undefined && !VALID_PROJECT_STATUSES.has(projectStatus)) {
+      return res.status(400).json({ error: 'Invalid projectStatus. Must be active, inactive, archived, or unknown.' });
     }
     const DAY_MS = 86400000;
     let lowerBound = null;
@@ -97,6 +102,7 @@ router.get('/', async (req, res, next) => {
          r.is_active        AS "isActive",
          r.linked_at        AS "linkedAt",
          r.last_synced_at   AS "lastSyncedAt",
+         r.project_status   AS "projectStatus",
          rs.score,
          rs.label,
          rs.trend,
@@ -138,8 +144,9 @@ router.get('/', async (req, res, next) => {
          AND ($3::varchar IS NULL OR r.github_full_name ILIKE '%' || $3 || '%')
          AND ($4::timestamptz IS NULL OR r.last_synced_at >= $4::timestamptz)
          AND ($5::timestamptz IS NULL OR r.last_synced_at IS NULL OR r.last_synced_at < $5::timestamptz)
+         AND ($6::varchar IS NULL OR r.project_status = $6)
        ORDER BY rs.score DESC NULLS LAST, r.github_full_name ASC`,
-      [req.user.userId, riskLevel || null, trimmedSearch || null, lowerBound, upperBound]
+      [req.user.userId, riskLevel || null, trimmedSearch || null, lowerBound, upperBound, projectStatus || null]
     );
 
     const repos = result.rows.map(r => ({
@@ -1367,11 +1374,12 @@ router.post('/register', authorize('repositories:configure'), async (req, res, n
 
     const result = await req.app.locals.db.query(
       `INSERT INTO repositories
-         (user_id, github_repo_id, github_full_name, is_active, linked_at)
-       VALUES ($1, $2, $3, true, $4)
+         (user_id, github_repo_id, github_full_name, is_active, linked_at, project_status)
+       VALUES ($1, $2, $3, true, $4, 'active')
        ON CONFLICT (github_repo_id) DO UPDATE SET
          github_full_name = EXCLUDED.github_full_name,
-         is_active        = true
+         is_active        = true,
+         project_status   = 'active'
        RETURNING id, github_full_name AS "fullName", linked_at AS "linkedAt"`,
       [req.user.userId, repoMeta.githubRepoId, repoMeta.fullName, now]
     );
@@ -1500,7 +1508,14 @@ router.post('/sync', authorize('repositories:configure'), async (req, res, next)
       accessToken,
       fetchFn,
       now,
-    }).catch(() => {});
+    }).catch((err) => {
+      logger.error({
+        msg:    'sync:background:failed',
+        userId: req.user.userId,
+        code:   err.code || null,
+        error:  err.message,
+      });
+    });
 
     res.status(202).json({ queued: true, startedAt: now.toISOString() });
   } catch (err) {

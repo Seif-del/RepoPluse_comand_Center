@@ -12,8 +12,13 @@ const MOCK_REPOS = [
 
 const mockFetchFn = jest.fn();
 
-function makeRes(body, ok = true) {
-  return { ok, status: ok ? 200 : 401, json: jest.fn().mockResolvedValue(body) };
+function makeRes(body, ok = true, linkHeader = null) {
+  return {
+    ok,
+    status: ok ? 200 : 401,
+    json:    jest.fn().mockResolvedValue(body),
+    headers: { get: jest.fn((key) => key === 'link' ? linkHeader : null) },
+  };
 }
 
 beforeEach(() => jest.resetAllMocks());
@@ -108,5 +113,114 @@ describe('fetchUserRepos — INVALID_FETCH_FN', () => {
   it('throws INVALID_FETCH_FN for non-function', async () => {
     await expect(fetchUserRepos({ accessToken: TOKEN, fetchFn: null }))
       .rejects.toMatchObject({ code: 'INVALID_FETCH_FN' });
+  });
+});
+
+// ── URL parameters ────────────────────────────────────────────────────────────
+
+describe('fetchUserRepos — URL parameters', () => {
+  beforeEach(() => {
+    mockFetchFn.mockResolvedValue(makeRes(MOCK_REPOS));
+  });
+
+  it('requests per_page=100', async () => {
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn.mock.calls[0][0]).toContain('per_page=100');
+  });
+
+  it('includes organization_member in affiliation param', async () => {
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn.mock.calls[0][0]).toContain('organization_member');
+  });
+
+  it('includes owner in affiliation param', async () => {
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn.mock.calls[0][0]).toContain('owner');
+  });
+
+  it('includes collaborator in affiliation param', async () => {
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn.mock.calls[0][0]).toContain('collaborator');
+  });
+});
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+const PAGE_2_URL = 'https://api.github.com/user/repos?page=2&per_page=100';
+
+const MOCK_REPOS_PAGE_2 = [
+  { id: 2001, full_name: 'alice/delta', private: false, pushed_at: '2026-03-01T00:00:00Z' },
+];
+
+describe('fetchUserRepos — pagination', () => {
+  it('makes exactly one fetch call when response has no Link header', async () => {
+    mockFetchFn.mockResolvedValue(makeRes(MOCK_REPOS));
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes exactly two fetch calls when first page has rel=next Link header', async () => {
+    mockFetchFn
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS,       true, `<${PAGE_2_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS_PAGE_2, true, null));
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches the URL from the Link header on the second call', async () => {
+    mockFetchFn
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS,       true, `<${PAGE_2_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS_PAGE_2, true, null));
+    await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn.mock.calls[1][0]).toBe(PAGE_2_URL);
+  });
+
+  it('accumulates repos from both pages', async () => {
+    mockFetchFn
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS,       true, `<${PAGE_2_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS_PAGE_2, true, null));
+    const result = await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(result).toHaveLength(MOCK_REPOS.length + MOCK_REPOS_PAGE_2.length);
+  });
+
+  it('returns repos from page 2 with correct mapping', async () => {
+    mockFetchFn
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS,       true, `<${PAGE_2_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS_PAGE_2, true, null));
+    const result = await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    const last = result[result.length - 1];
+    expect(last.githubRepoId).toBe(2001);
+    expect(last.fullName).toBe('alice/delta');
+  });
+
+  it('stops after final page even when previous pages had Link headers', async () => {
+    const PAGE_3_URL = 'https://api.github.com/user/repos?page=3&per_page=100';
+    mockFetchFn
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS,        true, `<${PAGE_2_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS_PAGE_2, true, `<${PAGE_3_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes([],                true, null));
+    const result = await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(mockFetchFn).toHaveBeenCalledTimes(3);
+    expect(result).toHaveLength(MOCK_REPOS.length + MOCK_REPOS_PAGE_2.length);
+  });
+
+  it('throws GITHUB_REPOS_FETCH_FAILED when second page returns non-OK', async () => {
+    mockFetchFn
+      .mockResolvedValueOnce(makeRes(MOCK_REPOS,       true,  `<${PAGE_2_URL}>; rel="next"`))
+      .mockResolvedValueOnce(makeRes({},               false, null));
+    await expect(fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn }))
+      .rejects.toMatchObject({ code: 'GITHUB_REPOS_FETCH_FAILED' });
+  });
+
+  it('works when response has no headers object at all', async () => {
+    const resWithoutHeaders = {
+      ok:     true,
+      status: 200,
+      json:   jest.fn().mockResolvedValue(MOCK_REPOS),
+    };
+    mockFetchFn.mockResolvedValue(resWithoutHeaders);
+    const result = await fetchUserRepos({ accessToken: TOKEN, fetchFn: mockFetchFn });
+    expect(result).toHaveLength(MOCK_REPOS.length);
+    expect(mockFetchFn).toHaveBeenCalledTimes(1);
   });
 });

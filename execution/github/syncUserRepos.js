@@ -189,11 +189,12 @@ async function _fetchRegisteredRepos({ db, userId }) {
 async function _upsertRepository({ db, userId, repo, now }) {
   const result = await db.query(
     `INSERT INTO repositories
-       (user_id, github_repo_id, github_full_name, is_active, linked_at)
-     VALUES ($1, $2, $3, true, $4)
+       (user_id, github_repo_id, github_full_name, is_active, linked_at, project_status)
+     VALUES ($1, $2, $3, true, $4, 'active')
      ON CONFLICT (github_repo_id) DO UPDATE SET
        github_full_name = EXCLUDED.github_full_name,
-       is_active        = true
+       is_active        = true,
+       project_status   = 'active'
      RETURNING *`,
     [userId, repo.githubRepoId, repo.fullName, now]
   );

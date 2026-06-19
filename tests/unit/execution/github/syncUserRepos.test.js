@@ -636,3 +636,52 @@ describe('syncUserRepos — PR telemetry does not affect existing inserts', () =
     expect(riskCall).toBeDefined();
   });
 });
+
+// ── Upsert SQL — project_status constraint safety ─────────────────────────────
+// Regression guard: project_status must be explicit in BOTH the INSERT column
+// list and the ON CONFLICT DO UPDATE SET so no write path relies on the DB
+// column default (migration 0014 previously set a bad default that caused the
+// repositories_project_status_check constraint to fail silently).
+
+function captureUpsertSql() {
+  let upsertSql = null;
+  const db = {
+    query: jest.fn(async (sql) => {
+      if (sql.includes('SELECT github_repo_id'))         return { rows: [] };
+      if (sql.includes('INSERT INTO repositories'))      { upsertSql = sql; return { rows: [REPO_ROW] }; }
+      if (sql.includes('SELECT score FROM risk_scores')) return { rows: [] };
+      if (sql.includes('INSERT INTO repo_metrics'))      return { rows: [] };
+      if (sql.includes('INSERT INTO repo_pr_metrics'))   return { rows: [] };
+      if (sql.includes('INSERT INTO risk_scores'))       return { rows: [] };
+      if (sql.includes('UPDATE repositories'))           return { rows: [] };
+      return { rows: [] };
+    }),
+  };
+  return { db, getSql: () => upsertSql };
+}
+
+describe('syncUserRepos — upsert SQL project_status safety', () => {
+  it('includes project_status in the INSERT column list', async () => {
+    const { db, getSql } = captureUpsertSql();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(getSql()).toMatch(/INSERT INTO repositories[\s\S]*\([\s\S]*project_status[\s\S]*\)/);
+  });
+
+  it('supplies the literal active in the VALUES list (does not rely on DB default)', async () => {
+    const { db, getSql } = captureUpsertSql();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(getSql()).toMatch(/VALUES[\s\S]*'active'/);
+  });
+
+  it('does not pass a double-quoted active literal in the VALUES list', async () => {
+    const { db, getSql } = captureUpsertSql();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(getSql()).not.toContain("'''active'''");
+  });
+
+  it('includes project_status in ON CONFLICT DO UPDATE SET', async () => {
+    const { db, getSql } = captureUpsertSql();
+    await syncUserRepos({ db, userId: 1, accessToken: 'tok', fetchFn: jest.fn(), now: NOW });
+    expect(getSql()).toMatch(/DO UPDATE SET[\s\S]*project_status/);
+  });
+});
