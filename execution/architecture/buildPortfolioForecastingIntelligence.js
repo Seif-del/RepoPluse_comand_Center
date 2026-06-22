@@ -420,6 +420,9 @@ function buildPortfolioForecastingIntelligence(input) {
   const forecasts = _safeArray(input.repoForecasts);
   if (forecasts.length === 0) return _unknownResult();
 
+  const forecastableCount = forecasts.filter(function(f) { return _safeStr(f.forecastLevel) !== 'unknown'; }).length;
+  if (forecastableCount === 0) return _unknownResult();
+
   const portfolioScore    = _portfolioScore(forecasts);
   const portfolioLevel    = _portfolioLevel(portfolioScore);
   const confidenceLevel   = _confidenceLevel(forecasts);

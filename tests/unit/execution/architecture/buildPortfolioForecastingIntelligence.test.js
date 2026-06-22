@@ -101,6 +101,62 @@ describe('buildPortfolioForecastingIntelligence — empty / invalid input', func
   });
 });
 
+// ── All-unknown readiness guard ───────────────────────────────────────────────
+
+function unknownRepo(id) {
+  return makeRepo({ repoId: id, repoName: 'repo-' + id, forecastLevel: 'unknown', degradationRisk: 0, confidenceLevel: 'low' });
+}
+
+describe('buildPortfolioForecastingIntelligence — all-unknown readiness guard', function() {
+  test('single unknown forecast returns portfolioForecastLevel unknown', function() {
+    const r = buildPortfolioForecastingIntelligence({ repoForecasts: [unknownRepo(1)] });
+    expect(r.portfolioForecastLevel).toBe('unknown');
+  });
+
+  test('multiple unknown forecasts return portfolioForecastLevel unknown', function() {
+    const r = buildPortfolioForecastingIntelligence({
+      repoForecasts: [unknownRepo(1), unknownRepo(2), unknownRepo(3)],
+    });
+    expect(r.portfolioForecastLevel).toBe('unknown');
+  });
+
+  test('all-unknown returns portfolioForecastScore 0', function() {
+    const r = buildPortfolioForecastingIntelligence({
+      repoForecasts: [unknownRepo(1), unknownRepo(2), unknownRepo(3)],
+    });
+    expect(r.portfolioForecastScore).toBe(0);
+  });
+
+  test('all-unknown returns confidenceLevel low', function() {
+    const r = buildPortfolioForecastingIntelligence({
+      repoForecasts: [unknownRepo(1), unknownRepo(2), unknownRepo(3)],
+    });
+    expect(r.confidenceLevel).toBe('low');
+  });
+
+  test('all-unknown does not produce stable forecast level (false signal guard)', function() {
+    const r = buildPortfolioForecastingIntelligence({
+      repoForecasts: [unknownRepo(1), unknownRepo(2), unknownRepo(3)],
+    });
+    expect(r.portfolioForecastLevel).not.toBe('stable');
+  });
+
+  test('all-unknown does not produce medium confidence (false signal guard)', function() {
+    const r = buildPortfolioForecastingIntelligence({
+      repoForecasts: [unknownRepo(1), unknownRepo(2), unknownRepo(3)],
+    });
+    expect(r.confidenceLevel).not.toBe('medium');
+  });
+
+  test('one forecastable repo among unknowns is computed, not suppressed', function() {
+    const r = buildPortfolioForecastingIntelligence({
+      repoForecasts: [unknownRepo(1), unknownRepo(2), stableRepo(10, 10)],
+    });
+    expect(r.portfolioForecastLevel).toBe('stable');
+    expect(r.portfolioForecastScore).toBe(10);
+  });
+});
+
 // ── Portfolio score & level ───────────────────────────────────────────────────
 
 describe('buildPortfolioForecastingIntelligence — portfolio score', function() {

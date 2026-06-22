@@ -275,8 +275,8 @@ describe('portfolioRoutes GET /forecast', () => {
     const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
-    expect(call[0].repoForecasts[0]).toMatchObject({
+    const body = res.json.mock.calls[0][0];
+    expect(body.repoForecasts[0]).toMatchObject({
       repoId:          MOCK_NO_SNAP_FORECAST_ROW.repoId,
       forecastLevel:   'unknown',
       confidenceLevel: 'low',
@@ -289,8 +289,8 @@ describe('portfolioRoutes GET /forecast', () => {
     const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
-    expect(call[0].repoForecasts[0].forecastLevel).toBe('unknown');
+    const body = res.json.mock.calls[0][0];
+    expect(body.repoForecasts[0].forecastLevel).toBe('unknown');
     expect(buildArchitectureTrendTimeline).not.toHaveBeenCalled();
   });
 
@@ -428,8 +428,8 @@ describe('portfolioRoutes GET /forecast', () => {
     const req = makeReq({ app: { locals: { db } } });
     const res = makeRes();
     await getForecastHandler(req, res, next);
-    const [call] = buildPortfolioForecastingIntelligence.mock.calls;
-    expect(call[0].repoForecasts[0].forecastLevel).toBe('unknown');
+    const body = res.json.mock.calls[0][0];
+    expect(body.repoForecasts[0].forecastLevel).toBe('unknown');
   });
 
   it('DB error is forwarded to next without crashing', async () => {
@@ -449,6 +449,209 @@ describe('portfolioRoutes GET /forecast', () => {
     const body = JSON.stringify(res.json.mock.calls[0][0]);
     expect(body.toLowerCase()).not.toContain('access_token');
     expect(body.toLowerCase()).not.toContain('token_enc');
+  });
+
+  describe('all-unknown readiness guard (repoCount > 0, forecastedRepoCount === 0)', () => {
+    const ALL_UNKNOWN_ROWS = [
+      { ...MOCK_NO_SNAP_FORECAST_ROW, repoId: 1, repoName: 'org/repo-1' },
+      { ...MOCK_NO_SNAP_FORECAST_ROW, repoId: 2, repoName: 'org/repo-2' },
+      { ...MOCK_NO_SNAP_FORECAST_ROW, repoId: 3, repoName: 'org/repo-3' },
+    ];
+
+    async function runAllUnknown(rows = ALL_UNKNOWN_ROWS) {
+      const db  = makeDb(rows);
+      const req = makeReq({ app: { locals: { db } } });
+      const res = makeRes();
+      await getForecastHandler(req, res, next);
+      return res.json.mock.calls[0][0];
+    }
+
+    it('returns portfolioForecastLevel: "unknown"', async () => {
+      const body = await runAllUnknown();
+      expect(body.portfolioForecastLevel).toBe('unknown');
+    });
+
+    it('returns confidenceLevel: "low"', async () => {
+      const body = await runAllUnknown();
+      expect(body.confidenceLevel).toBe('low');
+    });
+
+    it('returns portfolioForecastScore: 0', async () => {
+      const body = await runAllUnknown();
+      expect(body.portfolioForecastScore).toBe(0);
+    });
+
+    it('returns the insufficient-history summary message', async () => {
+      const body = await runAllUnknown();
+      expect(body.summary).toBe('Portfolio forecast unavailable due to insufficient architecture history.');
+    });
+
+    it('does NOT call buildPortfolioForecastingIntelligence (short-circuit)', async () => {
+      await runAllUnknown();
+      expect(buildPortfolioForecastingIntelligence).not.toHaveBeenCalled();
+    });
+
+    it('sets forecastDistribution.unknown to total repo count', async () => {
+      const body = await runAllUnknown();
+      expect(body.forecastDistribution.unknown).toBe(ALL_UNKNOWN_ROWS.length);
+    });
+
+    it('sets all non-unknown distribution buckets to 0', async () => {
+      const body = await runAllUnknown();
+      const dist = body.forecastDistribution;
+      expect(dist.stable).toBe(0);
+      expect(dist.watch).toBe(0);
+      expect(dist.degrading).toBe(0);
+      expect(dist.critical).toBe(0);
+    });
+
+    it('_cache reflects forecastedRepoCount: 0 and correct missingSnapshotCount', async () => {
+      const body = await runAllUnknown();
+      expect(body._cache.repoCount).toBe(3);
+      expect(body._cache.forecastedRepoCount).toBe(0);
+      expect(body._cache.missingSnapshotCount).toBe(3);
+    });
+
+    it('still includes repoForecasts with unknown forecastLevel for each repo', async () => {
+      const body = await runAllUnknown();
+      expect(Array.isArray(body.repoForecasts)).toBe(true);
+      expect(body.repoForecasts).toHaveLength(3);
+      body.repoForecasts.forEach(function(rf) {
+        expect(rf.forecastLevel).toBe('unknown');
+      });
+    });
+
+    it('false-signal guard: portfolioForecastLevel is not "stable"', async () => {
+      const body = await runAllUnknown();
+      expect(body.portfolioForecastLevel).not.toBe('stable');
+    });
+
+    it('false-signal guard: confidenceLevel is not "medium"', async () => {
+      const body = await runAllUnknown();
+      expect(body.confidenceLevel).not.toBe('medium');
+    });
+
+    it('guard fires for a single-repo unknown portfolio', async () => {
+      const body = await runAllUnknown([MOCK_NO_SNAP_FORECAST_ROW]);
+      expect(body.portfolioForecastLevel).toBe('unknown');
+      expect(body._cache.repoCount).toBe(1);
+      expect(body._cache.forecastedRepoCount).toBe(0);
+    });
+
+    it('guard does NOT fire for empty portfolio (repoCount === 0)', async () => {
+      const db  = makeDb([]);
+      const req = makeReq({ app: { locals: { db } } });
+      const res = makeRes();
+      await getForecastHandler(req, res, next);
+      expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledTimes(1);
+    });
+
+    it('guard does NOT fire when at least one repo is forecastable', async () => {
+      const db  = makeDb([MOCK_FORECAST_ROW, MOCK_NO_SNAP_FORECAST_ROW]);
+      const req = makeReq({ app: { locals: { db } } });
+      const res = makeRes();
+      await getForecastHandler(req, res, next);
+      expect(buildPortfolioForecastingIntelligence).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Distribution-based response guard — fires AFTER buildPortfolioForecastingIntelligence returns,
+  // catches cases where the function emits stable/medium even though all distribution buckets are unknown.
+  describe('distribution-based response guard (knownForecasts === 0)', () => {
+    const ALL_UNKNOWN_DIST = {
+      portfolioForecastLevel:    'stable',
+      portfolioForecastScore:    0,
+      confidenceLevel:           'medium',
+      summary:                   'Portfolio is operationally stable across 3 repositories.',
+      forecastDistribution:      { stable: 0, watch: 0, degrading: 0, critical: 0, unknown: 3 },
+      projectedRiskRepos:        [],
+      projectedHotspots:         [],
+      projectedCouplingPressure: { level: 'low', reposAtRisk: [] },
+      projectedGovernanceRisk:   { level: 'low', degradingRepos: [] },
+      trendForecast:             { direction: 'stable', averageRisk: 0 },
+      recommendations:           [],
+      benchmarking:              {},
+    };
+
+    beforeEach(() => {
+      buildPortfolioForecastingIntelligence.mockReturnValue(ALL_UNKNOWN_DIST);
+    });
+
+    async function runDistGuard(rows = [MOCK_FORECAST_ROW]) {
+      const db  = makeDb(rows);
+      const req = makeReq({ app: { locals: { db } } });
+      const res = makeRes();
+      await getForecastHandler(req, res, next);
+      return res.json.mock.calls[0][0];
+    }
+
+    it('returns portfolioForecastLevel: "unknown" when all distribution buckets are unknown', async () => {
+      const body = await runDistGuard();
+      expect(body.portfolioForecastLevel).toBe('unknown');
+    });
+
+    it('returns confidenceLevel: "low" when all distribution buckets are unknown', async () => {
+      const body = await runDistGuard();
+      expect(body.confidenceLevel).toBe('low');
+    });
+
+    it('returns insufficient-history summary when all distribution buckets are unknown', async () => {
+      const body = await runDistGuard();
+      expect(body.summary).toBe('Portfolio forecast unavailable due to insufficient architecture history.');
+    });
+
+    it('false-signal guard: does not return portfolioForecastLevel "stable"', async () => {
+      const body = await runDistGuard();
+      expect(body.portfolioForecastLevel).not.toBe('stable');
+    });
+
+    it('false-signal guard: does not return confidenceLevel "medium"', async () => {
+      const body = await runDistGuard();
+      expect(body.confidenceLevel).not.toBe('medium');
+    });
+
+    it('sets projectedCouplingPressure to "unknown" when field is present', async () => {
+      const body = await runDistGuard();
+      expect(body.projectedCouplingPressure).toBe('unknown');
+    });
+
+    it('sets projectedGovernanceRisk to "unknown" when field is present', async () => {
+      const body = await runDistGuard();
+      expect(body.projectedGovernanceRisk).toBe('unknown');
+    });
+
+    it('sets trendForecast to "unknown" when field is present', async () => {
+      const body = await runDistGuard();
+      expect(body.trendForecast).toBe('unknown');
+    });
+
+    it('preserves forecastDistribution showing all repos as unknown', async () => {
+      const body = await runDistGuard();
+      expect(body.forecastDistribution.unknown).toBe(3);
+      expect(body.forecastDistribution.stable).toBe(0);
+    });
+
+    it('guard does NOT fire when distribution has at least one known forecast', async () => {
+      buildPortfolioForecastingIntelligence.mockReturnValueOnce(
+        Object.assign({}, ALL_UNKNOWN_DIST, {
+          portfolioForecastLevel: 'watch',
+          forecastDistribution: { stable: 0, watch: 1, degrading: 0, critical: 0, unknown: 2 },
+        })
+      );
+      const body = await runDistGuard([MOCK_FORECAST_ROW]);
+      expect(body.portfolioForecastLevel).toBe('watch');
+    });
+
+    it('guard does NOT fire when totalForecasts is 0 (empty distribution)', async () => {
+      buildPortfolioForecastingIntelligence.mockReturnValueOnce(
+        Object.assign({}, ALL_UNKNOWN_DIST, {
+          portfolioForecastLevel: 'stable',
+          forecastDistribution: { stable: 0, watch: 0, degrading: 0, critical: 0, unknown: 0 },
+        })
+      );
+      const body = await runDistGuard([]);
+      expect(body.portfolioForecastLevel).toBe('stable');
+    });
   });
 });
 

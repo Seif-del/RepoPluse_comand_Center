@@ -158,9 +158,50 @@ router.get('/forecast', async (req, res, next) => {
     const repoCount           = result.rows.length;
     const forecastedRepoCount = repoCount - missingSnapshotCount;
 
+    if (repoCount > 0 && forecastedRepoCount === 0) {
+      return res.json({
+        portfolioForecastLevel:    'unknown',
+        portfolioForecastScore:    0,
+        confidenceLevel:           'low',
+        summary:                   'Portfolio forecast unavailable due to insufficient architecture history.',
+        forecastDistribution:      { stable: 0, watch: 0, degrading: 0, critical: 0, unknown: repoCount },
+        projectedRiskRepos:        [],
+        projectedHotspots:         [],
+        projectedCouplingPressure: { level: 'low', reposAtRisk: [], acceleratingRepos: [], projectedCircularDependencyRepos: [] },
+        projectedGovernanceRisk:   { level: 'low', degradingRepos: [], criticalRepos: [], unstableRepos: [], governanceRiskScore: 0 },
+        trendForecast:             { direction: 'stable', averageRisk: 0, highestRisk: 0, lowestRisk: 0, volatility: 0 },
+        recommendations:           [],
+        benchmarking:              { topStableRepos: [], highestRiskRepos: [], improvingCandidates: [], criticalForecasts: [] },
+        repoForecasts,
+        _cache: {
+          source:               'repo_architecture_snapshots',
+          repoCount,
+          forecastedRepoCount:  0,
+          missingSnapshotCount,
+        },
+      });
+    }
+
     const portfolioForecast = buildPortfolioForecastingIntelligence({ repoForecasts });
 
-    res.json(Object.assign({}, portfolioForecast, {
+    // Guard: if the entire forecastDistribution is unknown, the portfolio is not forecastable.
+    // This prevents buildPortfolioForecastingIntelligence from emitting a false "stable/medium"
+    // signal when score=0 maps to 'stable' and n>=5 repos default confidenceLevel to 'medium'.
+    const _dist   = portfolioForecast.forecastDistribution || {};
+    const _known  = (_dist.stable || 0) + (_dist.watch || 0) + (_dist.degrading || 0) + (_dist.critical || 0);
+    const _total  = _known + (_dist.unknown || 0);
+    const _pf = (_total > 0 && _known === 0)
+      ? Object.assign({}, portfolioForecast, {
+          portfolioForecastLevel: 'unknown',
+          confidenceLevel:        'low',
+          summary:                'Portfolio forecast unavailable due to insufficient architecture history.',
+          ...('projectedCouplingPressure' in portfolioForecast && { projectedCouplingPressure: 'unknown' }),
+          ...('projectedGovernanceRisk'   in portfolioForecast && { projectedGovernanceRisk:   'unknown' }),
+          ...('trendForecast'             in portfolioForecast && { trendForecast:             'unknown' }),
+        })
+      : portfolioForecast;
+
+    res.json(Object.assign({}, _pf, {
       repoForecasts,
       _cache: {
         source:               'repo_architecture_snapshots',
