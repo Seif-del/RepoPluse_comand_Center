@@ -3687,11 +3687,14 @@
     // ── Portfolio Forecast ────────────────────────────────────────────────────
 
     function buildPortfolioForecastHtml(data) {
-      var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-        + 'Portfolio forecast unavailable until architecture forecast data is available.</p>';
-
-      if (!data || typeof data !== 'object') return EMPTY;
-      if (!data.portfolioForecastLevel || data.portfolioForecastLevel === 'unknown') return EMPTY;
+      if (!data || typeof data !== 'object'
+          || !data.portfolioForecastLevel
+          || data.portfolioForecastLevel === 'unknown') {
+        return '<div class="pf-panel">'
+          + '<div class="pf-badges"><span class="pf-badge severity-unknown">FORECAST UNAVAILABLE</span></div>'
+          + '<p class="pf-summary" style="color:var(--text-muted);font-style:italic;">Insufficient architecture history</p>'
+          + '</div>';
+      }
 
       function _pfLevelSev(level) {
         if (level === 'none' || level === 'low') return 'healthy';
@@ -7656,7 +7659,11 @@
       var html = '<div class="arch-sub-panel">';
       html += '<div class="arch-sub-label">Boundary Violations</div>';
       if (!violations || !violations.length) {
-        html += '<p style="font-size:0.79rem;color:var(--sev-healthy-text);padding:3px 0;">'
+        html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
+        html += '<span style="font-size:0.70rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Boundary Health:</span>';
+        html += '<span class="aq-badge severity-healthy">Healthy</span>';
+        html += '</div>';
+        html += '<p style="font-size:0.79rem;color:var(--sev-healthy-text);padding:3px 0;margin:0;">'
           + 'No systemic boundary violations detected.</p>';
         return html + '</div>';
       }
@@ -7685,14 +7692,46 @@
         html += '<p style="font-size:0.79rem;color:var(--text-muted);font-style:italic;">No coupling data available.</p>';
         return html + '</div>';
       }
+
+      // ── Health-first interpretation
+      var circDeps  = coupling.totalCircularDependencies   || 0;
+      var reposCyc  = coupling.reposWithCircularDependencies || 0;
+      var avgEdges  = coupling.averageEdgesPerRepo != null ? Number(coupling.averageEdgesPerRepo) : 0;
+      var cl = (coupling.couplingLevel || '').toLowerCase();
+      var healthSev, healthLabel, healthMsg;
+      if (cl === 'high' || cl === 'risky' || cl === 'critical') {
+        healthSev   = 'high';
+        healthLabel = 'Risky';
+        healthMsg   = 'Circular dependency or high coupling risk detected.';
+      } else if (cl === 'watch' || cl === 'medium' || cl === 'moderate') {
+        healthSev   = 'medium';
+        healthLabel = 'Watch';
+        healthMsg   = 'Portfolio coupling should be monitored.';
+      } else {
+        healthSev   = 'healthy';
+        healthLabel = 'Healthy';
+        healthMsg   = 'No major portfolio coupling risks detected.';
+      }
+      html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
+      html += '<span style="font-size:0.70rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Coupling Health:</span>';
+      html += '<span class="aq-badge severity-' + esc(healthSev) + '">' + esc(healthLabel) + '</span>';
+      html += '<span style="font-size:0.72rem;color:var(--text-muted);">' + esc(healthMsg) + '</span>';
+      html += '</div>';
+      if (circDeps === 0) {
+        html += '<div style="font-size:0.72rem;color:var(--sev-healthy-text);margin-bottom:6px;">No circular dependency cycles detected.</div>';
+      }
+
+      // ── Existing coupling-level badge
       var lvlSev = _archCouplingLevelSev(coupling.couplingLevel);
       html += '<div class="pf-badges" style="margin-bottom:8px;">';
       html += '<span class="pf-badge severity-' + esc(lvlSev) + '">' + esc((coupling.couplingLevel || 'unknown').toUpperCase()) + '</span>';
       html += '</div>';
+
+      // ── Raw metrics
       html += '<div class="arch-metric-grid">';
       html += _archMetric(coupling.totalEdges || 0, 'Dep Edges');
-      html += _archMetric(coupling.totalCircularDependencies || 0, 'Circular Deps');
-      html += _archMetric(coupling.reposWithCircularDependencies || 0, 'Repos w/ Cycles');
+      html += _archMetric(circDeps, 'Circular Deps');
+      html += _archMetric(reposCyc, 'Repos w/ Cycles');
       if (coupling.averageEdgesPerRepo != null) {
         html += _archMetric(Number(coupling.averageEdgesPerRepo).toFixed(1), 'Avg Edges/Repo');
       }
@@ -7707,15 +7746,51 @@
         html += '<p style="font-size:0.79rem;color:var(--text-muted);font-style:italic;">No API data available.</p>';
         return html + '</div>';
       }
+
+      // ── Health-first interpretation
+      var unresolved = api.totalUnresolvedFrontendCalls || 0;
+      var feCalls    = api.totalFrontendCalls           || 0;
+      var linked     = api.totalLinkedEndpoints         || 0;
+      var il = (api.integrationLevel || '').toLowerCase();
+      var healthSev, healthLabel, healthMsg;
+      if (il === 'weak' || il === 'risky' || il === 'critical' || il === 'none' || il === 'below_average') {
+        healthSev   = 'high';
+        healthLabel = 'Risky';
+        healthMsg   = unresolved > 0
+          ? 'Unresolved frontend/backend API mappings detected.'
+          : (feCalls > 0 && linked === 0)
+            ? 'Frontend API calls exist but no backend route mappings are linked.'
+            : 'API integration coverage is weak and needs review.';
+      } else if (il === 'partial' || il === 'watch' || il === 'medium') {
+        healthSev   = 'medium';
+        healthLabel = 'Watch';
+        healthMsg   = unresolved > 0
+          ? 'Unresolved frontend/backend API mappings detected.'
+          : 'API mappings are partially linked.';
+      } else {
+        healthSev   = 'healthy';
+        healthLabel = 'Healthy';
+        healthMsg   = 'API integration mappings are structurally aligned.';
+      }
+      html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
+      html += '<span style="font-size:0.70rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">API Health:</span>';
+      html += '<span class="aq-badge severity-' + esc(healthSev) + '">' + esc(healthLabel) + '</span>';
+      html += '<span style="font-size:0.72rem;color:var(--text-muted);">' + esc(healthMsg) + '</span>';
+      html += '</div>';
+
+      // ── Coverage-level badge
       var lvlSev = _archIntegrationLevelSev(api.integrationLevel);
-      html += '<div class="pf-badges" style="margin-bottom:8px;">';
+      html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap;">';
+      html += '<span style="font-size:0.70rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Coverage Level:</span>';
       html += '<span class="pf-badge severity-' + esc(lvlSev) + '">' + esc((api.integrationLevel || 'unknown').toUpperCase()) + '</span>';
       html += '</div>';
+
+      // ── Raw metrics
       html += '<div class="arch-metric-grid">';
-      html += _archMetric(api.totalFrontendCalls || 0, 'FE Calls');
+      html += _archMetric(feCalls, 'FE Calls');
       html += _archMetric(api.totalBackendRoutes || 0, 'BE Routes');
-      html += _archMetric(api.totalLinkedEndpoints || 0, 'Linked');
-      html += _archMetric(api.totalUnresolvedFrontendCalls || 0, 'Unresolved');
+      html += _archMetric(linked, 'Linked');
+      html += _archMetric(unresolved, 'Unresolved');
       html += '</div>';
       if (api.averageFrontendCoverage != null || api.averageBackendCoverage != null) {
         html += '<div style="display:flex;gap:12px;margin-top:6px;font-size:0.72rem;color:var(--text-muted);">';
@@ -7737,15 +7812,44 @@
         html += '<p style="font-size:0.79rem;color:var(--text-muted);font-style:italic;">No integrity data available.</p>';
         return html + '</div>';
       }
+
+      // ── Health-first interpretation
+      var scaffoldFiles    = integrity.totalScaffoldLikeFiles  || 0;
+      var placeholderHints = integrity.totalPlaceholderHints   || 0;
+      var avgCompleteness  = Number(integrity.averageCompletenessScore || 0);
+      var healthSev, healthLabel, healthMsg;
+      if (scaffoldFiles > 0 || placeholderHints > 0) {
+        healthSev   = 'medium';
+        healthLabel = 'Watch';
+        healthMsg   = 'Placeholder or scaffold implementation signals detected.';
+      } else if (avgCompleteness < 70) {
+        healthSev   = 'high';
+        healthLabel = 'Risky';
+        healthMsg   = 'Average implementation completeness is below target.';
+      } else {
+        healthSev   = 'healthy';
+        healthLabel = 'Healthy';
+        healthMsg   = 'Implementation signals indicate acceptable completeness.';
+      }
+      html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
+      html += '<span style="font-size:0.70rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Implementation Health:</span>';
+      html += '<span class="aq-badge severity-' + esc(healthSev) + '">' + esc(healthLabel) + '</span>';
+      html += '<span style="font-size:0.72rem;color:var(--text-muted);">' + esc(healthMsg) + '</span>';
+      html += '</div>';
+
+      // ── Integrity-level badge
       var lvlSev = _archIntegrityLevelSev(integrity.integrityLevel);
-      html += '<div class="pf-badges" style="margin-bottom:8px;">';
+      html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap;">';
+      html += '<span style="font-size:0.70rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);">Integrity Level:</span>';
       html += '<span class="pf-badge severity-' + esc(lvlSev) + '">' + esc((integrity.integrityLevel || 'unknown').toUpperCase()) + '</span>';
       html += '</div>';
+
+      // ── Raw metrics
       html += '<div class="arch-metric-grid">';
-      html += _archMetric(Number(integrity.averageCompletenessScore || 0).toFixed(0) + '%', 'Avg Completeness');
+      html += _archMetric(avgCompleteness.toFixed(0) + '%', 'Avg Completeness');
       html += _archMetric(integrity.totalImplementationSignals || 0, 'Impl Signals');
-      html += _archMetric(integrity.totalPlaceholderHints || 0, 'Placeholder Hints');
-      html += _archMetric(integrity.totalScaffoldLikeFiles || 0, 'Scaffold Files');
+      html += _archMetric(placeholderHints, 'Placeholder Hints');
+      html += _archMetric(scaffoldFiles, 'Scaffold Files');
       html += '</div>';
       if (integrity.reposWithWeakCompleteness) {
         html += '<div style="font-size:0.72rem;color:var(--sev-high-text);margin-top:6px;">'
@@ -7754,47 +7858,50 @@
       return html + '</div>';
     }
 
-    function _archBenchmarkingHtml(repos) {
+    function _archNeedsAttentionHtml(repos) {
       if (!repos || !repos.length) return '';
-      var leading = repos.filter(function(r) { return r.relativePosition === 'leading'; }).slice(0, 3);
+
+      // Priority tier mirrors Repository Status PRIORITY_ORDER:
+      //   critical (risky, score<45) → elevated (weak, 45-69) → watch (70-84) → healthy (≥85)
+      // Within the same tier, lower score (worse) comes first.
+      function _archTier(score) {
+        if (score == null) return 4;
+        if (score < 45)   return 0;  // critical
+        if (score < 70)   return 1;  // elevated
+        if (score < 85)   return 2;  // watch
+        return 3;                     // healthy
+      }
+
       var lagging = repos.filter(function(r) {
         return r.relativePosition === 'lagging' || r.relativePosition === 'below_average';
+      }).sort(function(a, b) {
+        var ta = _archTier(a.architectureHealthScore);
+        var tb = _archTier(b.architectureHealthScore);
+        if (ta !== tb) return ta - tb;
+        var sa = a.architectureHealthScore != null ? a.architectureHealthScore : 999;
+        var sb = b.architectureHealthScore != null ? b.architectureHealthScore : 999;
+        return sa - sb;
       }).slice(0, 3);
-      if (!leading.length && !lagging.length) return '';
+      if (!lagging.length) return '';
 
       function repoRow(r) {
         var posSev = _archBenchPositionSev(r.relativePosition);
-        return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border);">'
-          + '<span style="font-size:0.79rem;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(r.repoName || '') + '">'
-          + esc(r.repoName || '') + '</span>'
-          + '<span style="font-family:var(--font-mono);font-size:0.72rem;font-weight:700;color:var(--sev-' + esc(posSev) + '-text);">'
-          + esc(String(r.architectureHealthScore != null ? r.architectureHealthScore : '—')) + '</span>'
+        var scoreVal = r.architectureHealthScore != null ? r.architectureHealthScore : '—';
+        return '<div style="padding:4px 0;border-bottom:1px solid var(--border);">'
+          + '<div style="font-size:0.79rem;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(r.repoName || '') + '">'
+          + esc(r.repoName || '') + '</div>'
+          + '<div style="font-size:0.70rem;color:var(--text-muted);margin-top:1px;">'
+          + 'Architecture Health Score: '
+          + '<span style="font-family:var(--font-mono);font-weight:700;color:var(--sev-' + esc(posSev) + '-text);">' + esc(String(scoreVal)) + '</span>'
+          + '</div>'
           + '</div>';
       }
 
-      var html = '<div class="arch-sub-panel" style="margin-top:10px;">';
-      html += '<div class="arch-sub-label">Architecture Benchmarking</div>';
-      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-
-      html += '<div>';
-      html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--sev-healthy-text);margin-bottom:5px;">Leading</div>';
-      if (leading.length) {
-        leading.forEach(function(r) { html += repoRow(r); });
-      } else {
-        html += '<p style="font-size:0.77rem;color:var(--text-muted);font-style:italic;">None identified.</p>';
-      }
+      var html = '<div class="arch-sub-panel" style="margin-bottom:10px;">';
+      html += '<div class="arch-sub-label" style="color:var(--sev-high-text);">Highest-Risk Repositories</div>';
+      html += '<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">The repositories below currently represent the highest architecture risk in the portfolio.</div>';
+      lagging.forEach(function(r) { html += repoRow(r); });
       html += '</div>';
-
-      html += '<div>';
-      html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--sev-high-text);margin-bottom:5px;">Needs Attention</div>';
-      if (lagging.length) {
-        lagging.forEach(function(r) { html += repoRow(r); });
-      } else {
-        html += '<p style="font-size:0.77rem;color:var(--text-muted);font-style:italic;">All at average or above.</p>';
-      }
-      html += '</div>';
-
-      html += '</div></div>';
       return html;
     }
 
@@ -7805,6 +7912,181 @@
       html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px;">';
       recs.slice(0, 5).forEach(function(rec) {
         html += '<li class="arch-rec">' + esc(rec) + '</li>';
+      });
+      html += '</ul></div>';
+      return html;
+    }
+
+    function _archRepoRecommendationsHtml(data) {
+      var benched = Array.isArray(data.benchmarkedRepositories) ? data.benchmarkedRepositories : [];
+
+      // Same priority order as Architecture Risk Concentration and Repository Status:
+      //   critical (score<45) → elevated (45-69) → watch (70-84) → healthy (≥85)
+      // Within the same tier, lower score (worse) comes first.
+      function _archTier(score) {
+        if (score == null) return 4;
+        if (score < 45)   return 0;
+        if (score < 70)   return 1;
+        if (score < 85)   return 2;
+        return 3;
+      }
+
+      var lagging = benched.filter(function(r) {
+        return r.relativePosition === 'lagging' || r.relativePosition === 'below_average';
+      }).sort(function(a, b) {
+        var ta = _archTier(a.architectureHealthScore);
+        var tb = _archTier(b.architectureHealthScore);
+        if (ta !== tb) return ta - tb;
+        var sa = a.architectureHealthScore != null ? a.architectureHealthScore : 999;
+        var sb = b.architectureHealthScore != null ? b.architectureHealthScore : 999;
+        return sa - sb;
+      }).slice(0, 3);
+
+      if (!lagging.length) return _archRecommendationsHtml(data.recommendations);
+
+      var violations = Array.isArray(data.systemicBoundaryViolations) ? data.systemicBoundaryViolations : [];
+      var integrity  = data.implementationIntegrity || null;
+      var coupling   = data.portfolioCoupling       || null;
+      var api        = data.apiIntegrationHealth    || null;
+
+      var html = '<div class="arch-sub-panel" style="margin-top:10px;">';
+      html += '<div class="arch-sub-label">Recommendations</div>';
+
+      lagging.forEach(function(r, idx) {
+        var detected    = [];
+        var recommended = [];
+
+        // Per-repo: low architecture score
+        var score = r.architectureHealthScore;
+        if (score != null && score < 70) {
+          detected.push('Low architecture health score (' + score + ')');
+          recommended.push('Review architecture snapshot and address highest-impact findings');
+        }
+
+        // Per-repo: boundary violations naming this repository
+        violations.forEach(function(v) {
+          if (Array.isArray(v.affectedRepos) && v.affectedRepos.indexOf(r.repoName) !== -1) {
+            var instances = v.count || 0;
+            detected.push((v.type || 'Unknown') + ' boundary violation (' + instances + ' instance' + (instances === 1 ? '' : 's') + ')');
+            recommended.push('Resolve ' + (v.type || 'boundary') + ' violations to reduce structural risk');
+          }
+        });
+
+        // Portfolio-level signals attributed to the top-ranked repo only
+        if (idx === 0) {
+          if (integrity) {
+            if ((integrity.totalPlaceholderHints || 0) > 0 || (integrity.totalScaffoldLikeFiles || 0) > 0) {
+              detected.push('Placeholder or scaffold implementation signals detected');
+              recommended.push('Replace placeholder implementations with production-ready code');
+            }
+            if (Number(integrity.averageCompletenessScore || 0) < 70) {
+              detected.push('Portfolio implementation completeness below target');
+              recommended.push('Increase implementation completeness above 70%');
+            }
+          }
+          if (api && (api.totalUnresolvedFrontendCalls || 0) > 0) {
+            var unresCount = api.totalUnresolvedFrontendCalls;
+            detected.push(unresCount + ' unresolved frontend API mapping' + (unresCount === 1 ? '' : 's'));
+            recommended.push('Link unresolved frontend calls to backend route definitions');
+          }
+          if (coupling && ((coupling.totalCircularDependencies || 0) > 0 || Number(coupling.averageEdgesPerRepo || 0) >= 30)) {
+            detected.push('Portfolio coupling pressure detected');
+            recommended.push('Reduce dependency coupling by extracting shared interfaces');
+          }
+        }
+
+        var isLast = idx === lagging.length - 1;
+        html += '<div style="margin-bottom:' + (isLast ? '0' : '12px') + ';padding-bottom:' + (isLast ? '0' : '10px') + ';' + (isLast ? '' : 'border-bottom:1px solid var(--border);') + '">';
+        html += '<div style="font-size:0.72rem;font-weight:700;color:var(--text-primary);margin-bottom:6px;">';
+        html += 'Priority #' + (idx + 1) + ' — <span style="color:var(--sev-high-text);">' + esc(r.repoName || '') + '</span>';
+        html += '</div>';
+
+        if (detected.length) {
+          html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:3px;">Detected</div>';
+          html += '<ul style="list-style:none;padding:0;margin:0 0 6px;display:flex;flex-direction:column;gap:2px;">';
+          detected.forEach(function(d) {
+            html += '<li style="font-size:0.77rem;color:var(--text-primary);display:flex;gap:6px;">'
+              + '<span style="color:var(--sev-high-text);flex-shrink:0;">•</span>' + esc(d) + '</li>';
+          });
+          html += '</ul>';
+        }
+
+        if (recommended.length) {
+          html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:3px;">Recommended</div>';
+          html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:2px;">';
+          recommended.forEach(function(rec) {
+            html += '<li style="font-size:0.77rem;color:var(--text-primary);display:flex;gap:6px;">'
+              + '<span style="color:var(--sev-healthy-text);flex-shrink:0;">→</span>' + esc(rec) + '</li>';
+          });
+          html += '</ul>';
+        }
+
+        html += '</div>';
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    function _archRiskDriversHtml(data) {
+      var drivers = [];
+
+      // 1. Architecture Risk Concentration
+      var benched = Array.isArray(data.benchmarkedRepositories) ? data.benchmarkedRepositories : [];
+      var lagging = benched.filter(function(r) {
+        return r.relativePosition === 'lagging' || r.relativePosition === 'below_average';
+      });
+      var ARCH_DISPLAY_LIMIT = 3;
+      if (lagging.length > 0) {
+        var repoWord = lagging.length === 1 ? 'repository' : 'repositories';
+        var topNote  = lagging.length > ARCH_DISPLAY_LIMIT ? ' (top ' + ARCH_DISPLAY_LIMIT + ' shown)' : '';
+        drivers.push({ sev: 'high', text: 'Architecture risk concentrated in ' + lagging.length + ' ' + repoWord + topNote });
+      }
+
+      // 2. Implementation Integrity
+      var integrity = data.implementationIntegrity;
+      if (integrity) {
+        var scaffoldFiles    = integrity.totalScaffoldLikeFiles  || 0;
+        var placeholderHints = integrity.totalPlaceholderHints   || 0;
+        var avgCompleteness  = Number(integrity.averageCompletenessScore || 0);
+        if (scaffoldFiles > 0 || placeholderHints > 0 || avgCompleteness < 70) {
+          drivers.push({ sev: 'medium', text: 'Implementation integrity weaknesses detected' });
+        }
+      }
+
+      // 3. Boundary Violations
+      var violations = data.systemicBoundaryViolations;
+      if (!violations || !violations.length) {
+        drivers.push({ sev: 'healthy', text: 'No significant boundary violations detected' });
+      } else {
+        drivers.push({ sev: 'high', text: 'Boundary violations contributing to portfolio risk' });
+      }
+
+      // 4. Portfolio Coupling
+      var coupling = data.portfolioCoupling;
+      if (coupling) {
+        var circDeps = coupling.totalCircularDependencies    || 0;
+        var reposCyc = coupling.reposWithCircularDependencies || 0;
+        var avgEdges = coupling.averageEdgesPerRepo != null ? Number(coupling.averageEdgesPerRepo) : 0;
+        if (circDeps > 0 || reposCyc > 0 || avgEdges >= 30) {
+          drivers.push({ sev: (circDeps > 0 || reposCyc > 0) ? 'high' : 'medium', text: 'Portfolio coupling pressure detected' });
+        }
+      }
+
+      if (!drivers.length) return '';
+
+      var html = '<div style="margin-bottom:14px;padding:10px 12px;background:var(--bg-panel,var(--bg-card));border:1px solid var(--border);border-radius:6px;">';
+      html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px;">Primary Risk Drivers</div>';
+      html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px;">';
+      drivers.slice(0, 4).forEach(function(d) {
+        var dotColor = d.sev === 'healthy' ? 'var(--sev-healthy-text)'
+                     : d.sev === 'medium'  ? 'var(--sev-medium-text)'
+                     : d.sev === 'high'    ? 'var(--sev-high-text)'
+                     : 'var(--text-muted)';
+        html += '<li style="display:flex;align-items:center;gap:8px;font-size:0.77rem;color:var(--text-primary);">';
+        html += '<span style="width:7px;height:7px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;"></span>';
+        html += esc(d.text);
+        html += '</li>';
       });
       html += '</ul></div>';
       return html;
@@ -7875,17 +8157,30 @@
         html += '</div>';
       }
 
-      // ── 2-column sub-panels grid
+      // ── Primary Risk Drivers
+      html += _archRiskDriversHtml(data);
+
+      // ── Needs Attention (repos lagging or below average)
+      html += _archNeedsAttentionHtml(data.benchmarkedRepositories);
+
+      // ── Primary structural signals (2-column grid)
       html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
       html += _archBoundaryViolationsHtml(data.systemicBoundaryViolations);
       html += _archCouplingHtml(data.portfolioCoupling);
+      html += '</div>';
+
+      // ── Supporting Signals
+      html += '<div style="margin-top:14px;">';
+      html += '<div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:2px;">Supporting Signals</div>';
+      html += '<div style="font-size:0.70rem;color:var(--text-muted);margin-bottom:8px;">These indicators support architecture review but are not primary structural risk signals.</div>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
       html += _archApiIntegrationHtml(data.apiIntegrationHealth);
       html += _archIntegrityHtml(data.implementationIntegrity);
       html += '</div>';
+      html += '</div>';
 
-      // full-width: benchmarking + recommendations
-      html += _archBenchmarkingHtml(data.benchmarkedRepositories);
-      html += _archRecommendationsHtml(data.recommendations);
+      // full-width: recommendations (repo-specific when ranked repos available)
+      html += _archRepoRecommendationsHtml(data);
 
       html += '</div>';
       return html;

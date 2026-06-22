@@ -507,7 +507,7 @@ function _recommendations(repos, systemicViolations, coupling, apiHealth, integr
 const PORTFOLIO_SUMMARIES = {
   healthy: 'Portfolio architecture appears healthy — boundary health and implementation coverage look strong across the portfolio.',
   watch:   'Portfolio architecture has watch items — review boundary violations and API linkage gaps before scaling.',
-  weak:    'Portfolio architecture shows structural weaknesses — prioritize boundary violations and implementation completeness.',
+  weak:    'Portfolio architecture is weakened by a small number of high-risk repositories and implementation completeness concerns.',
   risky:   'Portfolio architecture indicates significant risk — structural refactoring and boundary enforcement are recommended.',
   unknown: 'Portfolio architecture data is insufficient — no usable architecture snapshots available.',
 };
