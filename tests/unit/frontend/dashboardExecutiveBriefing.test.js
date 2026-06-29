@@ -19,7 +19,7 @@ function buildExecutiveBriefing(kpi) {
   if (!kpi) kpi = {};
 
   var dataPresent = kpi.architectureScore != null || kpi.governanceScore != null
-    || kpi.forecastLevel != null || kpi.criticalRepos != null || kpi.watchlistCount != null;
+    || kpi.criticalRepos != null;
 
   if (!dataPresent) {
     return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
@@ -40,7 +40,6 @@ function buildExecutiveBriefing(kpi) {
       || (kpi.criticalRepos  != null && kpi.criticalRepos  >  0)
       || (kpi.architectureScore != null && kpi.architectureScore < 80)
       || (kpi.governanceScore   != null && kpi.governanceScore   < 80)
-      || (kpi.watchlistCount    != null && kpi.watchlistCount    >  0)
       || (covPct !== null && covPct < 80);
     if (isWatch) return 'watch';
     var allLoaded = kpi.architectureScore != null && kpi.governanceScore != null
@@ -55,148 +54,80 @@ function buildExecutiveBriefing(kpi) {
   var statusLabel = STATUS_LABELS[status] || status;
   var statusSev   = STATUS_SEV[status]   || 'unknown';
 
-  // ── Signal helpers ────────────────────────────────────────────────────────
+  // ── Key Metrics ───────────────────────────────────────────────────────────
   function scoreSev(s) {
     if (s == null) return 'unknown';
     return s >= 80 ? 'healthy' : s >= 60 ? 'medium' : 'high';
   }
-  function forecastSev(l) {
-    if (!l || l === 'none' || l === 'low') return 'healthy';
-    if (l === 'stable')    return 'healthy';
-    if (l === 'watch')     return 'medium';
-    if (l === 'degrading') return 'high';
-    if (l === 'critical')  return 'critical';
-    return 'unknown';
-  }
 
-  // ── Key Signals ───────────────────────────────────────────────────────────
-  var govSignal, archSignal, fcSignal, attnSignal, covSignal;
+  var archMetricVal = kpi.architectureScore != null
+    ? (kpi.architectureScore + ' — ' + (kpi.architectureScore >= 85 ? 'Healthy' : kpi.architectureScore >= 70 ? 'Watch' : kpi.architectureScore >= 45 ? 'Weak' : 'Risky'))
+    : '—';
+  var critMetricVal = kpi.criticalRepos != null ? (kpi.criticalRepos > 0 ? String(kpi.criticalRepos) : 'None') : '—';
+  var critMetricSev = kpi.criticalRepos != null && kpi.criticalRepos > 0 ? 'critical'
+    : kpi.criticalRepos != null ? 'healthy' : 'unknown';
+  var riskMetricVal = kpi.riskConcentration != null ? (kpi.riskConcentration > 0 ? String(kpi.riskConcentration) : 'None') : '—';
+  var riskMetricSev = kpi.riskConcentration != null && kpi.riskConcentration > 0 ? 'high'
+    : kpi.riskConcentration != null ? 'healthy' : 'unknown';
+  var covMetricVal  = covPct != null ? (covPct + '% (' + covRatio + ')') : '—';
+  var covMetricSev  = covPct != null ? (covPct >= 80 ? 'healthy' : covPct >= 50 ? 'medium' : 'high') : 'unknown';
 
-  if (kpi.governanceScore != null) {
-    var gLbl = kpi.governanceScore >= 80 ? 'Strong' : kpi.governanceScore >= 60 ? 'Watch' : 'Weak';
-    govSignal = { label: 'Governance', text: 'Score ' + kpi.governanceScore + ' — ' + gLbl, sev: scoreSev(kpi.governanceScore) };
-  } else {
-    govSignal = { label: 'Governance', text: '—', sev: 'unknown' };
-  }
-
-  if (kpi.architectureScore != null) {
-    var aLbl = kpi.architectureScore >= 80 ? 'Healthy' : kpi.architectureScore >= 60 ? 'Watch' : 'At Risk';
-    archSignal = { label: 'Architecture', text: 'Score ' + kpi.architectureScore + ' — ' + aLbl, sev: scoreSev(kpi.architectureScore) };
-  } else {
-    archSignal = { label: 'Architecture', text: '—', sev: 'unknown' };
-  }
-
-  var fcLabels = { none: 'None', low: 'Low', stable: 'Stable', watch: 'Watch', degrading: 'Degrading', critical: 'Critical' };
-  var fcText   = kpi.forecastLevel ? (fcLabels[kpi.forecastLevel] || kpi.forecastLevel) : '—';
-  fcSignal = { label: 'Forecast', text: fcText, sev: forecastSev(kpi.forecastLevel) };
-
-  var attnParts   = [];
-  if (kpi.criticalRepos  != null && kpi.criticalRepos  > 0) attnParts.push(kpi.criticalRepos  + ' critical');
-  if (kpi.watchlistCount != null && kpi.watchlistCount > 0) attnParts.push(kpi.watchlistCount + ' watchlisted');
-  var attnHasData = kpi.criticalRepos != null || kpi.watchlistCount != null;
-  var attnText    = attnParts.length ? attnParts.join(', ') + ' repos' : attnHasData ? 'None' : '—';
-  var attnSev     = kpi.criticalRepos != null && kpi.criticalRepos > 0 ? 'critical'
-    : kpi.watchlistCount != null && kpi.watchlistCount > 0 ? 'medium'
-    : attnHasData ? 'healthy' : 'unknown';
-  attnSignal = { label: 'Attention Required', text: attnText, sev: attnSev };
-
-  if (covPct != null) {
-    var covSev = covPct >= 80 ? 'healthy' : covPct >= 50 ? 'medium' : 'high';
-    covSignal = { label: 'Snapshot Coverage', text: covPct + '% (' + covRatio + ')', sev: covSev };
-  } else {
-    covSignal = { label: 'Snapshot Coverage', text: '—', sev: 'unknown' };
-  }
-
-  var signals = [govSignal, archSignal, fcSignal, attnSignal, covSignal];
+  var metrics = [
+    { label: 'Architecture Health',   text: archMetricVal, sev: scoreSev(kpi.architectureScore) },
+    { label: 'Critical Repos',        text: critMetricVal, sev: critMetricSev },
+    { label: 'Repositories at Risk',  text: riskMetricVal, sev: riskMetricSev },
+    { label: 'Snapshot Coverage',     text: covMetricVal,  sev: covMetricSev },
+  ];
 
   // ── Portfolio Assessment ──────────────────────────────────────────────────
   var assessment;
   if (status === 'needs_attention') {
     var naReasons = [];
-    if (kpi.forecastLevel === 'critical')  naReasons.push('critical structural forecast');
+    if (kpi.forecastLevel === 'critical')  naReasons.push('critical structural degradation forecast');
     if (kpi.forecastLevel === 'degrading') naReasons.push('degrading structural forecast');
-    if (kpi.criticalRepos != null && kpi.criticalRepos > 0)  naReasons.push(kpi.criticalRepos + ' critical repo' + (kpi.criticalRepos > 1 ? 's' : ''));
-    if (kpi.architectureScore != null && kpi.architectureScore < 60) naReasons.push('architecture score ' + kpi.architectureScore);
-    if (kpi.governanceScore   != null && kpi.governanceScore   < 60) naReasons.push('governance score ' + kpi.governanceScore);
-    assessment = 'Portfolio requires immediate attention — ' + (naReasons.slice(0, 2).join(', ') || 'critical signals detected') + '.';
+    if (kpi.criticalRepos != null && kpi.criticalRepos > 0)  naReasons.push(kpi.criticalRepos + ' critical repositor' + (kpi.criticalRepos > 1 ? 'ies' : 'y') + ' requiring remediation');
+    if (kpi.architectureScore != null && kpi.architectureScore < 60) naReasons.push('architecture score below threshold (' + kpi.architectureScore + ')');
+    if (kpi.governanceScore   != null && kpi.governanceScore   < 60) naReasons.push('governance score below threshold (' + kpi.governanceScore + ')');
+    assessment = 'Portfolio requires immediate attention due to ' + (naReasons.slice(0, 2).join(' and ') || 'critical signals detected') + '.';
   } else if (status === 'watch') {
     var wReasons = [];
     if (kpi.forecastLevel === 'watch')     wReasons.push('structural forecast in watch state');
-    if (kpi.watchlistCount != null && kpi.watchlistCount > 0) wReasons.push(kpi.watchlistCount + ' repo' + (kpi.watchlistCount > 1 ? 's' : '') + ' on watchlist');
     if (kpi.architectureScore != null && kpi.architectureScore < 80) wReasons.push('architecture score at ' + kpi.architectureScore);
     if (kpi.governanceScore   != null && kpi.governanceScore   < 80) wReasons.push('governance at ' + kpi.governanceScore);
-    assessment = 'Portfolio is stable with signals requiring monitoring — ' + (wReasons.slice(0, 2).join(', ') || 'elevated indicators present') + '.';
+    assessment = 'Portfolio requires monitoring — ' + (wReasons.slice(0, 2).join(', ') || 'elevated indicators present') + '.';
   } else if (status === 'healthy') {
-    assessment = 'Portfolio architecture is healthy across all monitored dimensions. Governance, forecast, and coverage are within acceptable thresholds.';
+    assessment = 'Portfolio architecture is healthy across all monitored dimensions. Governance and coverage are within acceptable thresholds.';
   } else {
     assessment = 'Portfolio intelligence is partially loaded. Architecture signals will update as data completes.';
   }
 
-  // ── Primary Risks ─────────────────────────────────────────────────────────
-  var risks = [];
-  if (kpi.forecastLevel === 'critical')  risks.push('Structural degradation forecast is critical — architecture integrity is at risk.');
-  if (kpi.forecastLevel === 'degrading') risks.push('Structural degradation is forecast — coupling and complexity trends are worsening.');
-  if (kpi.criticalRepos != null && kpi.criticalRepos > 0) {
-    risks.push(kpi.criticalRepos + ' repositor' + (kpi.criticalRepos > 1 ? 'ies' : 'y') + ' flagged as critical in the architecture watchlist.');
-  }
-  if (kpi.architectureScore != null && kpi.architectureScore < 60) {
-    risks.push('Portfolio architecture health score (' + kpi.architectureScore + ') is below the acceptable threshold of 60.');
-  }
-  if (kpi.governanceScore != null && kpi.governanceScore < 60) {
-    risks.push('Engineering governance score (' + kpi.governanceScore + ') indicates structural governance deficits.');
-  }
-  if (kpi.watchlistCount != null && kpi.watchlistCount >= 5) {
-    risks.push(kpi.watchlistCount + ' repositories are on the architecture watchlist and require attention.');
-  }
-  if (covPct != null && covPct < 50) {
-    risks.push('Architecture snapshot coverage is insufficient (' + covPct + '%) — intelligence accuracy may be limited.');
-  }
-
-  // ── Recommended Actions ───────────────────────────────────────────────────
-  var recs = [];
-  if (kpi.criticalRepos != null && kpi.criticalRepos > 0)                         recs.push('Review and address critical repositories immediately.');
-  if (kpi.forecastLevel === 'critical' || kpi.forecastLevel === 'degrading')       recs.push('Investigate structural degradation root cause across the portfolio.');
-  if (kpi.architectureScore != null && kpi.architectureScore < 60)                recs.push('Prioritize architecture improvements for the lowest-scoring repositories.');
-  if (kpi.governanceScore   != null && kpi.governanceScore   < 60)                recs.push('Strengthen engineering governance practices and architectural standards.');
-  if (kpi.watchlistCount != null && kpi.watchlistCount >= 5)                      recs.push('Triage architecture watchlist and prioritize remediation for elevated repositories.');
-  if (covPct != null && covPct < 50)                                               recs.push('Increase architecture snapshot coverage to improve intelligence accuracy.');
-  if (!recs.length) recs.push('Maintain current architecture health standards and continue regular snapshots.');
-
   // ── Render ────────────────────────────────────────────────────────────────
   var html = '<div class="exec-brief sev-' + esc(statusSev) + '">';
   html += '<div class="exec-brief-header">';
-  html += '<span class="exec-brief-label">Architecture Intelligence Briefing</span>';
+  html += '<span class="exec-brief-label">Portfolio Assessment</span>';
   html += '<span class="exec-brief-badge severity-' + esc(statusSev) + '">' + esc(statusLabel) + '</span>';
   html += '</div>';
   html += '<div class="exec-brief-summary" style="margin-top:4px;">' + esc(assessment) + '</div>';
   html += '<div class="exec-brief-body" style="margin-top:12px;">';
 
+  // Key Metrics
   html += '<div class="exec-brief-col" style="min-width:230px;">';
-  html += '<div class="exec-brief-col-label">Key Signals</div>';
+  html += '<div class="exec-brief-col-label">Key Metrics</div>';
   html += '<div style="display:flex;flex-direction:column;gap:5px;margin-top:4px;">';
-  signals.forEach(function(s) {
+  metrics.forEach(function(m) {
     html += '<div style="display:flex;align-items:center;gap:8px;">';
-    html += '<span style="width:7px;height:7px;border-radius:50%;background:var(--sev-' + esc(s.sev) + '-text);flex-shrink:0;display:inline-block;"></span>';
-    html += '<span style="font-size:0.74rem;color:var(--text-muted);min-width:118px;flex-shrink:0;">' + esc(s.label) + '</span>';
-    html += '<span style="font-size:0.80rem;color:var(--text-primary);">' + esc(s.text) + '</span>';
+    html += '<span style="width:7px;height:7px;border-radius:50%;background:var(--sev-' + esc(m.sev) + '-text);flex-shrink:0;display:inline-block;"></span>';
+    html += '<span style="font-size:0.74rem;color:var(--text-muted);min-width:118px;flex-shrink:0;">' + esc(m.label) + '</span>';
+    html += '<span style="font-size:0.80rem;color:var(--text-primary);">' + esc(m.text) + '</span>';
     html += '</div>';
   });
   html += '</div></div>';
 
-  if (risks.length) {
-    html += '<div class="exec-brief-col">';
-    html += '<div class="exec-brief-col-label">Primary Risks</div>';
-    html += '<ul class="exec-brief-list">';
-    risks.slice(0, 3).forEach(function(r) { html += '<li class="exec-brief-item">' + esc(r) + '</li>'; });
-    html += '</ul>';
-    html += '</div>';
-  }
-
+  // Next Action
   html += '<div class="exec-brief-col">';
-  html += '<div class="exec-brief-col-label">Recommended Actions</div>';
-  html += '<ul class="exec-brief-list">';
-  recs.slice(0, 3).forEach(function(r) { html += '<li class="exec-brief-rec-item">' + esc(r) + '</li>'; });
-  html += '</ul></div>';
+  html += '<div class="exec-brief-col-label">Next Action</div>';
+  html += '<p style="font-size:0.80rem;color:var(--text-primary);margin:4px 0 0;">Prioritize remediation for the highest-risk repositories.</p>';
+  html += '</div>';
 
   html += '</div></div>';
   return html;
@@ -229,22 +160,22 @@ describe('buildExecutiveBriefing — HTML structure', () => {
   const html = buildExecutiveBriefing({ architectureScore: 85, governanceScore: 80, forecastLevel: 'stable', criticalRepos: 0 });
 
   test('wraps content in exec-brief div', () => { expect(html).toContain('exec-brief'); });
-  test('renders Architecture Intelligence Briefing label', () => { expect(html).toContain('Architecture Intelligence Briefing'); });
+  test('renders Portfolio Assessment label', () => { expect(html).toContain('Portfolio Assessment'); });
   test('renders exec-brief-header', () => { expect(html).toContain('exec-brief-header'); });
   test('renders exec-brief-body', () => { expect(html).toContain('exec-brief-body'); });
-  test('renders Key Signals section', () => { expect(html).toContain('Key Signals'); });
-  test('renders Recommended Actions section', () => { expect(html).toContain('Recommended Actions'); });
+  test('renders Key Metrics section', () => { expect(html).toContain('Key Metrics'); });
+  test('renders Next Action section', () => { expect(html).toContain('Next Action'); });
 });
 
 describe('buildExecutiveBriefing — executive status: needs_attention', () => {
   test('forecast=critical → Needs Attention', () => {
-    const html = buildExecutiveBriefing({ forecastLevel: 'critical' });
+    const html = buildExecutiveBriefing({ forecastLevel: 'critical', architectureScore: 85 });
     expect(html).toContain('Needs Attention');
     expect(html).toContain('sev-high');
   });
 
   test('forecast=degrading → Needs Attention', () => {
-    expect(buildExecutiveBriefing({ forecastLevel: 'degrading' })).toContain('Needs Attention');
+    expect(buildExecutiveBriefing({ forecastLevel: 'degrading', architectureScore: 85 })).toContain('Needs Attention');
   });
 
   test('criticalRepos=3 → Needs Attention (at threshold)', () => {
@@ -268,14 +199,14 @@ describe('buildExecutiveBriefing — executive status: needs_attention', () => {
   });
 
   test('assessment text references immediate attention', () => {
-    const html = buildExecutiveBriefing({ forecastLevel: 'critical' });
+    const html = buildExecutiveBriefing({ forecastLevel: 'critical', architectureScore: 85 });
     expect(html).toContain('immediate attention');
   });
 });
 
 describe('buildExecutiveBriefing — executive status: watch', () => {
   test('forecast=watch → Watch badge', () => {
-    const html = buildExecutiveBriefing({ forecastLevel: 'watch' });
+    const html = buildExecutiveBriefing({ forecastLevel: 'watch', architectureScore: 85 });
     expect(html).toContain('Watch');
     expect(html).toContain('sev-medium');
   });
@@ -310,16 +241,16 @@ describe('buildExecutiveBriefing — executive status: watch', () => {
     expect(buildExecutiveBriefing({ governanceScore: 75 })).toContain('Watch');
   });
 
-  test('watchlistCount=1 → Watch', () => {
-    expect(buildExecutiveBriefing({ watchlistCount: 1 })).toContain('Watch');
+  test('watchlistCount alone does not influence status (returns loading)', () => {
+    expect(buildExecutiveBriefing({ watchlistCount: 1 })).toContain('briefing loading');
   });
 
   test('covPct=79 (7/9) → Watch', () => {
-    expect(buildExecutiveBriefing({ snapshotCount: 7, repoCount: 9, forecastLevel: 'stable' })).toContain('Watch');
+    expect(buildExecutiveBriefing({ snapshotCount: 7, repoCount: 9, forecastLevel: 'stable', criticalRepos: 0 })).toContain('Watch');
   });
 
   test('assessment text references monitoring', () => {
-    const html = buildExecutiveBriefing({ forecastLevel: 'watch' });
+    const html = buildExecutiveBriefing({ forecastLevel: 'watch', architectureScore: 85 });
     expect(html).toContain('monitoring');
   });
 });
@@ -348,126 +279,58 @@ describe('buildExecutiveBriefing — executive status: stable', () => {
   });
 });
 
-describe('buildExecutiveBriefing — Key Signals labels', () => {
-  const html = buildExecutiveBriefing({ architectureScore: 75, governanceScore: 70, forecastLevel: 'watch', criticalRepos: 0, watchlistCount: 2 });
+describe('buildExecutiveBriefing — Key Metrics', () => {
+  const html = buildExecutiveBriefing({ architectureScore: 75, governanceScore: 70, forecastLevel: 'watch', criticalRepos: 2, riskConcentration: 3, snapshotCount: 7, repoCount: 16 });
 
-  test('renders Governance signal', () => { expect(html).toContain('Governance'); });
-  test('renders Architecture signal', () => { expect(html).toContain('Architecture'); });
-  test('renders Forecast signal', () => { expect(html).toContain('Forecast'); });
-  test('renders Attention Required signal', () => { expect(html).toContain('Attention Required'); });
-  test('renders Snapshot Coverage signal', () => { expect(html).toContain('Snapshot Coverage'); });
-});
-
-describe('buildExecutiveBriefing — Key Signals values', () => {
-  test('gov 85 → Strong label', () => {
-    expect(buildExecutiveBriefing({ governanceScore: 85 })).toContain('Strong');
-  });
-  test('gov 70 → Watch label', () => {
-    expect(buildExecutiveBriefing({ governanceScore: 70 })).toContain('Watch');
-  });
-  test('gov 55 → Weak label', () => {
-    expect(buildExecutiveBriefing({ governanceScore: 55 })).toContain('Weak');
-  });
-  test('arch 85 → Healthy label', () => {
+  test('renders Key Metrics section label', () => { expect(html).toContain('Key Metrics'); });
+  test('renders Architecture Health metric label', () => { expect(html).toContain('Architecture Health'); });
+  test('renders Critical Repos metric label', () => { expect(html).toContain('Critical Repos'); });
+  test('renders Repositories at Risk metric label', () => { expect(html).toContain('Repositories at Risk'); });
+  test('renders Snapshot Coverage metric label', () => { expect(html).toContain('Snapshot Coverage'); });
+  test('arch 85 shows Healthy in Architecture Health metric', () => {
     expect(buildExecutiveBriefing({ architectureScore: 85 })).toContain('Healthy');
   });
-  test('arch 65 → Watch label in signal', () => {
-    expect(buildExecutiveBriefing({ architectureScore: 65 })).toContain('Watch');
+  test('arch 65 shows Weak in Architecture Health metric', () => {
+    expect(buildExecutiveBriefing({ architectureScore: 65 })).toContain('Weak');
   });
-  test('arch 45 → At Risk label', () => {
-    expect(buildExecutiveBriefing({ architectureScore: 45 })).toContain('At Risk');
+  test('arch 45 shows Weak in Architecture Health metric', () => {
+    expect(buildExecutiveBriefing({ architectureScore: 45 })).toContain('Weak');
   });
-  test('forecast stable → Stable in signal', () => {
-    expect(buildExecutiveBriefing({ forecastLevel: 'stable' })).toContain('Stable');
+  test('arch 44 shows Risky in Architecture Health metric', () => {
+    expect(buildExecutiveBriefing({ architectureScore: 44 })).toContain('Risky');
   });
-  test('forecast degrading → Degrading in signal', () => {
-    expect(buildExecutiveBriefing({ forecastLevel: 'degrading' })).toContain('Degrading');
+  test('criticalRepos=2 shows count in Critical Repos metric', () => {
+    const h = buildExecutiveBriefing({ criticalRepos: 2 });
+    expect(h).toContain('Critical Repos');
+    expect(h).toContain('>2<');
   });
-  test('criticalRepos=2 and watchlistCount=3 → shows "2 critical, 3 watchlisted repos"', () => {
-    const html = buildExecutiveBriefing({ criticalRepos: 2, watchlistCount: 3 });
-    expect(html).toContain('2 critical');
-    expect(html).toContain('3 watchlisted');
+  test('criticalRepos=0 shows None in Critical Repos metric', () => {
+    expect(buildExecutiveBriefing({ criticalRepos: 0 })).toContain('None');
   });
-  test('criticalRepos=0 and watchlistCount=0 → shows None', () => {
-    expect(buildExecutiveBriefing({ criticalRepos: 0, watchlistCount: 0 })).toContain('None');
+  test('riskConcentration=4 shows count in Repositories at Risk metric', () => {
+    const h = buildExecutiveBriefing({ architectureScore: 85, riskConcentration: 4 });
+    expect(h).toContain('Repositories at Risk');
+    expect(h).toContain('>4<');
   });
-  test('7/16 snapshot coverage shows 44%', () => {
-    const html = buildExecutiveBriefing({ snapshotCount: 7, repoCount: 16, forecastLevel: 'stable' });
-    expect(html).toContain('44%');
-    expect(html).toContain('7 / 16');
+  test('riskConcentration=0 shows None in Repositories at Risk metric', () => {
+    const h = buildExecutiveBriefing({ architectureScore: 85, riskConcentration: 0 });
+    expect(h).toContain('Repositories at Risk');
+    expect(h).toContain('None');
   });
-});
-
-describe('buildExecutiveBriefing — Primary Risks', () => {
-  test('forecast=critical adds critical structural forecast risk', () => {
-    expect(buildExecutiveBriefing({ forecastLevel: 'critical' })).toContain('critical');
-  });
-  test('forecast=degrading adds degrading forecast risk', () => {
-    expect(buildExecutiveBriefing({ forecastLevel: 'degrading' })).toContain('Structural degradation is forecast');
-  });
-  test('criticalRepos=1 adds repository risk', () => {
-    expect(buildExecutiveBriefing({ criticalRepos: 1 })).toContain('1 repository flagged as critical');
-  });
-  test('criticalRepos=2 uses plural "repositories"', () => {
-    expect(buildExecutiveBriefing({ criticalRepos: 2 })).toContain('2 repositories flagged');
-  });
-  test('archScore=55 adds architecture score risk', () => {
-    expect(buildExecutiveBriefing({ architectureScore: 55 })).toContain('below the acceptable threshold');
-  });
-  test('govScore=50 adds governance risk', () => {
-    expect(buildExecutiveBriefing({ governanceScore: 50 })).toContain('governance deficits');
-  });
-  test('watchlistCount=5 adds watchlist risk', () => {
-    expect(buildExecutiveBriefing({ watchlistCount: 5 })).toContain('architecture watchlist');
-  });
-  test('watchlistCount=4 does NOT add watchlist risk', () => {
-    const html = buildExecutiveBriefing({ watchlistCount: 4, forecastLevel: 'stable' });
-    expect(html).not.toContain('architecture watchlist and require attention');
-  });
-  test('no bad signals → no Primary Risks section', () => {
-    const html = buildExecutiveBriefing({
-      architectureScore: 85, governanceScore: 85, forecastLevel: 'stable', criticalRepos: 0, watchlistCount: 0,
-    });
-    expect(html).not.toContain('Primary Risks');
-  });
-  test('caps risks at top 3', () => {
-    const html = buildExecutiveBriefing({
-      forecastLevel: 'critical', criticalRepos: 3, architectureScore: 40, governanceScore: 40, watchlistCount: 6,
-    });
-    const listItems = (html.match(/exec-brief-item/g) || []).length;
-    expect(listItems).toBeLessThanOrEqual(3);
+  test('7/16 snapshot coverage shows 44% and ratio', () => {
+    const h = buildExecutiveBriefing({ snapshotCount: 7, repoCount: 16, forecastLevel: 'stable', criticalRepos: 0 });
+    expect(h).toContain('44%');
+    expect(h).toContain('7 / 16');
   });
 });
 
-describe('buildExecutiveBriefing — Recommended Actions', () => {
-  test('criticalRepos=1 → Review immediately action', () => {
-    expect(buildExecutiveBriefing({ criticalRepos: 1 })).toContain('Review and address critical repositories immediately');
-  });
-  test('degrading forecast → Investigate root cause action', () => {
-    expect(buildExecutiveBriefing({ forecastLevel: 'degrading' })).toContain('Investigate structural degradation root cause');
-  });
-  test('govScore=50 → Strengthen governance action', () => {
-    expect(buildExecutiveBriefing({ governanceScore: 50 })).toContain('Strengthen engineering governance');
-  });
-  test('archScore=50 → Prioritize architecture action', () => {
-    expect(buildExecutiveBriefing({ architectureScore: 50 })).toContain('Prioritize architecture improvements');
-  });
-  test('watchlistCount=5 → Triage watchlist action', () => {
-    expect(buildExecutiveBriefing({ watchlistCount: 5 })).toContain('Triage architecture watchlist');
-  });
-  test('all healthy → Maintain standards action', () => {
-    const html = buildExecutiveBriefing({
-      architectureScore: 85, governanceScore: 85, forecastLevel: 'stable', criticalRepos: 0, watchlistCount: 0,
-    });
-    expect(html).toContain('Maintain current architecture health standards');
-  });
-  test('caps recommended actions at top 3', () => {
-    const html = buildExecutiveBriefing({
-      forecastLevel: 'critical', criticalRepos: 3, architectureScore: 40, governanceScore: 40,
-      watchlistCount: 6, snapshotCount: 2, repoCount: 20,
-    });
-    const recItems = (html.match(/exec-brief-rec-item/g) || []).length;
-    expect(recItems).toBeLessThanOrEqual(3);
+describe('buildExecutiveBriefing — Next Action', () => {
+  const html = buildExecutiveBriefing({ architectureScore: 85, criticalRepos: 1 });
+
+  test('renders Next Action section label', () => { expect(html).toContain('Next Action'); });
+  test('renders standard remediation action text', () => {
+    expect(html).toContain('Prioritize remediation');
+    expect(html).toContain('highest-risk repositories');
   });
 });
 

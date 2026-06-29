@@ -9,6 +9,10 @@
 // Approach: structure tests parse the actual dashboard.html to assert markup;
 // switcher tests drive _switchPortfolioTab (copied verbatim) via a minimal
 // hand-rolled DOM mock — no jsdom dependency required.
+//
+// Dashboard Refinement #1 (2026-06-25): Portfolio Forecast tab removed.
+// Dashboard Alignment #3 (2026-06-26): Architecture Watchlists tab removed.
+// Tab count is now 2 (Architecture, Governance).
 
 const fs   = require('fs');
 const path = require('path');
@@ -28,25 +32,25 @@ describe('portfolio tab structure — HTML', () => {
     expect(html).toContain('role="tablist"');
   });
 
-  test('exactly 4 portfolio tab buttons present', () => {
+  test('exactly 2 portfolio tab buttons present', () => {
     const matches = html.match(/data-ptab=/g) || [];
-    expect(matches.length).toBe(4);
+    expect(matches.length).toBe(2);
   });
 
   test('tab button labels are correct', () => {
     expect(html).toContain('>Portfolio Architecture<');
-    expect(html).toContain('>Portfolio Forecast<');
     expect(html).toContain('>Engineering Governance<');
-    expect(html).toContain('>Architecture Watchlists<');
+    expect(html).not.toContain('>Architecture Watchlists<');
+    expect(html).not.toContain('>Portfolio Forecast<');
   });
 
-  test('all four buttons have role="tab"', () => {
+  test('all two buttons have role="tab"', () => {
     const tabBarSection = html.slice(
       html.indexOf('id="portfolio-tab-bar"'),
       html.indexOf('</div>', html.indexOf('id="portfolio-tab-bar"')) + 6
     );
     const roleTabCount = (tabBarSection.match(/role="tab"/g) || []).length;
-    expect(roleTabCount).toBe(4);
+    expect(roleTabCount).toBe(2);
   });
 
   test('first button (Portfolio Architecture) has active class by default', () => {
@@ -55,56 +59,49 @@ describe('portfolio tab structure — HTML', () => {
     expect(architectureBtn).toBe(true);
   });
 
-  test('non-default tab buttons do not start with active class', () => {
-    expect(html).toContain('data-ptab="forecast"');
+  test('non-default tab button does not start with active class', () => {
     expect(html).toContain('data-ptab="governance"');
-    expect(html).toContain('data-ptab="watchlists"');
-    // None of the non-architecture buttons should be the active one at parse time
-    expect(html).not.toMatch(/class="repo-tab-btn active"[^>]*data-ptab="forecast"/);
     expect(html).not.toMatch(/class="repo-tab-btn active"[^>]*data-ptab="governance"/);
-    expect(html).not.toMatch(/class="repo-tab-btn active"[^>]*data-ptab="watchlists"/);
   });
 
-  test('exactly 4 tab panels present (data-ppanel)', () => {
+  test('exactly 2 tab panels present (data-ppanel)', () => {
     const matches = html.match(/data-ppanel=/g) || [];
-    expect(matches.length).toBe(4);
+    expect(matches.length).toBe(2);
   });
 
   test('architecture panel has active class by default', () => {
     expect(html).toMatch(/class="repo-tab-panel active"[^>]*data-ppanel="architecture"/);
   });
 
-  test('non-default panels do not have active class', () => {
-    expect(html).not.toMatch(/class="repo-tab-panel active"[^>]*data-ppanel="forecast"/);
+  test('non-default panel does not have active class', () => {
     expect(html).not.toMatch(/class="repo-tab-panel active"[^>]*data-ppanel="governance"/);
-    expect(html).not.toMatch(/class="repo-tab-panel active"[^>]*data-ppanel="watchlists"/);
   });
 
-  test('all four inner container IDs are preserved', () => {
+  test('removed tabs and panels are absent (Forecast and Watchlists)', () => {
+    expect(html).not.toContain('data-ptab="forecast"');
+    expect(html).not.toContain('data-ppanel="forecast"');
+    expect(html).not.toContain('id="portfolio-forecast"');
+    expect(html).not.toContain('data-ptab="watchlists"');
+    expect(html).not.toContain('data-ppanel="watchlists"');
+    expect(html).not.toContain('id="portfolio-watchlists-panel"');
+    expect(html).not.toContain('>Architecture Watchlists<');
+  });
+
+  test('remaining inner container IDs are preserved', () => {
     expect(html).toContain('id="portfolio-architecture-panel"');
-    expect(html).toContain('id="portfolio-forecast"');
     expect(html).toContain('id="portfolio-governance-panel"');
-    expect(html).toContain('id="portfolio-watchlists-panel"');
   });
 
   test('inner container IDs are nested inside their respective panels', () => {
-    const archPanel  = html.indexOf('data-ppanel="architecture"');
-    const archInner  = html.indexOf('id="portfolio-architecture-panel"');
-    const fcPanel    = html.indexOf('data-ppanel="forecast"');
-    const fcInner    = html.indexOf('id="portfolio-forecast"');
-    const govPanel   = html.indexOf('data-ppanel="governance"');
-    const govInner   = html.indexOf('id="portfolio-governance-panel"');
-    const wlPanel    = html.indexOf('data-ppanel="watchlists"');
-    const wlInner    = html.indexOf('id="portfolio-watchlists-panel"');
+    const archPanel = html.indexOf('data-ppanel="architecture"');
+    const archInner = html.indexOf('id="portfolio-architecture-panel"');
+    const govPanel  = html.indexOf('data-ppanel="governance"');
+    const govInner  = html.indexOf('id="portfolio-governance-panel"');
 
     expect(archInner).toBeGreaterThan(archPanel);
-    expect(fcInner).toBeGreaterThan(fcPanel);
     expect(govInner).toBeGreaterThan(govPanel);
-    expect(wlInner).toBeGreaterThan(wlPanel);
-    // Each inner container comes before the next panel
-    expect(archInner).toBeLessThan(fcPanel);
-    expect(fcInner).toBeLessThan(govPanel);
-    expect(govInner).toBeLessThan(wlPanel);
+    // Architecture inner container comes before governance panel
+    expect(archInner).toBeLessThan(govPanel);
   });
 
   test('summary-cards div is above the portfolio tab wrapper', () => {
@@ -149,8 +146,6 @@ function makeElement(id, dataKey, dataVal, initialClasses) {
     classList: makeClassList(initialClasses || []),
     _children: [],
     querySelectorAll: function(sel) {
-      // Only the selectors _switchPortfolioTab actually uses:
-      // '.repo-tab-btn' and '.repo-tab-panel'
       var cls = sel.replace(/^\./, '');
       return this._children.filter(function(c) { return c.classList.contains(cls); });
     },
@@ -159,20 +154,16 @@ function makeElement(id, dataKey, dataVal, initialClasses) {
 
 function buildMockDom() {
   var btnArch = makeElement('btn-arch', 'ptab', 'architecture', ['repo-tab-btn', 'active']);
-  var btnFc   = makeElement('btn-fc',   'ptab', 'forecast',     ['repo-tab-btn']);
   var btnGov  = makeElement('btn-gov',  'ptab', 'governance',   ['repo-tab-btn']);
-  var btnWl   = makeElement('btn-wl',   'ptab', 'watchlists',   ['repo-tab-btn']);
 
   var panArch = makeElement('pan-arch', 'ppanel', 'architecture', ['repo-tab-panel', 'active']);
-  var panFc   = makeElement('pan-fc',   'ppanel', 'forecast',     ['repo-tab-panel']);
   var panGov  = makeElement('pan-gov',  'ppanel', 'governance',   ['repo-tab-panel']);
-  var panWl   = makeElement('pan-wl',   'ppanel', 'watchlists',   ['repo-tab-panel']);
 
   var bar = makeElement('portfolio-tab-bar', '_', '_', []);
-  bar._children = [btnArch, btnFc, btnGov, btnWl];
+  bar._children = [btnArch, btnGov];
 
   var section = makeElement('section-portfolio-tabs', '_', '_', []);
-  section._children = [panArch, panFc, panGov, panWl];
+  section._children = [panArch, panGov];
 
   var registry = {
     'portfolio-tab-bar':    bar,
@@ -182,8 +173,8 @@ function buildMockDom() {
   return {
     registry: registry,
     getElementById: function(id) { return registry[id] || null; },
-    btn:  { architecture: btnArch, forecast: btnFc, governance: btnGov, watchlists: btnWl },
-    pan:  { architecture: panArch, forecast: panFc, governance: panGov, watchlists: panWl },
+    btn:  { architecture: btnArch, governance: btnGov },
+    pan:  { architecture: panArch, governance: panGov },
   };
 }
 
@@ -206,35 +197,17 @@ describe('_switchPortfolioTab — button active class', () => {
   var dom;
   beforeEach(function() { dom = buildMockDom(); });
 
-  test('switching to forecast activates forecast button', () => {
-    _switchPortfolioTab('forecast', dom);
-    expect(dom.btn.forecast.classList.contains('active')).toBe(true);
-  });
-
-  test('switching to forecast deactivates architecture button', () => {
-    _switchPortfolioTab('forecast', dom);
-    expect(dom.btn.architecture.classList.contains('active')).toBe(false);
-  });
-
   test('switching to governance activates only governance button', () => {
     _switchPortfolioTab('governance', dom);
     expect(dom.btn.governance.classList.contains('active')).toBe(true);
     expect(dom.btn.architecture.classList.contains('active')).toBe(false);
-    expect(dom.btn.forecast.classList.contains('active')).toBe(false);
-    expect(dom.btn.watchlists.classList.contains('active')).toBe(false);
-  });
-
-  test('switching to watchlists activates only watchlists button', () => {
-    _switchPortfolioTab('watchlists', dom);
-    expect(dom.btn.watchlists.classList.contains('active')).toBe(true);
-    expect(dom.btn.architecture.classList.contains('active')).toBe(false);
   });
 
   test('switching back to architecture re-activates it', () => {
-    _switchPortfolioTab('forecast', dom);
+    _switchPortfolioTab('governance', dom);
     _switchPortfolioTab('architecture', dom);
     expect(dom.btn.architecture.classList.contains('active')).toBe(true);
-    expect(dom.btn.forecast.classList.contains('active')).toBe(false);
+    expect(dom.btn.governance.classList.contains('active')).toBe(false);
   });
 
   test('exactly one button is active after any switch', () => {
@@ -249,36 +222,24 @@ describe('_switchPortfolioTab — panel active class', () => {
   var dom;
   beforeEach(function() { dom = buildMockDom(); });
 
-  test('switching to forecast shows forecast panel', () => {
-    _switchPortfolioTab('forecast', dom);
-    expect(dom.pan.forecast.classList.contains('active')).toBe(true);
-  });
-
-  test('switching to forecast hides architecture panel', () => {
-    _switchPortfolioTab('forecast', dom);
-    expect(dom.pan.architecture.classList.contains('active')).toBe(false);
-  });
-
   test('switching to governance shows only governance panel', () => {
     _switchPortfolioTab('governance', dom);
     expect(dom.pan.governance.classList.contains('active')).toBe(true);
     expect(dom.pan.architecture.classList.contains('active')).toBe(false);
-    expect(dom.pan.forecast.classList.contains('active')).toBe(false);
-    expect(dom.pan.watchlists.classList.contains('active')).toBe(false);
   });
 
   test('exactly one panel is active after any switch', () => {
-    _switchPortfolioTab('watchlists', dom);
+    _switchPortfolioTab('governance', dom);
     var active = dom.registry['section-portfolio-tabs']._children
       .filter(function(p) { return p.classList.contains('active'); });
     expect(active.length).toBe(1);
   });
 
   test('switching back to architecture re-shows architecture panel', () => {
-    _switchPortfolioTab('watchlists', dom);
+    _switchPortfolioTab('governance', dom);
     _switchPortfolioTab('architecture', dom);
     expect(dom.pan.architecture.classList.contains('active')).toBe(true);
-    expect(dom.pan.watchlists.classList.contains('active')).toBe(false);
+    expect(dom.pan.governance.classList.contains('active')).toBe(false);
   });
 });
 

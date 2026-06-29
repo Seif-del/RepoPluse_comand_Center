@@ -1132,7 +1132,7 @@
       line-height: 1.6;
     }
 
-    /* ── Portfolio Forecast panel ──────────────────────────────────────── */
+    /* ── pf-* shared badge/signal/count classes ────────────────────────── */
     .pf-panel {
       padding: 14px 16px;
       border-radius: var(--radius-md);
@@ -2020,8 +2020,10 @@
       </div>
     </div>
 
-    <!-- Portfolio Briefing -->
-    <div id="portfolio-briefing"></div>
+    <!-- Portfolio Assessment -->
+    <div class="section">
+      <div id="executive-summary" style="margin-bottom:8px;"></div>
+    </div>
 
     <!-- Notifications -->
     <div id="notification-section" class="section" hidden>
@@ -2042,32 +2044,14 @@
     <div class="section" id="section-portfolio-tabs">
       <div class="repo-tabs" id="portfolio-tab-bar" role="tablist">
         <button class="repo-tab-btn active" data-ptab="architecture" role="tab">Portfolio Architecture</button>
-        <button class="repo-tab-btn"        data-ptab="forecast"     role="tab">Portfolio Forecast</button>
         <button class="repo-tab-btn"        data-ptab="governance"   role="tab">Engineering Governance</button>
-        <button class="repo-tab-btn"        data-ptab="watchlists"   role="tab">Architecture Watchlists</button>
       </div>
       <div class="repo-tab-panel active" data-ppanel="architecture">
         <div id="portfolio-architecture-panel"></div>
       </div>
-      <div class="repo-tab-panel" data-ppanel="forecast">
-        <div id="portfolio-forecast"></div>
-      </div>
       <div class="repo-tab-panel" data-ppanel="governance">
         <div id="portfolio-governance-panel"></div>
       </div>
-      <div class="repo-tab-panel" data-ppanel="watchlists">
-        <div id="portfolio-watchlists-panel"></div>
-      </div>
-    </div>
-
-    <!-- Executive Briefing -->
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Executive Briefing</span>
-        <span id="exec-summary-conf" style="margin-left:8px;"></span>
-        <div class="section-divider"></div>
-      </div>
-      <div id="executive-summary" style="margin-bottom:8px;"></div>
     </div>
 
     <!-- Projects table -->
@@ -2528,108 +2512,77 @@
       return reasonTagsHtml(sorted, behavioral.length);
     }
 
-    // Builds architecture-first reason tags for the Repository Status table.
-    // Priority order: Architecture → Governance → Forecast → Operational (fallback only).
-    // Operational signals (CI, activity) appear only when no higher-priority reason exists.
-    // Max 3 visible reasons; "Coverage Gap" replaces any arch reason when score is null.
-    // buildRepoPriorityReasons(repo, aq[, archData[, fcData]])
+    // Builds architecture-specific driver chips for the Architecture Drivers column.
+    // Preference order: per-click signals → Coverage Gap → Forecast → — (em dash, no chips).
+    // buildArchDriversHtml(repo, archData, fcData[, archCache])
     //
-    // archData — raw data from /api/repos/:id/architecture (or null/undefined).
-    //   undefined → legacy: derives arch tier from repo.score.
-    //   null      → no architecture data loaded → emits "Coverage Gap".
-    //   object    → uses architectureHealthLevel directly.
+    // archCache (from _archDataByRepoId[repoId]):
+    //   null/undefined → no per-click data; Coverage Gap / Forecast are the next checks.
+    //   object         → checks API Gaps, Impl Gaps, Coupling, Boundary Violations, Low Confidence.
     //
-    // fcData — raw data from /api/repos/:id/architecture/forecast (or null/undefined).
-    //   undefined → legacy: derives forecast from derivePredictiveTrend().
-    //   null      → no forecast data → no forecast reason emitted.
-    //   object    → uses forecastLevel directly.
-    function buildRepoPriorityReasons(repo, aq, archData, fcData) {
+    // archData:
+    //   undefined → legacy: Coverage Gap when repo.score == null only.
+    //   null      → no architecture intel → Coverage Gap.
+    //   object    → uses architectureHealthLevel for Coverage Gap detection only.
+    //
+    // fcData:
+    //   null/undefined → no forecast driver.
+    //   object         → uses forecastLevel (critical/high/medium/watch).
+    function buildArchDriversHtml(repo, archData, fcData, archCache) {
       var items = [];
 
-      // ── Architecture (50% weight) — always first ────────────────────────
-      if (archData !== undefined) {
-        // New path: use real architecture intelligence data
-        if (archData && archData.architectureHealthLevel) {
-          var hl = archData.architectureHealthLevel;
-          if      (hl === 'risky')   items.push({ label: 'Architecture Risky',  cls: 'severity-critical' });
-          else if (hl === 'weak')    items.push({ label: 'Architecture Weak',   cls: 'severity-elevated' });
-          else if (hl === 'watch')   items.push({ label: 'Architecture Watch',  cls: 'severity-watch' });
-          else if (hl === 'healthy') { /* healthy architecture → no arch reason */ }
-          else                       items.push({ label: 'Coverage Gap',         cls: 'severity-watch' }); // unknown
+      // ── Per-click architecture signals (preferred over generic health level) ──
+      if (archCache) {
+        if (archCache.unresolvedApiCalls != null && archCache.unresolvedApiCalls > 0) {
+          items.push({ label: 'API Gaps',            cls: 'severity-elevated' });
+        }
+        if (items.length < 2 && archCache.implementationCompleteness != null && archCache.implementationCompleteness < 70) {
+          items.push({ label: 'Implementation Gaps', cls: 'severity-watch' });
+        }
+        var COUPLING_RISK = ['risky', 'weak', 'elevated', 'high'];
+        if (items.length < 2 && archCache.couplingRisk && COUPLING_RISK.indexOf(archCache.couplingRisk) >= 0) {
+          items.push({ label: 'High Coupling',       cls: 'severity-watch' });
+        }
+        if (items.length < 2 && archCache.boundaryViolationCount != null && archCache.boundaryViolationCount > 0) {
+          items.push({ label: 'Boundary Violations', cls: 'severity-elevated' });
+        }
+        if (items.length < 2 && archCache.confidenceLevel === 'Low') {
+          items.push({ label: 'Low Confidence',      cls: 'severity-watch' });
+        }
+      }
+
+      // ── Coverage Gap (when no architecture intel — checked after specific signals) ──
+      if (items.length === 0) {
+        var covGap = false;
+        if (archData === undefined) {
+          var s = repo ? repo.score : null;
+          if (s == null) covGap = true;
+        } else if (!archData) {
+          covGap = true;
         } else {
-          items.push({ label: 'Coverage Gap', cls: 'severity-watch' }); // null or no level
+          var hl = archData.architectureHealthLevel || null;
+          if (!hl || (hl !== 'risky' && hl !== 'weak' && hl !== 'watch' && hl !== 'healthy')) {
+            covGap = true;
+          }
         }
-      } else {
-        // Legacy path: derive from repo.score (operational risk proxy)
-        var s = repo ? repo.score : null;
-        if (s == null) {
-          items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
-        } else if (s >= 70) {
-          items.push({ label: 'Architecture Risky', cls: 'severity-critical' });
-        } else if (s >= 45) {
-          items.push({ label: 'Architecture Weak', cls: 'severity-elevated' });
-        } else if (s >= 20) {
-          items.push({ label: 'Architecture Watch', cls: 'severity-watch' });
-        }
+        if (covGap) items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
       }
 
-      // ── Governance (20% weight) ─────────────────────────────────────────
-      var aqLevel = aq ? (aq.attentionLevel || 'unknown') : 'unknown';
-      if (aqLevel === 'critical') {
-        items.push({ label: 'Governance Critical', cls: 'severity-critical' });
-      } else if (aqLevel === 'high') {
-        items.push({ label: 'Governance Elevated', cls: 'severity-elevated' });
-      } else if (aqLevel === 'medium') {
-        items.push({ label: 'Governance Moderate', cls: 'severity-watch' });
+      // ── Forecast signals (fills remaining slot) ────────────────────────────
+      if (items.length < 2 && fcData) {
+        var fl = fcData.forecastLevel || null;
+        if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
+        else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
+        else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch'    });
       }
 
-      // ── Forecast (20% weight) ───────────────────────────────────────────
-      if (fcData !== undefined) {
-        // New path: use real architecture forecast level
-        if (fcData && fcData.forecastLevel && fcData.forecastLevel !== 'unknown') {
-          var fl = fcData.forecastLevel;
-          if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
-          else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
-          else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch' });
-        }
-        // null or low/stable/none → no forecast reason
-      } else {
-        // Legacy path: derive from operational predictive trend
-        var fcTrend  = derivePredictiveTrend(repo, aq);
-        var fcTLabel = fcTrend ? (fcTrend.label || '') : '';
-        if (fcTLabel === 'Escalating' || fcTLabel === 'Forecast Crit') {
-          items.push({ label: 'Forecast Critical', cls: 'severity-critical' });
-        } else if (fcTLabel === 'Deteriorating' || fcTLabel === 'Forecast High') {
-          items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
-        } else if (fcTLabel === 'Volatile' || fcTLabel === 'Persistent' || fcTLabel === 'PR Risk') {
-          items.push({ label: 'Forecast Watch', cls: 'severity-watch' });
-        }
-      }
-
-      // ── Watchlist (portfolio intel via archData.watchlistEscalationLevel) ───
-      if (archData && archData.watchlistEscalationLevel) {
-        var wle2 = archData.watchlistEscalationLevel;
-        if      (wle2 === 'critical')                   items.push({ label: 'Watchlist Critical', cls: 'severity-critical' });
-        else if (wle2 === 'urgent' || wle2 === 'elevated') items.push({ label: 'Watchlist Elevated', cls: 'severity-elevated' });
-      }
-
-      // ── Operational — only when no arch/governance/forecast reason exists ─
+      // ── No evidence-based drivers found → em dash ─────────────────────────
       if (items.length === 0) {
-        var repoLabel = repo ? (repo.label || '') : '';
-        if (repoLabel === 'critical') {
-          items.push({ label: 'Operational Critical', cls: 'severity-critical' });
-        } else if (repoLabel === 'at-risk') {
-          items.push({ label: 'Operational At-Risk', cls: 'severity-elevated' });
-        }
+        return '<div class="tbl-reasons"><span style="color:var(--text-muted);">&mdash;</span></div>';
       }
 
-      // ── Healthy fallback ────────────────────────────────────────────────
-      if (items.length === 0) {
-        items.push({ label: 'No Significant Issues', cls: 'severity-healthy' });
-      }
-
-      var visible  = items.slice(0, 3);
-      var overflow = items.length - 3;
+      var visible  = items.slice(0, 2);
+      var overflow = items.length - 2;
       return '<div class="tbl-reasons">'
         + visible.map(function(it) {
             return '<span class="reason-tag ' + it.cls + '" title="' + esc(it.label) + '">'
@@ -3029,18 +2982,6 @@
         if (s == null) return '';
         return s >= 80 ? 'severity-healthy' : s >= 60 ? 'severity-medium' : 'severity-high';
       }
-      function fcCls(l) {
-        if (!l) return '';
-        if (l === 'stable')    return 'severity-healthy';
-        if (l === 'watch')     return 'severity-medium';
-        if (l === 'degrading') return 'severity-high';
-        if (l === 'critical')  return 'severity-critical';
-        return 'severity-unknown';
-      }
-      function wlCls(n) {
-        if (n == null) return '';
-        return n === 0 ? 'severity-healthy' : n <= 4 ? 'severity-medium' : 'severity-high';
-      }
       function critCls(n) {
         if (n == null) return '';
         return n === 0 ? 'severity-healthy' : 'severity-critical';
@@ -3052,8 +2993,6 @@
 
       var archVal = k.architectureScore != null ? k.architectureScore : '—';
       var govVal  = k.governanceScore   != null ? k.governanceScore   : '—';
-      var fcVal   = k.forecastLevel     != null ? k.forecastLevel     : '—';
-      var wlVal   = k.watchlistCount    != null ? k.watchlistCount    : '—';
       var critVal = k.criticalRepos     != null ? k.criticalRepos     : '—';
 
       // Snapshot Coverage: percent badge + "N / M" ratio sub-label
@@ -3076,8 +3015,6 @@
       var fields = [
         ['Architecture Health', archVal, archCls(k.architectureScore)],
         ['Governance',          govVal,  govCls(k.governanceScore)],
-        ['Forecast Risk',       fcVal,   fcCls(k.forecastLevel)],
-        ['Watchlists',          wlVal,   wlCls(k.watchlistCount)],
         ['Critical Repos',      critVal, critCls(k.criticalRepos)],
       ];
 
@@ -3119,13 +3056,14 @@
     // Populated as each portfolio loader resolves; triggers renderExecutiveKpis().
 
     var _execKpi = {
-      architectureScore: null,
-      governanceScore:   null,
-      forecastLevel:     null,
-      watchlistCount:    null,
-      criticalRepos:     null,
-      snapshotCount:     null,
-      repoCount:         null,
+      architectureScore:  null,
+      governanceScore:    null,
+      forecastLevel:      null,
+      criticalRepos:      null,
+      riskConcentration:  null,
+      topRiskRepos:       null,
+      snapshotCount:      null,
+      repoCount:          null,
     };
 
     // ── Repos table ───────────────────────────────────────────────────────────
@@ -3376,22 +3314,47 @@
       var hasSnap  = !!(opts && opts.hasArchitectureSnapshot);
       var conf     = (opts && opts.architectureConfidence) || null;
 
+      // ── Evidence collection (from per-click archCache fields) ────────────
+      var bv    = (opts && opts.boundaryViolationCount     != null) ? opts.boundaryViolationCount     : 0;
+      var api   = (opts && opts.unresolvedApiCalls         != null) ? opts.unresolvedApiCalls         : 0;
+      var impl  = (opts && opts.implementationCompleteness != null) ? opts.implementationCompleteness : null;
+      var coup  = (opts && opts.couplingRisk)              || null;
+      var COUP_ELEVATED = ['risky', 'weak', 'elevated', 'high'];
+      var evidence = [];
+      if (bv > 0)   evidence.push(bv   + ' boundary violation'  + (bv  !== 1 ? 's' : ''));
+      if (api > 0)  evidence.push(api  + ' unresolved API linkage' + (api !== 1 ? 's' : ''));
+      if (impl != null && impl < 70) evidence.push('implementation completeness at ' + impl + '%');
+      if (coup && COUP_ELEVATED.indexOf(coup) >= 0) evidence.push('coupling concentration elevated');
+
       // ── Primary tier ────────────────────────────────────────────────────
       var isCritical = priority === 'critical' || (score != null && score < 45);
       var tier, text, cls;
+      var note = score != null ? ' (score: ' + score + ')' : '';
 
       if (isCritical) {
         tier = 'critical'; cls = 'severity-critical';
-        var note = score != null ? ' (score: ' + score + ')' : '';
-        text = 'Architecture health is critical' + note
-             + '. Structural indicators suggest significant implementation, coupling, or integration risk.';
+        text = 'Architecture health is critical' + note + '.';
+        if (evidence.length > 0) {
+          text += ' Detected: ' + evidence.join(', ') + '.';
+        } else {
+          text += ' Structural indicators suggest significant implementation, coupling, or integration risk.';
+        }
       } else if (priority === 'elevated') {
         tier = 'elevated'; cls = 'severity-high';
-        text = 'Architecture health requires attention. Structural quality indicators show elevated risk'
-             + ' that should be reviewed before additional complexity is introduced.';
+        text = 'Architecture health requires attention' + note + '.';
+        if (evidence.length > 0) {
+          text += ' Detected: ' + evidence.join(', ') + '.';
+        } else {
+          text += ' Structural quality indicators show elevated risk'
+               + ' that should be reviewed before additional complexity is introduced.';
+        }
       } else if (priority === 'watch') {
         tier = 'watch'; cls = 'severity-medium';
-        text = 'Architecture is currently stable but exhibits signals that should remain under observation.';
+        if (evidence.length > 0) {
+          text = 'Architecture is under observation' + note + '. Detected: ' + evidence.join(', ') + '.';
+        } else {
+          text = 'Architecture is currently stable but exhibits signals that should remain under observation.';
+        }
       } else if (priority === 'healthy') {
         tier = 'healthy'; cls = 'severity-healthy';
         text = 'Architecture appears structurally healthy with no significant architectural risk indicators detected.';
@@ -3429,9 +3392,8 @@
       var archDataForPri;
       if (intel.architectureHealthLevel || intel.architectureHealthScore != null) {
         archDataForPri = {
-          architectureHealthLevel:  intel.architectureHealthLevel  || null,
-          architectureHealthScore:  intel.architectureHealthScore  != null ? intel.architectureHealthScore : null,
-          watchlistEscalationLevel: intel.watchlistEscalationLevel || null,
+          architectureHealthLevel: intel.architectureHealthLevel || null,
+          architectureHealthScore: intel.architectureHealthScore != null ? intel.architectureHealthScore : null,
         };
       } else {
         archDataForPri = archData;
@@ -3451,13 +3413,18 @@
         forecastLevel:           fcData   ? fcData.forecastLevel             : null,
       });
 
+      var archCache = _archDataByRepoId[repo.id] || null;
       var a = buildArchitectureAssessment({
-        architectureScore:       archData ? archData.architectureHealthScore : null,
-        architectureLevel:       archData ? archData.architectureHealthLevel : null,
-        architecturalPriority:   priority,
-        forecastLevel:           fcData   ? fcData.forecastLevel             : null,
-        hasArchitectureSnapshot: snapExists,
-        architectureConfidence:  conf.label,
+        architectureScore:          archData  ? archData.architectureHealthScore    : null,
+        architectureLevel:          archData  ? archData.architectureHealthLevel    : null,
+        architecturalPriority:      priority,
+        forecastLevel:              fcData    ? fcData.forecastLevel                : null,
+        hasArchitectureSnapshot:    snapExists,
+        architectureConfidence:     conf.label,
+        unresolvedApiCalls:         archCache ? archCache.unresolvedApiCalls        : null,
+        boundaryViolationCount:     archCache ? archCache.boundaryViolationCount    : null,
+        implementationCompleteness: archCache ? archCache.implementationCompleteness : null,
+        couplingRisk:               archCache ? archCache.couplingRisk              : null,
       });
 
       return '<div class="assessment-card ' + a.cls + '">' + esc(a.text) + '</div>';
@@ -3538,9 +3505,8 @@
       var archDataForPri;
       if (intel.architectureHealthLevel || intel.architectureHealthScore != null) {
         archDataForPri = {
-          architectureHealthLevel:  intel.architectureHealthLevel  || null,
-          architectureHealthScore:  intel.architectureHealthScore  != null ? intel.architectureHealthScore : null,
-          watchlistEscalationLevel: intel.watchlistEscalationLevel || null,
+          architectureHealthLevel: intel.architectureHealthLevel || null,
+          architectureHealthScore: intel.architectureHealthScore != null ? intel.architectureHealthScore : null,
         };
       } else {
         archDataForPri = archData;
@@ -3684,343 +3650,6 @@
       container.innerHTML = buildArchTrajectoryHtml(fc);
     }
 
-    // ── Portfolio Forecast ────────────────────────────────────────────────────
-
-    function buildPortfolioForecastHtml(data) {
-      if (!data || typeof data !== 'object'
-          || !data.portfolioForecastLevel
-          || data.portfolioForecastLevel === 'unknown') {
-        return '<div class="pf-panel">'
-          + '<div class="pf-badges"><span class="pf-badge severity-unknown">FORECAST UNAVAILABLE</span></div>'
-          + '<p class="pf-summary" style="color:var(--text-muted);font-style:italic;">Insufficient architecture history</p>'
-          + '</div>';
-      }
-
-      function _pfLevelSev(level) {
-        if (level === 'none' || level === 'low') return 'healthy';
-        if (level === 'medium')  return 'medium';
-        if (level === 'high')    return 'high';
-        if (level === 'critical') return 'critical';
-        return 'unknown';
-      }
-      function _pfTrendSev(trend) {
-        if (!trend) return 'unknown';
-        var t = trend.toLowerCase();
-        if (t === 'stable' || t === 'improving') return 'healthy';
-        if (t === 'watch')     return 'medium';
-        if (t === 'degrading') return 'high';
-        if (t === 'critical')  return 'critical';
-        return 'unknown';
-      }
-      function _pfCouplingFcastSev(v) {
-        if (!v) return 'unknown';
-        var s = v.toLowerCase();
-        if (s === 'stable')                      return 'healthy';
-        if (s === 'growing' || s === 'degrading' || s === 'eroding') return 'medium';
-        if (s === 'accelerating' || s === 'critical') return 'critical';
-        return 'unknown';
-      }
-
-      var level      = data.portfolioForecastLevel;
-      var score      = typeof data.portfolioForecastScore === 'number' ? data.portfolioForecastScore : 0;
-      var conf       = data.confidenceLevel || 'low';
-      var summary    = data.summary || '';
-      var dist       = data.forecastDistribution || {};
-      var riskRepos  = Array.isArray(data.projectedRiskRepos)  ? data.projectedRiskRepos  : [];
-      var hotspots   = Array.isArray(data.projectedHotspots)   ? data.projectedHotspots   : [];
-      var coupPres   = data.projectedCouplingPressure  || null;
-      var govRisk    = data.projectedGovernanceRisk    || null;
-      var trendFcast = data.trendForecast              || null;
-      var recs       = Array.isArray(data.recommendations) ? data.recommendations : [];
-      var bench      = data.benchmarking               || null;
-      var cache      = data._cache                     || {};
-
-      var levelSev = _pfLevelSev(level);
-      var confCls  = 'conf-' + esc(conf);
-
-      var html = '<div class="pf-panel">';
-
-      html += '<div class="pf-badges">';
-      html += '<span class="pf-badge severity-' + levelSev + '">'
-        + esc(level.toUpperCase()) + ' FORECAST RISK</span>';
-      html += '<span class="confidence-badge ' + confCls + '">'
-        + esc(conf.toUpperCase() + ' CONFIDENCE') + '</span>';
-      html += '<span class="pf-badge">Risk score: ' + esc(String(score)) + '</span>';
-      html += '</div>';
-
-      if (summary) {
-        html += '<p class="pf-summary">' + esc(summary) + '</p>';
-      }
-
-      if (cache.missingSnapshotCount > 0) {
-        html += '<p style="font-size:0.75rem;color:var(--text-muted);font-style:italic;margin:6px 0 10px;">'
-          + esc(String(cache.missingSnapshotCount)) + ' '
-          + (cache.missingSnapshotCount === 1 ? 'repository does' : 'repositories do')
-          + ' not yet have enough architecture history for forecasting.</p>';
-      }
-
-      var distEntries = [
-        { key: 'stable',    label: 'Stable',    sev: 'healthy'  },
-        { key: 'watch',     label: 'Watch',     sev: 'medium'   },
-        { key: 'degrading', label: 'Degrading', sev: 'high'     },
-        { key: 'critical',  label: 'Critical',  sev: 'critical' },
-        { key: 'unknown',   label: 'Unknown',   sev: 'unknown'  },
-      ].filter(function(e) { return (dist[e.key] || 0) > 0; });
-      if (distEntries.length) {
-        html += '<div class="pf-counts">';
-        distEntries.forEach(function(e) {
-          html += '<div class="pf-count-item">'
-            + '<span class="pf-count-value">' + esc(String(dist[e.key])) + '</span>'
-            + '<span class="pf-count-label severity-' + e.sev + '">' + esc(e.label) + '</span>'
-            + '</div>';
-        });
-        html += '</div>';
-      }
-
-      // A. Projected Risk Repos
-      var topRiskRepos = riskRepos.slice(0, 5);
-      if (topRiskRepos.length) {
-        html += '<div class="arch-sub-label" style="margin-top:14px;">Projected Risk Repos</div>';
-        html += '<ul class="pf-signals">';
-        topRiskRepos.forEach(function(r) {
-          var name   = typeof r === 'string' ? r : (r.repoName || r.name || '');
-          var rLevel = typeof r === 'object' ? (r.forecastLevel || r.projectedLevel || '') : '';
-          html += '<li class="pf-signal">';
-          if (rLevel) {
-            html += '<span class="pf-badge severity-' + _pfLevelSev(rLevel) + '" style="font-size:0.7rem;padding:1px 5px;margin-right:5px;">'
-              + esc(rLevel.toUpperCase()) + '</span>';
-          }
-          html += esc(name) + '</li>';
-        });
-        html += '</ul>';
-      }
-
-      // B. Projected Hotspots
-      var topHotspots = hotspots.slice(0, 5);
-      if (topHotspots.length) {
-        html += '<div class="arch-sub-label" style="margin-top:12px;">Projected Hotspots</div>';
-        html += '<ul class="pf-signals">';
-        topHotspots.forEach(function(h) {
-          var text   = typeof h === 'string' ? h : (h.file || h.module || h.name || '');
-          var rScore = typeof h === 'object' && h.riskScore != null ? ' — score: ' + h.riskScore : '';
-          html += '<li class="pf-signal" style="font-family:var(--font-mono);font-size:0.77rem;">'
-            + esc(text)
-            + (rScore ? '<span style="color:var(--text-muted);">' + esc(rScore) + '</span>' : '')
-            + '</li>';
-        });
-        html += '</ul>';
-      }
-
-      // C. Coupling Pressure
-      if (coupPres) {
-        var cpLevel    = coupPres.level || coupPres.couplingLevel || '';
-        var cpForecast = coupPres.forecast || coupPres.couplingForecast || '';
-        var cpSummary  = coupPres.summary || coupPres.description || '';
-        html += '<div class="arch-sub-panel" style="margin-top:12px;">';
-        html += '<div class="arch-sub-label">Projected Coupling Pressure</div>';
-        if (cpLevel) {
-          var cpSev = cpLevel === 'low' || cpLevel === 'minimal' ? 'healthy'
-                    : cpLevel === 'moderate' ? 'medium'
-                    : cpLevel === 'high'     ? 'high'
-                    : cpLevel === 'critical' ? 'critical' : 'unknown';
-          html += '<span class="pf-badge severity-' + cpSev + '" style="margin-right:5px;">'
-            + esc(cpLevel.toUpperCase()) + '</span>';
-        }
-        if (cpForecast) {
-          html += '<span class="pf-badge severity-' + _pfCouplingFcastSev(cpForecast) + '">'
-            + esc('Projected: ' + cpForecast) + '</span>';
-        }
-        if (cpSummary) {
-          html += '<p style="font-size:0.79rem;color:var(--text-secondary);margin-top:6px;">'
-            + 'If current trends continue: ' + esc(cpSummary) + '</p>';
-        }
-        html += '</div>';
-      }
-
-      // D. Governance Risk Forecast
-      if (govRisk) {
-        var grLevel    = govRisk.level || govRisk.governanceRiskLevel || '';
-        var grForecast = govRisk.forecast || govRisk.governanceRiskForecast || '';
-        var grSummary  = govRisk.summary || govRisk.description || '';
-        html += '<div class="arch-sub-panel" style="margin-top:12px;">';
-        html += '<div class="arch-sub-label">Projected Governance Risk</div>';
-        if (grLevel) {
-          var grSev = grLevel === 'low'    ? 'healthy'
-                    : grLevel === 'medium' ? 'medium'
-                    : grLevel === 'high'   ? 'high'
-                    : grLevel === 'critical' ? 'critical' : 'unknown';
-          html += '<span class="pf-badge severity-' + grSev + '" style="margin-right:5px;">'
-            + esc(grLevel.toUpperCase()) + '</span>';
-        }
-        if (grForecast) {
-          var grFcastSev = _pfTrendSev(grForecast);
-          html += '<span class="pf-badge severity-' + grFcastSev + '">'
-            + esc('Projected: ' + grForecast) + '</span>';
-        }
-        if (grSummary) {
-          html += '<p style="font-size:0.79rem;color:var(--text-secondary);margin-top:6px;">'
-            + esc(grSummary) + '</p>';
-        }
-        html += '</div>';
-      }
-
-      // E. Trend Forecast
-      if (trendFcast) {
-        var tfDirection = trendFcast.direction || trendFcast.trendDirection || '';
-        var tfSummary   = trendFcast.summary || '';
-        var tfHorizon   = trendFcast.horizon || trendFcast.projectionHorizon || '';
-        html += '<div class="arch-sub-panel" style="margin-top:12px;">';
-        html += '<div class="arch-sub-label">Trend Forecast</div>';
-        if (tfDirection) {
-          html += '<span class="pf-badge severity-' + _pfTrendSev(tfDirection) + '">'
-            + esc(tfDirection.toUpperCase()) + '</span>';
-        }
-        if (tfHorizon) {
-          html += ' <span style="font-size:0.72rem;color:var(--text-muted);">' + esc(tfHorizon) + '</span>';
-        }
-        if (tfSummary) {
-          html += '<p style="font-size:0.79rem;color:var(--text-secondary);margin-top:6px;">'
-            + 'If current trends continue: ' + esc(tfSummary) + '</p>';
-        }
-        html += '</div>';
-      }
-
-      // F. Benchmarking
-      if (bench) {
-        var benchGroups = [
-          { key: 'aboveAverage', label: 'Above Average', sev: 'healthy'  },
-          { key: 'average',      label: 'Average',       sev: 'medium'   },
-          { key: 'belowAverage', label: 'Below Average', sev: 'high'     },
-          { key: 'lagging',      label: 'Lagging',       sev: 'critical' },
-        ].filter(function(g) { return Array.isArray(bench[g.key]) && bench[g.key].length > 0; });
-        if (benchGroups.length) {
-          html += '<div class="arch-sub-panel" style="margin-top:12px;">';
-          html += '<div class="arch-sub-label">Benchmarking</div>';
-          benchGroups.forEach(function(g) {
-            var shown = bench[g.key].slice(0, 3);
-            var extra = bench[g.key].length - shown.length;
-            var names = shown.map(function(item) {
-              return typeof item === 'string' ? item : (item.repoName || item.name || '');
-            }).join(', ');
-            html += '<div style="margin-top:6px;">'
-              + '<span class="pf-badge severity-' + g.sev + '" style="font-size:0.7rem;">'
-              + esc(g.label) + '</span>'
-              + '<span style="font-size:0.77rem;color:var(--text-secondary);margin-left:6px;">'
-              + esc(names) + (extra > 0 ? ' +' + extra + ' more' : '')
-              + '</span>'
-              + '</div>';
-          });
-          html += '</div>';
-        }
-      }
-
-      // G. Recommendations
-      var topRecs = recs.slice(0, 5);
-      if (topRecs.length) {
-        html += '<div class="arch-sub-label" style="margin-top:14px;">Recommendations</div>';
-        topRecs.forEach(function(r) {
-          var text = typeof r === 'string' ? r : (r.text || r.recommendation || String(r));
-          html += '<div class="arch-rec">' + esc(text) + '</div>';
-        });
-      }
-
-      html += '</div>';
-      return html;
-    }
-
-    // ── Portfolio Briefing ────────────────────────────────────────────────────
-    // Compact bullet-list card rendered above the portfolio tabs.
-    // Pure: takes kpi, repos, repoIntel — never reads global state directly.
-
-    function buildPortfolioBriefingHtml(kpi, repos, repoIntel) {
-      if (!kpi) kpi = {};
-      if (!Array.isArray(repos)) repos = [];
-      if (!repoIntel || typeof repoIntel !== 'object') repoIntel = {};
-
-      var kpiHasData    = kpi.architectureScore != null || kpi.governanceScore != null
-        || kpi.forecastLevel != null || kpi.criticalRepos != null
-        || kpi.watchlistCount != null || kpi.snapshotCount != null;
-      var intelHasData  = Object.keys(repoIntel).length > 0;
-
-      if (!kpiHasData && !repos.length && !intelHasData) return '';
-
-      var bullets = [];
-
-      // 1. Repositories requiring immediate attention (from _repos labels)
-      var attnRepos = repos.filter(function(r) {
-        return r && (r.label === 'critical' || r.label === 'at-risk');
-      });
-      if (attnRepos.length > 0) {
-        var n = attnRepos.length;
-        bullets.push(n + ' ' + (n === 1 ? 'repository requires' : 'repositories require') + ' immediate attention');
-      }
-
-      // 2. Repos with risky architecture health (from _repoIntelligenceById)
-      var riskyIds = Object.keys(repoIntel).filter(function(id) {
-        return repoIntel[id] && repoIntel[id].architectureHealthLevel === 'risky';
-      });
-      if (riskyIds.length > 0) {
-        var nr = riskyIds.length;
-        bullets.push(nr + ' ' + (nr === 1 ? 'repository has' : 'repositories have') + ' risky architecture health');
-      }
-
-      // 3. Portfolio forecast level
-      if (kpi.forecastLevel) {
-        var fcLabels = {
-          none:     'No degradation forecast',
-          low:      'Low degradation forecast',
-          stable:   'Portfolio forecast stable',
-          watch:    'Portfolio forecast in watch state',
-          degrading:'Portfolio forecast degrading — structural risk elevated',
-          critical: 'Portfolio forecast critical — immediate intervention required',
-        };
-        bullets.push(fcLabels[kpi.forecastLevel] || ('Portfolio forecast: ' + kpi.forecastLevel));
-      }
-
-      // 4. Architecture watchlist repos (governance hotspots)
-      if (kpi.watchlistCount != null && kpi.watchlistCount > 0) {
-        var wn = kpi.watchlistCount;
-        bullets.push(wn + ' ' + (wn === 1 ? 'repository' : 'repositories') + ' on architecture watchlist');
-      }
-
-      // 5. Architecture snapshot coverage
-      var hasCov = kpi.snapshotCount != null && kpi.repoCount != null && kpi.repoCount > 0;
-      if (hasCov) {
-        var pct = Math.round(kpi.snapshotCount / kpi.repoCount * 100);
-        bullets.push('Architecture snapshot coverage: ' + pct + '% (' + kpi.snapshotCount + ' / ' + kpi.repoCount + ' repos)');
-      }
-
-      // 6. Highest-risk repository (lowest score among repos with a score)
-      var scored = repos.filter(function(r) { return r && r.score != null; });
-      if (scored.length > 0) {
-        var worst = scored.slice().sort(function(a, b) { return a.score - b.score; })[0];
-        if (worst && worst.fullName) {
-          bullets.push('Highest-risk repository: ' + worst.fullName);
-        }
-      }
-
-      if (!bullets.length) return '';
-
-      var sev = (kpi.forecastLevel === 'critical' || (kpi.criticalRepos != null && kpi.criticalRepos > 0))
-                  ? 'critical'
-              : (kpi.forecastLevel === 'degrading' || attnRepos.length > 0)
-                  ? 'high'
-              : (kpi.watchlistCount != null && kpi.watchlistCount > 0)
-                  ? 'medium'
-              : 'healthy';
-
-      var h = '<div class="exec-brief sev-' + esc(sev) + '" style="margin-bottom:16px;">';
-      h += '<div class="exec-brief-header">';
-      h += '<span class="exec-brief-label">Portfolio Briefing</span>';
-      h += '</div>';
-      h += '<ul class="exec-brief-list" style="margin-top:6px;">';
-      bullets.forEach(function(b) {
-        h += '<li class="exec-brief-item">' + esc(b) + '</li>';
-      });
-      h += '</ul></div>';
-      return h;
-    }
-
     // ── Executive Briefing ────────────────────────────────────────────────────
     // Synthesizes portfolio intelligence from _execKpi — no API call required.
 
@@ -4028,7 +3657,7 @@
       if (!kpi) kpi = {};
 
       var dataPresent = kpi.architectureScore != null || kpi.governanceScore != null
-        || kpi.forecastLevel != null || kpi.criticalRepos != null || kpi.watchlistCount != null;
+        || kpi.criticalRepos != null;
 
       if (!dataPresent) {
         return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
@@ -4049,7 +3678,6 @@
           || (kpi.criticalRepos  != null && kpi.criticalRepos  >  0)
           || (kpi.architectureScore != null && kpi.architectureScore < 80)
           || (kpi.governanceScore   != null && kpi.governanceScore   < 80)
-          || (kpi.watchlistCount    != null && kpi.watchlistCount    >  0)
           || (covPct !== null && covPct < 80);
         if (isWatch) return 'watch';
         var allLoaded = kpi.architectureScore != null && kpi.governanceScore != null
@@ -4064,151 +3692,80 @@
       var statusLabel = STATUS_LABELS[status] || status;
       var statusSev   = STATUS_SEV[status]   || 'unknown';
 
-      // ── Signal helpers ─────────────────────────────────────────────────────
+      // ── Key Metrics ────────────────────────────────────────────────────────
       function scoreSev(s) {
         if (s == null) return 'unknown';
         return s >= 80 ? 'healthy' : s >= 60 ? 'medium' : 'high';
       }
-      function forecastSev(l) {
-        if (!l || l === 'none' || l === 'low') return 'healthy';
-        if (l === 'stable')    return 'healthy';
-        if (l === 'watch')     return 'medium';
-        if (l === 'degrading') return 'high';
-        if (l === 'critical')  return 'critical';
-        return 'unknown';
-      }
 
-      // ── Key Signals ────────────────────────────────────────────────────────
-      var govSignal, archSignal, fcSignal, attnSignal, covSignal;
+      var archMetricVal = kpi.architectureScore != null
+        ? (kpi.architectureScore + ' — ' + (kpi.architectureScore >= 85 ? 'Healthy' : kpi.architectureScore >= 70 ? 'Watch' : kpi.architectureScore >= 45 ? 'Weak' : 'Risky'))
+        : '—';
+      var critMetricVal = kpi.criticalRepos != null ? (kpi.criticalRepos > 0 ? String(kpi.criticalRepos) : 'None') : '—';
+      var critMetricSev = kpi.criticalRepos != null && kpi.criticalRepos > 0 ? 'critical'
+        : kpi.criticalRepos != null ? 'healthy' : 'unknown';
+      var riskMetricVal = kpi.riskConcentration != null ? (kpi.riskConcentration > 0 ? String(kpi.riskConcentration) : 'None') : '—';
+      var riskMetricSev = kpi.riskConcentration != null && kpi.riskConcentration > 0 ? 'high'
+        : kpi.riskConcentration != null ? 'healthy' : 'unknown';
+      var covMetricVal  = covPct != null ? (covPct + '% (' + covRatio + ')') : '—';
+      var covMetricSev  = covPct != null ? (covPct >= 80 ? 'healthy' : covPct >= 50 ? 'medium' : 'high') : 'unknown';
 
-      if (kpi.governanceScore != null) {
-        var gLbl = kpi.governanceScore >= 80 ? 'Strong' : kpi.governanceScore >= 60 ? 'Watch' : 'Weak';
-        govSignal = { label: 'Governance', text: 'Score ' + kpi.governanceScore + ' — ' + gLbl, sev: scoreSev(kpi.governanceScore) };
-      } else {
-        govSignal = { label: 'Governance', text: '—', sev: 'unknown' };
-      }
-
-      if (kpi.architectureScore != null) {
-        var aLbl = kpi.architectureScore >= 80 ? 'Healthy' : kpi.architectureScore >= 60 ? 'Watch' : 'At Risk';
-        archSignal = { label: 'Architecture', text: 'Score ' + kpi.architectureScore + ' — ' + aLbl, sev: scoreSev(kpi.architectureScore) };
-      } else {
-        archSignal = { label: 'Architecture', text: '—', sev: 'unknown' };
-      }
-
-      var fcLabels = { none: 'None', low: 'Low', stable: 'Stable', watch: 'Watch', degrading: 'Degrading', critical: 'Critical' };
-      var fcText   = kpi.forecastLevel ? (fcLabels[kpi.forecastLevel] || kpi.forecastLevel) : '—';
-      fcSignal = { label: 'Forecast', text: fcText, sev: forecastSev(kpi.forecastLevel) };
-
-      var attnParts   = [];
-      if (kpi.criticalRepos  != null && kpi.criticalRepos  > 0) attnParts.push(kpi.criticalRepos  + ' critical');
-      if (kpi.watchlistCount != null && kpi.watchlistCount > 0) attnParts.push(kpi.watchlistCount + ' watchlisted');
-      var attnHasData = kpi.criticalRepos != null || kpi.watchlistCount != null;
-      var attnText    = attnParts.length ? attnParts.join(', ') + ' repos' : attnHasData ? 'None' : '—';
-      var attnSev     = kpi.criticalRepos != null && kpi.criticalRepos > 0 ? 'critical'
-        : kpi.watchlistCount != null && kpi.watchlistCount > 0 ? 'medium'
-        : attnHasData ? 'healthy' : 'unknown';
-      attnSignal = { label: 'Attention Required', text: attnText, sev: attnSev };
-
-      if (covPct != null) {
-        var covSev = covPct >= 80 ? 'healthy' : covPct >= 50 ? 'medium' : 'high';
-        covSignal = { label: 'Snapshot Coverage', text: covPct + '% (' + covRatio + ')', sev: covSev };
-      } else {
-        covSignal = { label: 'Snapshot Coverage', text: '—', sev: 'unknown' };
-      }
-
-      var signals = [govSignal, archSignal, fcSignal, attnSignal, covSignal];
+      var metrics = [
+        { label: 'Architecture Health',   text: archMetricVal, sev: scoreSev(kpi.architectureScore) },
+        { label: 'Critical Repos',        text: critMetricVal, sev: critMetricSev },
+        { label: 'Repositories at Risk',  text: riskMetricVal, sev: riskMetricSev },
+        { label: 'Snapshot Coverage',     text: covMetricVal,  sev: covMetricSev },
+      ];
 
       // ── Portfolio Assessment ───────────────────────────────────────────────
       var assessment;
       if (status === 'needs_attention') {
         var naReasons = [];
-        if (kpi.forecastLevel === 'critical')  naReasons.push('critical structural forecast');
+        if (kpi.forecastLevel === 'critical')  naReasons.push('critical structural degradation forecast');
         if (kpi.forecastLevel === 'degrading') naReasons.push('degrading structural forecast');
-        if (kpi.criticalRepos != null && kpi.criticalRepos > 0)  naReasons.push(kpi.criticalRepos + ' critical repo' + (kpi.criticalRepos > 1 ? 's' : ''));
-        if (kpi.architectureScore != null && kpi.architectureScore < 60) naReasons.push('architecture score ' + kpi.architectureScore);
-        if (kpi.governanceScore   != null && kpi.governanceScore   < 60) naReasons.push('governance score ' + kpi.governanceScore);
-        assessment = 'Portfolio requires immediate attention — ' + (naReasons.slice(0, 2).join(', ') || 'critical signals detected') + '.';
+        if (kpi.criticalRepos != null && kpi.criticalRepos > 0)  naReasons.push(kpi.criticalRepos + ' critical repositor' + (kpi.criticalRepos > 1 ? 'ies' : 'y') + ' requiring remediation');
+        if (kpi.architectureScore != null && kpi.architectureScore < 60) naReasons.push('architecture score below threshold (' + kpi.architectureScore + ')');
+        if (kpi.governanceScore   != null && kpi.governanceScore   < 60) naReasons.push('governance score below threshold (' + kpi.governanceScore + ')');
+        assessment = 'Portfolio requires immediate attention due to ' + (naReasons.slice(0, 2).join(' and ') || 'critical signals detected') + '.';
       } else if (status === 'watch') {
         var wReasons = [];
         if (kpi.forecastLevel === 'watch')     wReasons.push('structural forecast in watch state');
-        if (kpi.watchlistCount != null && kpi.watchlistCount > 0) wReasons.push(kpi.watchlistCount + ' repo' + (kpi.watchlistCount > 1 ? 's' : '') + ' on watchlist');
         if (kpi.architectureScore != null && kpi.architectureScore < 80) wReasons.push('architecture score at ' + kpi.architectureScore);
         if (kpi.governanceScore   != null && kpi.governanceScore   < 80) wReasons.push('governance at ' + kpi.governanceScore);
-        assessment = 'Portfolio is stable with signals requiring monitoring — ' + (wReasons.slice(0, 2).join(', ') || 'elevated indicators present') + '.';
+        assessment = 'Portfolio requires monitoring — ' + (wReasons.slice(0, 2).join(', ') || 'elevated indicators present') + '.';
       } else if (status === 'healthy') {
-        assessment = 'Portfolio architecture is healthy across all monitored dimensions. Governance, forecast, and coverage are within acceptable thresholds.';
+        assessment = 'Portfolio architecture is healthy across all monitored dimensions. Governance and coverage are within acceptable thresholds.';
       } else {
         assessment = 'Portfolio intelligence is partially loaded. Architecture signals will update as data completes.';
       }
 
-      // ── Primary Risks ──────────────────────────────────────────────────────
-      var risks = [];
-      if (kpi.forecastLevel === 'critical')  risks.push('Structural degradation forecast is critical — architecture integrity is at risk.');
-      if (kpi.forecastLevel === 'degrading') risks.push('Structural degradation is forecast — coupling and complexity trends are worsening.');
-      if (kpi.criticalRepos != null && kpi.criticalRepos > 0) {
-        risks.push(kpi.criticalRepos + ' repositor' + (kpi.criticalRepos > 1 ? 'ies' : 'y') + ' flagged as critical in the architecture watchlist.');
-      }
-      if (kpi.architectureScore != null && kpi.architectureScore < 60) {
-        risks.push('Portfolio architecture health score (' + kpi.architectureScore + ') is below the acceptable threshold of 60.');
-      }
-      if (kpi.governanceScore != null && kpi.governanceScore < 60) {
-        risks.push('Engineering governance score (' + kpi.governanceScore + ') indicates structural governance deficits.');
-      }
-      if (kpi.watchlistCount != null && kpi.watchlistCount >= 5) {
-        risks.push(kpi.watchlistCount + ' repositories are on the architecture watchlist and require attention.');
-      }
-      if (covPct != null && covPct < 50) {
-        risks.push('Architecture snapshot coverage is insufficient (' + covPct + '%) — intelligence accuracy may be limited.');
-      }
-
-      // ── Recommended Actions ────────────────────────────────────────────────
-      var recs = [];
-      if (kpi.criticalRepos != null && kpi.criticalRepos > 0)                         recs.push('Review and address critical repositories immediately.');
-      if (kpi.forecastLevel === 'critical' || kpi.forecastLevel === 'degrading')       recs.push('Investigate structural degradation root cause across the portfolio.');
-      if (kpi.architectureScore != null && kpi.architectureScore < 60)                recs.push('Prioritize architecture improvements for the lowest-scoring repositories.');
-      if (kpi.governanceScore   != null && kpi.governanceScore   < 60)                recs.push('Strengthen engineering governance practices and architectural standards.');
-      if (kpi.watchlistCount != null && kpi.watchlistCount >= 5)                      recs.push('Triage architecture watchlist and prioritize remediation for elevated repositories.');
-      if (covPct != null && covPct < 50)                                               recs.push('Increase architecture snapshot coverage to improve intelligence accuracy.');
-      if (!recs.length) recs.push('Maintain current architecture health standards and continue regular snapshots.');
-
       // ── Render ─────────────────────────────────────────────────────────────
       var html = '<div class="exec-brief sev-' + esc(statusSev) + '">';
       html += '<div class="exec-brief-header">';
-      html += '<span class="exec-brief-label">Architecture Intelligence Briefing</span>';
+      html += '<span class="exec-brief-label">Portfolio Assessment</span>';
       html += '<span class="exec-brief-badge severity-' + esc(statusSev) + '">' + esc(statusLabel) + '</span>';
       html += '</div>';
       html += '<div class="exec-brief-summary" style="margin-top:4px;">' + esc(assessment) + '</div>';
       html += '<div class="exec-brief-body" style="margin-top:12px;">';
 
-      // Key Signals
+      // Key Metrics
       html += '<div class="exec-brief-col" style="min-width:230px;">';
-      html += '<div class="exec-brief-col-label">Key Signals</div>';
+      html += '<div class="exec-brief-col-label">Key Metrics</div>';
       html += '<div style="display:flex;flex-direction:column;gap:5px;margin-top:4px;">';
-      signals.forEach(function(s) {
+      metrics.forEach(function(m) {
         html += '<div style="display:flex;align-items:center;gap:8px;">';
-        html += '<span style="width:7px;height:7px;border-radius:50%;background:var(--sev-' + esc(s.sev) + '-text);flex-shrink:0;display:inline-block;"></span>';
-        html += '<span style="font-size:0.74rem;color:var(--text-muted);min-width:118px;flex-shrink:0;">' + esc(s.label) + '</span>';
-        html += '<span style="font-size:0.80rem;color:var(--text-primary);">' + esc(s.text) + '</span>';
+        html += '<span style="width:7px;height:7px;border-radius:50%;background:var(--sev-' + esc(m.sev) + '-text);flex-shrink:0;display:inline-block;"></span>';
+        html += '<span style="font-size:0.74rem;color:var(--text-muted);min-width:118px;flex-shrink:0;">' + esc(m.label) + '</span>';
+        html += '<span style="font-size:0.80rem;color:var(--text-primary);">' + esc(m.text) + '</span>';
         html += '</div>';
       });
       html += '</div></div>';
 
-      // Primary Risks
-      if (risks.length) {
-        html += '<div class="exec-brief-col">';
-        html += '<div class="exec-brief-col-label">Primary Risks</div>';
-        html += '<ul class="exec-brief-list">';
-        risks.slice(0, 3).forEach(function(r) { html += '<li class="exec-brief-item">' + esc(r) + '</li>'; });
-        html += '</ul>';
-        html += '</div>';
-      }
-
-      // Recommended Actions
+      // Next Action
       html += '<div class="exec-brief-col">';
-      html += '<div class="exec-brief-col-label">Recommended Actions</div>';
-      html += '<ul class="exec-brief-list">';
-      recs.slice(0, 3).forEach(function(r) { html += '<li class="exec-brief-rec-item">' + esc(r) + '</li>'; });
-      html += '</ul></div>';
+      html += '<div class="exec-brief-col-label">Next Action</div>';
+      html += '<p style="font-size:0.80rem;color:var(--text-primary);margin:4px 0 0;">Prioritize remediation for the highest-risk repositories.</p>';
+      html += '</div>';
 
       html += '</div></div>';
       return html;
@@ -4222,15 +3779,8 @@
       if (confEl) confEl.innerHTML = '';
     }
 
-    function renderPortfolioBriefing() {
-      var el = document.getElementById('portfolio-briefing');
-      if (!el) return;
-      el.innerHTML = buildPortfolioBriefingHtml(_execKpi, _repos, _repoIntelligenceById);
-    }
-
     function loadExecutiveSummary() {
       renderExecutiveBriefing();
-      renderPortfolioBriefing();
     }
 
     function _fmtDetectedAt(iso) {
@@ -4403,44 +3953,6 @@
 
       html += '</div>';
       return html;
-    }
-
-    function loadPortfolioForecast() {
-      var container = document.getElementById('portfolio-forecast');
-      if (!container) return;
-      var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-        + 'Portfolio forecast unavailable until architecture forecast data is available.</p>';
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/portfolio/forecast', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          if (!r.ok) return null;
-          return r.json().catch(function() { return null; });
-        })
-        .then(function(d) {
-          if (!container) return;
-          container.innerHTML = d ? buildPortfolioForecastHtml(d) : EMPTY;
-          if (d && d.portfolioForecastLevel) {
-            _execKpi.forecastLevel = d.portfolioForecastLevel;
-            renderExecutiveKpis();
-            renderExecutiveBriefing();
-            renderPortfolioBriefing();
-          }
-          // Populate per-repo forecast intel from projectedRiskRepos[]
-          if (d) {
-            var pRiskRepos = Array.isArray(d.projectedRiskRepos) ? d.projectedRiskRepos : [];
-            pRiskRepos.forEach(function(r) {
-              var name = typeof r === 'string' ? r : (r.repoName || r.name || null);
-              if (!name) return;
-              var fl = typeof r === 'object' ? (r.forecastLevel || r.projectedLevel || null) : null;
-              _mergeIntelByName(name, { repoName: name, forecastLevel: fl });
-            });
-            if (_repos.length) applyFilter();
-          }
-        })
-        .catch(function() {
-          if (container) container.innerHTML = EMPTY;
-        });
     }
 
     // ── Architecture Forecast summary ─────────────────────────────────────────
@@ -6476,12 +5988,7 @@
         else                       { archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium'; }
       }
 
-      // Card 2: Architectural Priority — consistent with table, uses real architecture data
-      var ovPriKey = computeRepoPriority(repo, aq, archData, fcData);
-      var ovPriVal = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' }[ovPriKey] || ovPriKey;
-      var ovPriCls = { critical: 'severity-critical', elevated: 'severity-elevated', watch: 'severity-watch', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
-
-      // Card 3: Forecast — from architecture forecast API
+      // Card 2: Forecast — from architecture forecast API
       var ovFcVal, ovFcCls;
       if (!fcData || !fcData.forecastLevel) {
         ovFcVal = 'Not Enough History'; ovFcCls = 'severity-unknown';
@@ -6535,7 +6042,6 @@
       });
 
       return card('Architecture Health',    archCardVal, archCardCls)
-        + card('Architectural Priority',    ovPriVal,    ovPriCls)
         + card('Forecast',                  ovFcVal,     ovFcCls)
         + card('Governance',                ovGovVal,    ovGovCls)
         + card('Snapshot Coverage',         ovSnapVal,   ovSnapCls)
@@ -6553,7 +6059,7 @@
             + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
             + '</li>';
         }).join('');
-      return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Top Risk Drivers</div>'
+      return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Operational Risk Drivers</div>'
         + '<ul class="attn-driver-list">' + rows + '</ul>';
     }
 
@@ -6578,17 +6084,12 @@
                 : (perClickArch && perClickArch.architectureHealthScore != null) ? perClickArch.architectureHealthScore
                 : null;
 
-      var wle = intel ? (intel.watchlistEscalationLevel || null) : null;
-      var wlr = intel ? (intel.watchlistReasons         || null) : null;
-
       // Return null only when truly no data — preserves "Coverage Gap" vs "Architecture Loading…"
       if (!intel && !perClickArch) return null;
 
       return {
         architectureHealthLevel:  level,
         architectureHealthScore:  score,
-        watchlistEscalationLevel: wle,
-        watchlistReasons:         wlr,
       };
     }
 
@@ -6869,7 +6370,7 @@
 
     // ── Repository Priority ───────────────────────────────────────────────────
     // Architecture-weighted priority synthesis from available per-repo signals.
-    // Weights: Architecture 50%, Governance 20%, Forecast 20%, Watchlist 5%, Op Risk 5%.
+    // Weights: Architecture 50%, Governance 20%, Forecast 20%, Op Risk 5%.
     // Each dimension maps to a 0–1 severity coefficient:
     //   1.00 = critical tier  (risky/critical/escalating)
     //   0.67 = elevated tier  (weak/high/deteriorating)
@@ -6942,31 +6443,14 @@
           : 0;
       }
 
-      // ── Watchlist dimension (5% weight) ─────────────────────────────────
-      // Portfolio watchlist escalation (in archData) takes priority over aqLevel.
-      var wlSev;
-      var wle = archData && archData.watchlistEscalationLevel;
-      if (wle) {
-        wlSev = wle === 'critical' ? 1.00
-              : wle === 'urgent'   ? 0.67
-              : wle === 'elevated' ? 0.33
-              : wle === 'monitor'  ? 0.17
-              :                      0;
-      } else {
-        wlSev = aqLevel === 'critical' ? 1.00
-          : aqLevel === 'high'   ? 0.67
-          : aqLevel === 'medium' ? 0.33
-          : 0;
-      }
-
       // ── Operational risk dimension (5% weight) ───────────────────────────
       var repoLabel = repo ? (repo.label || '') : '';
       var opSev = repoLabel === 'critical'  ? 1.00
         : repoLabel === 'at-risk' ? 0.67
         : 0;
 
-      // Weighted sum: Architecture 50%, Governance 20%, Forecast 20%, Watchlist 5%, Op Risk 5%.
-      var score = archSev * 0.50 + govSev * 0.20 + fcSev * 0.20 + wlSev * 0.05 + opSev * 0.05;
+      // Weighted sum: Architecture 50%, Governance 20%, Forecast 20%, Op Risk 5%.
+      var score = archSev * 0.50 + govSev * 0.20 + fcSev * 0.20 + opSev * 0.05;
 
       if (score >= 0.50) return 'critical';
       if (score >= 0.25) return 'elevated';
@@ -7024,23 +6508,11 @@
         var intel = _repoIntelligenceById[String(r.id)] || null;
 
         // Build archData from portfolio intelligence (source of truth for the table).
-        // Enriched with watchlist escalation so both computeRepoPriority and
-        // buildRepoPriorityReasons can access it through a single object.
         var archData;
         if (intel && (intel.architectureHealthLevel || intel.architectureHealthScore != null)) {
           archData = {
-            architectureHealthLevel:  intel.architectureHealthLevel  || null,
-            architectureHealthScore:  intel.architectureHealthScore  != null ? intel.architectureHealthScore : null,
-            watchlistEscalationLevel: intel.watchlistEscalationLevel || null,
-            watchlistReasons:         intel.watchlistReasons         || null,
-          };
-        } else if (intel && intel.watchlistEscalationLevel) {
-          // Watchlist-only intel: no architecture snapshot yet, but we know the escalation.
-          archData = {
-            architectureHealthLevel:  null,
-            architectureHealthScore:  null,
-            watchlistEscalationLevel: intel.watchlistEscalationLevel,
-            watchlistReasons:         intel.watchlistReasons || null,
+            architectureHealthLevel: intel.architectureHealthLevel || null,
+            architectureHealthScore: intel.architectureHealthScore != null ? intel.architectureHealthScore : null,
           };
         } else {
           archData = null;  // no portfolio arch intel → Coverage Gap
@@ -7069,16 +6541,7 @@
         var opState = operationalState(r, aq);
 
         var aqLevel  = aq ? aq.attentionLevel : 'unknown';
-        var aqScore  = aq ? aq.attentionScore : 0;
-        var aqTraj   = aq ? (aq.trajectory || null) : null;
-        var marker   = (aqTraj && TRAJ_MARKER[aqTraj])
-          ? ' <span class="aq-traj">' + TRAJ_MARKER[aqTraj] + '</span>'
-          : '';
-        var aqCls    = 'aq-badge severity-' + aqLevel;
-        var aqHtml   = '<span class="' + aqCls + '">'
-          + esc(aqLevel.toUpperCase()) + ' &middot; ' + esc(String(aqScore))
-          + marker
-          + '</span>';
+        var archScore = (archData && archData.architectureHealthScore != null) ? archData.architectureHealthScore : null;
 
         var heatCls = HEAT_CLS[aqLevel] || OP_HEAT_CLS[opState.cls] || 'row-heat-unknown';
 
@@ -7089,14 +6552,14 @@
           + '<td><span class="tbl-id">#' + esc(String(r.id)) + '</span></td>'
           + '<td><span class="tbl-repo-name">' + esc(r.fullName) + '</span></td>'
           + '<td><span class="aq-badge ' + priSev + '">' + esc(priLabel) + '</span></td>'
-          + '<td>' + aqHtml + '</td>'
-          + '<td>' + buildRepoPriorityReasons(r, aq, archData, fcData) + '</td>'
+          + '<td><span class="tbl-arch-score">' + (archScore != null ? esc(String(archScore)) : '&mdash;') + '</span></td>'
+          + '<td>' + buildArchDriversHtml(r, archData, fcData, _archDataByRepoId[r.id] || null) + '</td>'
           + '</tr>';
       }).join('');
 
       document.getElementById('projects-container').innerHTML =
         '<table>'
-        + '<thead><tr><th>ID</th><th>Repo</th><th>Architectural Priority</th><th>Attention</th><th>Reasons</th></tr></thead>'
+        + '<thead><tr><th>ID</th><th>Repo</th><th>Architectural Priority</th><th>Architecture Score</th><th>Architecture Drivers</th></tr></thead>'
         + '<tbody>' + rows + '</tbody>'
         + '</table>';
 
@@ -7262,7 +6725,6 @@
           }
           applyFilter();
           renderPortfolioTrend();
-          renderPortfolioBriefing();
 
           // Build chart points from risk scores (group by date, take avg)
           var byDate = {};
@@ -7702,11 +7164,19 @@
       if (cl === 'high' || cl === 'risky' || cl === 'critical') {
         healthSev   = 'high';
         healthLabel = 'Risky';
-        healthMsg   = 'Circular dependency or high coupling risk detected.';
+        healthMsg   = (circDeps > 0 || reposCyc > 0)
+          ? 'Circular dependency cycles detected — high coupling risk.'
+          : (avgEdges >= 30
+              ? 'High dependency density detected — ' + avgEdges.toFixed(1) + ' average edges per repository.'
+              : 'High coupling risk detected — review dependency structure.');
       } else if (cl === 'watch' || cl === 'medium' || cl === 'moderate') {
         healthSev   = 'medium';
         healthLabel = 'Watch';
-        healthMsg   = 'Portfolio coupling should be monitored.';
+        healthMsg   = (circDeps > 0 || reposCyc > 0)
+          ? 'Circular dependency risk detected — coupling elevated.'
+          : (avgEdges >= 30
+              ? 'High dependency density detected — ' + avgEdges.toFixed(1) + ' average edges per repository.'
+              : 'Portfolio coupling elevated — monitor dependency structure.');
       } else {
         healthSev   = 'healthy';
         healthLabel = 'Healthy';
@@ -7720,12 +7190,6 @@
       if (circDeps === 0) {
         html += '<div style="font-size:0.72rem;color:var(--sev-healthy-text);margin-bottom:6px;">No circular dependency cycles detected.</div>';
       }
-
-      // ── Existing coupling-level badge
-      var lvlSev = _archCouplingLevelSev(coupling.couplingLevel);
-      html += '<div class="pf-badges" style="margin-bottom:8px;">';
-      html += '<span class="pf-badge severity-' + esc(lvlSev) + '">' + esc((coupling.couplingLevel || 'unknown').toUpperCase()) + '</span>';
-      html += '</div>';
 
       // ── Raw metrics
       html += '<div class="arch-metric-grid">';
@@ -7752,12 +7216,15 @@
       var feCalls    = api.totalFrontendCalls           || 0;
       var linked     = api.totalLinkedEndpoints         || 0;
       var il = (api.integrationLevel || '').toLowerCase();
+      var unresolvedMsg = unresolved === 1
+        ? '1 frontend API call is not linked to a backend route.'
+        : unresolved + ' frontend API calls are not linked to backend routes.';
       var healthSev, healthLabel, healthMsg;
       if (il === 'weak' || il === 'risky' || il === 'critical' || il === 'none' || il === 'below_average') {
         healthSev   = 'high';
         healthLabel = 'Risky';
         healthMsg   = unresolved > 0
-          ? 'Unresolved frontend/backend API mappings detected.'
+          ? unresolvedMsg
           : (feCalls > 0 && linked === 0)
             ? 'Frontend API calls exist but no backend route mappings are linked.'
             : 'API integration coverage is weak and needs review.';
@@ -7765,7 +7232,7 @@
         healthSev   = 'medium';
         healthLabel = 'Watch';
         healthMsg   = unresolved > 0
-          ? 'Unresolved frontend/backend API mappings detected.'
+          ? unresolvedMsg
           : 'API mappings are partially linked.';
       } else {
         healthSev   = 'healthy';
@@ -7908,7 +7375,7 @@
     function _archRecommendationsHtml(recs) {
       if (!recs || !recs.length) return '';
       var html = '<div class="arch-sub-panel" style="margin-top:10px;">';
-      html += '<div class="arch-sub-label">Recommendations</div>';
+      html += '<div class="arch-sub-label">Recommended Actions</div>';
       html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px;">';
       recs.slice(0, 5).forEach(function(rec) {
         html += '<li class="arch-rec">' + esc(rec) + '</li>';
@@ -7918,132 +7385,76 @@
     }
 
     function _archRepoRecommendationsHtml(data) {
-      var benched = Array.isArray(data.benchmarkedRepositories) ? data.benchmarkedRepositories : [];
-
-      // Same priority order as Architecture Risk Concentration and Repository Status:
-      //   critical (score<45) → elevated (45-69) → watch (70-84) → healthy (≥85)
-      // Within the same tier, lower score (worse) comes first.
-      function _archTier(score) {
-        if (score == null) return 4;
-        if (score < 45)   return 0;
-        if (score < 70)   return 1;
-        if (score < 85)   return 2;
-        return 3;
-      }
-
-      var lagging = benched.filter(function(r) {
-        return r.relativePosition === 'lagging' || r.relativePosition === 'below_average';
-      }).sort(function(a, b) {
-        var ta = _archTier(a.architectureHealthScore);
-        var tb = _archTier(b.architectureHealthScore);
-        if (ta !== tb) return ta - tb;
-        var sa = a.architectureHealthScore != null ? a.architectureHealthScore : 999;
-        var sb = b.architectureHealthScore != null ? b.architectureHealthScore : 999;
-        return sa - sb;
-      }).slice(0, 3);
-
-      if (!lagging.length) return _archRecommendationsHtml(data.recommendations);
-
+      var actions    = [];
+      var dist       = data.distribution || {};
       var violations = Array.isArray(data.systemicBoundaryViolations) ? data.systemicBoundaryViolations : [];
       var integrity  = data.implementationIntegrity || null;
       var coupling   = data.portfolioCoupling       || null;
       var api        = data.apiIntegrationHealth    || null;
 
+      // 1. Critical/high-risk repositories
+      var riskyCount = dist.risky || 0;
+      if (riskyCount > 0) {
+        var repoW = riskyCount === 1 ? 'repository' : 'repositories';
+        actions.push('Prioritize remediation for ' + riskyCount + ' critical ' + repoW + ' with Risky architecture health.');
+      }
+
+      // 2. Boundary violations
+      if (violations.length > 0) {
+        actions.push('Resolve ' + violations.length + ' boundary ' + (violations.length === 1 ? 'violation' : 'violations') + ' to reduce structural risk.');
+      }
+
+      // 3. Placeholder / scaffold implementations
+      if (integrity && ((integrity.totalPlaceholderHints || 0) > 0 || (integrity.totalScaffoldLikeFiles || 0) > 0)) {
+        actions.push('Replace placeholder implementations with production-ready code.');
+      }
+
+      // 4. Implementation completeness
+      if (integrity && Number(integrity.averageCompletenessScore || 0) < 70) {
+        actions.push('Increase portfolio implementation completeness above 70%.');
+      }
+
+      // 5. API integration gaps
+      if (api) {
+        var unresolved = api.totalUnresolvedFrontendCalls || 0;
+        var il = (api.integrationLevel || '').toLowerCase();
+        var apiWeak = il === 'weak' || il === 'risky' || il === 'critical' || il === 'none' || il === 'below_average';
+        if (unresolved > 0) {
+          actions.push('Link ' + unresolved + ' unresolved frontend ' + (unresolved === 1 ? 'call' : 'calls') + ' to backend route definitions.');
+        } else if (apiWeak) {
+          actions.push('Improve API integration coverage — frontend-to-backend route mappings are insufficient.');
+        }
+      }
+
+      // 6. Coupling pressure
+      if (coupling && ((coupling.totalCircularDependencies || 0) > 0 || Number(coupling.averageEdgesPerRepo || 0) >= 30)) {
+        actions.push('Reduce dependency coupling by extracting shared interfaces or splitting high-coupling modules.');
+      }
+
+      if (!actions.length) return _archRecommendationsHtml(data.recommendations);
+
       var html = '<div class="arch-sub-panel" style="margin-top:10px;">';
-      html += '<div class="arch-sub-label">Recommendations</div>';
-
-      lagging.forEach(function(r, idx) {
-        var detected    = [];
-        var recommended = [];
-
-        // Per-repo: low architecture score
-        var score = r.architectureHealthScore;
-        if (score != null && score < 70) {
-          detected.push('Low architecture health score (' + score + ')');
-          recommended.push('Review architecture snapshot and address highest-impact findings');
-        }
-
-        // Per-repo: boundary violations naming this repository
-        violations.forEach(function(v) {
-          if (Array.isArray(v.affectedRepos) && v.affectedRepos.indexOf(r.repoName) !== -1) {
-            var instances = v.count || 0;
-            detected.push((v.type || 'Unknown') + ' boundary violation (' + instances + ' instance' + (instances === 1 ? '' : 's') + ')');
-            recommended.push('Resolve ' + (v.type || 'boundary') + ' violations to reduce structural risk');
-          }
-        });
-
-        // Portfolio-level signals attributed to the top-ranked repo only
-        if (idx === 0) {
-          if (integrity) {
-            if ((integrity.totalPlaceholderHints || 0) > 0 || (integrity.totalScaffoldLikeFiles || 0) > 0) {
-              detected.push('Placeholder or scaffold implementation signals detected');
-              recommended.push('Replace placeholder implementations with production-ready code');
-            }
-            if (Number(integrity.averageCompletenessScore || 0) < 70) {
-              detected.push('Portfolio implementation completeness below target');
-              recommended.push('Increase implementation completeness above 70%');
-            }
-          }
-          if (api && (api.totalUnresolvedFrontendCalls || 0) > 0) {
-            var unresCount = api.totalUnresolvedFrontendCalls;
-            detected.push(unresCount + ' unresolved frontend API mapping' + (unresCount === 1 ? '' : 's'));
-            recommended.push('Link unresolved frontend calls to backend route definitions');
-          }
-          if (coupling && ((coupling.totalCircularDependencies || 0) > 0 || Number(coupling.averageEdgesPerRepo || 0) >= 30)) {
-            detected.push('Portfolio coupling pressure detected');
-            recommended.push('Reduce dependency coupling by extracting shared interfaces');
-          }
-        }
-
-        var isLast = idx === lagging.length - 1;
-        html += '<div style="margin-bottom:' + (isLast ? '0' : '12px') + ';padding-bottom:' + (isLast ? '0' : '10px') + ';' + (isLast ? '' : 'border-bottom:1px solid var(--border);') + '">';
-        html += '<div style="font-size:0.72rem;font-weight:700;color:var(--text-primary);margin-bottom:6px;">';
-        html += 'Priority #' + (idx + 1) + ' — <span style="color:var(--sev-high-text);">' + esc(r.repoName || '') + '</span>';
-        html += '</div>';
-
-        if (detected.length) {
-          html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:3px;">Detected</div>';
-          html += '<ul style="list-style:none;padding:0;margin:0 0 6px;display:flex;flex-direction:column;gap:2px;">';
-          detected.forEach(function(d) {
-            html += '<li style="font-size:0.77rem;color:var(--text-primary);display:flex;gap:6px;">'
-              + '<span style="color:var(--sev-high-text);flex-shrink:0;">•</span>' + esc(d) + '</li>';
-          });
-          html += '</ul>';
-        }
-
-        if (recommended.length) {
-          html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:3px;">Recommended</div>';
-          html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:2px;">';
-          recommended.forEach(function(rec) {
-            html += '<li style="font-size:0.77rem;color:var(--text-primary);display:flex;gap:6px;">'
-              + '<span style="color:var(--sev-healthy-text);flex-shrink:0;">→</span>' + esc(rec) + '</li>';
-          });
-          html += '</ul>';
-        }
-
-        html += '</div>';
+      html += '<div class="arch-sub-label">Recommended Actions</div>';
+      html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px;">';
+      actions.slice(0, 5).forEach(function(action) {
+        html += '<li class="arch-rec">' + esc(action) + '</li>';
       });
-
-      html += '</div>';
+      html += '</ul></div>';
       return html;
     }
 
     function _archRiskDriversHtml(data) {
       var drivers = [];
+      var dist = data.distribution || {};
 
-      // 1. Architecture Risk Concentration
-      var benched = Array.isArray(data.benchmarkedRepositories) ? data.benchmarkedRepositories : [];
-      var lagging = benched.filter(function(r) {
-        return r.relativePosition === 'lagging' || r.relativePosition === 'below_average';
-      });
-      var ARCH_DISPLAY_LIMIT = 3;
-      if (lagging.length > 0) {
-        var repoWord = lagging.length === 1 ? 'repository' : 'repositories';
-        var topNote  = lagging.length > ARCH_DISPLAY_LIMIT ? ' (top ' + ARCH_DISPLAY_LIMIT + ' shown)' : '';
-        drivers.push({ sev: 'high', text: 'Architecture risk concentrated in ' + lagging.length + ' ' + repoWord + topNote });
+      // P1: Critical repositories requiring remediation
+      var riskyCount = dist.risky || 0;
+      if (riskyCount > 0) {
+        var repoWord = riskyCount === 1 ? 'repository' : 'repositories';
+        drivers.push({ sev: 'high', text: riskyCount + ' critical ' + repoWord + ' requiring remediation' });
       }
 
-      // 2. Implementation Integrity
+      // P2: Implementation completeness issues
       var integrity = data.implementationIntegrity;
       if (integrity) {
         var scaffoldFiles    = integrity.totalScaffoldLikeFiles  || 0;
@@ -8054,15 +7465,21 @@
         }
       }
 
-      // 3. Boundary Violations
-      var violations = data.systemicBoundaryViolations;
-      if (!violations || !violations.length) {
-        drivers.push({ sev: 'healthy', text: 'No significant boundary violations detected' });
-      } else {
-        drivers.push({ sev: 'high', text: 'Boundary violations contributing to portfolio risk' });
+      // P3: API integration gaps
+      var api = data.apiIntegrationHealth;
+      if (api) {
+        var unresolved = api.totalUnresolvedFrontendCalls || 0;
+        var il = (api.integrationLevel || '').toLowerCase();
+        var isWeak = il === 'weak' || il === 'risky' || il === 'critical' || il === 'none' || il === 'below_average';
+        var isPartial = il === 'partial' || il === 'watch' || il === 'medium';
+        if (unresolved > 0 || isWeak) {
+          drivers.push({ sev: 'high', text: 'API integration gaps detected' });
+        } else if (isPartial) {
+          drivers.push({ sev: 'medium', text: 'API integration gaps detected' });
+        }
       }
 
-      // 4. Portfolio Coupling
+      // Fallback: Portfolio Coupling
       var coupling = data.portfolioCoupling;
       if (coupling) {
         var circDeps = coupling.totalCircularDependencies    || 0;
@@ -8073,12 +7490,18 @@
         }
       }
 
+      // Fallback: Boundary violations (only when violations exist)
+      var violations = data.systemicBoundaryViolations;
+      if (Array.isArray(violations) && violations.length > 0) {
+        drivers.push({ sev: 'high', text: 'Boundary violations contributing to portfolio risk' });
+      }
+
       if (!drivers.length) return '';
 
       var html = '<div style="margin-bottom:14px;padding:10px 12px;background:var(--bg-panel,var(--bg-card));border:1px solid var(--border);border-radius:6px;">';
-      html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px;">Primary Risk Drivers</div>';
+      html += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px;">Portfolio Risk Summary</div>';
       html += '<ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px;">';
-      drivers.slice(0, 4).forEach(function(d) {
+      drivers.slice(0, 3).forEach(function(d) {
         var dotColor = d.sev === 'healthy' ? 'var(--sev-healthy-text)'
                      : d.sev === 'medium'  ? 'var(--sev-medium-text)'
                      : d.sev === 'high'    ? 'var(--sev-high-text)'
@@ -8207,14 +7630,27 @@
           if (typeof d.portfolioArchitectureScore === 'number') {
             _execKpi.architectureScore = d.portfolioArchitectureScore;
           }
+          var _dist = d.distribution || {};
+          if (typeof _dist.risky === 'number') _execKpi.criticalRepos = _dist.risky;
           var _archCache = d._cache || {};
           if (_archCache.snapshotCount != null) _execKpi.snapshotCount = _archCache.snapshotCount;
           if (_archCache.repoCount     != null) _execKpi.repoCount     = _archCache.repoCount;
+          var benched = Array.isArray(d.benchmarkedRepositories) ? d.benchmarkedRepositories : [];
+          var _lagging = benched.filter(function(r) {
+            return r.relativePosition === 'lagging' || r.relativePosition === 'below_average';
+          });
+          _execKpi.riskConcentration = _lagging.length;
+          _execKpi.topRiskRepos = _lagging.slice().sort(function(a, b) {
+            function tier(s) { return s == null ? 4 : s < 45 ? 0 : s < 70 ? 1 : s < 85 ? 2 : 3; }
+            var ta = tier(a.architectureHealthScore), tb = tier(b.architectureHealthScore);
+            if (ta !== tb) return ta - tb;
+            var sa = a.architectureHealthScore != null ? a.architectureHealthScore : 999;
+            var sb = b.architectureHealthScore != null ? b.architectureHealthScore : 999;
+            return sa - sb;
+          }).slice(0, 3).map(function(r) { return r.repoName || ''; }).filter(Boolean);
           renderExecutiveKpis();
           renderExecutiveBriefing();
-          renderPortfolioBriefing();
           // Populate per-repo architecture intel from benchmarkedRepositories[]
-          var benched = Array.isArray(d.benchmarkedRepositories) ? d.benchmarkedRepositories : [];
           benched.forEach(function(r) {
             if (!r.repoName) return;
             var hs = r.architectureHealthScore != null ? r.architectureHealthScore : null;
@@ -8338,6 +7774,101 @@
 
     // ── Engineering Governance ───────────────────────────────────────────────
 
+    function _govSummaryHtml(level, signals) {
+      var isPositive = level === 'excellent' || level === 'strong';
+      var isWatch    = level === 'watch';
+      var concerns   = [];
+      if (signals.lowestScoringDimension) {
+        var dimMap = {
+          architectureGovernance: 'architecture', maturityGovernance: 'maturity',
+          behavioralGovernance: 'behavioral',     predictiveGovernance: 'predictive',
+          anomalyGovernance: 'anomaly'
+        };
+        var dimKey   = signals.lowestScoringDimension;
+        var dimLabel = dimMap[dimKey] || String(dimKey).toLowerCase().replace(/governance$/i, '').trim();
+        concerns.push(dimLabel + ' gaps');
+      }
+      if (signals.forecastConcern) concerns.push('forecast instability');
+      if (signals.anomalyConcern)  concerns.push('anomaly concerns');
+      if (!concerns.length && signals.highestRiskArea) {
+        concerns.push(String(signals.highestRiskArea).toLowerCase() + ' risk');
+      }
+      var c       = concerns.slice(0, 2);
+      var reqVerb = c.length > 1
+        ? 'require'
+        : (c.length === 1 && /\b(gaps|concerns|anomalies|violations|regressions|issues)$/.test(c[0]))
+          ? 'require'
+          : 'requires';
+      var sentence;
+      if (isPositive) {
+        sentence = c.length
+          ? 'Governance is ' + level + ' overall, but ' + c.join(' and ') + ' ' + reqVerb + ' attention.'
+          : 'Governance is ' + level + ' with no significant concerns.';
+      } else if (isWatch) {
+        sentence = c.length
+          ? 'Governance health is stable, but ' + c.join(' and ') + ' ' + reqVerb + ' monitoring.'
+          : 'Governance health is stable — continue monitoring for regressions.';
+      } else {
+        sentence = c.length
+          ? 'Governance is ' + level + ' — ' + c.join(' and ') + ' ' + reqVerb + ' immediate attention.'
+          : 'Governance health is ' + level + ' and requires intervention.';
+      }
+      var h = '<div style="margin-bottom:12px;padding:10px 12px;background:var(--bg-panel,var(--bg-card));border:1px solid var(--border);border-radius:6px;">';
+      h += '<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:6px;">Portfolio Governance Summary</div>';
+      h += '<div style="font-size:0.82rem;color:var(--text-primary);">' + esc(sentence) + '</div>';
+      h += '</div>';
+      return h;
+    }
+
+    function _govLabel(key) {
+      var map = {
+        architectureGovernance:            'Architecture',
+        maturityGovernance:                'Engineering Maturity',
+        behavioralGovernance:              'Behavioral Governance',
+        predictiveGovernance:              'Predictive Governance',
+        anomalyGovernance:                 'Anomaly Governance',
+        architectureRegressions:           'Architecture Regressions',
+        couplingAlerts:                    'Dependency Coupling',
+        portfolioMaturity:                 'Portfolio Maturity',
+        portfolioForecast:                 'Portfolio Forecast',
+        architectureAnomalies:             'Architecture Anomalies',
+        behavioralStability:               'Behavioral Stability',
+        stable_forecast:                   'Stable Forecast',
+        no_anomalies:                      'No Architecture Anomalies',
+        architectureGovernance_critical:   'Architecture Governance',
+        architectureGovernance_weak:       'Architecture Governance',
+        maturityGovernance_critical:       'Engineering Maturity',
+        maturityGovernance_weak:           'Engineering Maturity',
+        behavioralGovernance_critical:     'Behavioral Governance',
+        behavioralGovernance_weak:         'Behavioral Governance',
+        predictiveGovernance_critical:     'Predictive Governance',
+        predictiveGovernance_weak:         'Predictive Governance',
+        anomalyGovernance_critical:        'Anomaly Governance',
+        anomalyGovernance_weak:            'Anomaly Governance',
+        portfolio_forecast_critical:       'Portfolio Forecast',
+        portfolio_forecast_degrading:      'Portfolio Forecast',
+        architecture_anomalies_critical:   'Architecture Anomalies',
+        architecture_anomalies:            'Architecture Anomalies',
+        architecture_regressions_critical: 'Architecture Regressions',
+        architecture_regressions:          'Architecture Regressions',
+        coupling_alerts_critical:          'Dependency Coupling',
+        coupling_alerts:                   'Dependency Coupling',
+        low_portfolio_maturity:            'Portfolio Maturity',
+        behavioral_instability:            'Behavioral Instability',
+        behavioral_volatility:             'Behavioral Volatility',
+      };
+      return map[key] || (key ? String(key).replace(/_/g, ' ') : '');
+    }
+    function _govCleanRec(text) {
+      return text.replace(
+        /^(Immediately address critical governance risks: )(.+)$/,
+        function(_, prefix, typesStr) {
+          var labels = typesStr.split(', ').map(function(t) { return _govLabel(t.trim()); });
+          return prefix + labels.join(', ');
+        }
+      );
+    }
+
     function buildPortfolioGovernanceHtml(data) {
       var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
         + 'Engineering governance unavailable until portfolio intelligence data is available.</p>';
@@ -8412,16 +7943,8 @@
         + '<div class="arch-prog-fill" style="width:' + Math.min(100, score) + '%;background:' + progColor + ';"></div>'
         + '</div>';
 
-      // Intervention required banner
-      if (signals.interventionRequired) {
-        var bannerSev = level === 'critical' ? 'critical' : level === 'weak' ? 'high' : 'medium';
-        html += '<div class="arch-finding severity-' + bannerSev + '" style="margin-bottom:12px;border-radius:6px;padding:8px 12px;">';
-        html += '<strong>Governance Intervention Required</strong>';
-        if (signals.highestRiskArea) {
-          html += ' — Highest risk area: <strong>' + esc(signals.highestRiskArea) + '</strong>';
-        }
-        html += '</div>';
-      }
+      // Portfolio Governance Summary
+      html += _govSummaryHtml(level, signals);
 
       // A. Governance Dimensions
       var dimDefs = [
@@ -8450,84 +7973,54 @@
             + '</div>';
         });
         html += '</div>';
-        dimDefs.forEach(function(d) {
-          var dim = dims[d.key];
-          if (!dim || !Array.isArray(dim.drivers) || !dim.drivers.length) return;
-          var shown = dim.drivers.slice(0, 2);
-          html += '<div style="margin-top:4px;">'
-            + '<span style="font-size:0.72rem;color:var(--text-muted);font-weight:600;">' + esc(d.label) + ': </span>'
-            + '<span style="font-size:0.72rem;color:var(--text-secondary);">' + esc(shown.join(' · ')) + '</span>'
-            + '</div>';
-        });
         html += '</div>';
       }
 
-      // B. Executive Signals
-      var sigDefs = [
-        { key: 'lowestScoringDimension', label: 'Lowest Dimension'    },
-        { key: 'strongestDimension',     label: 'Strongest Dimension' },
-        { key: 'forecastConcern',        label: 'Forecast Concern'    },
-        { key: 'anomalyConcern',         label: 'Anomaly Concern'     },
-        { key: 'confidenceConcern',      label: 'Confidence Concern'  },
-      ];
-      var sigHasContent = sigDefs.some(function(s) { return !!signals[s.key]; });
-      if (sigHasContent) {
-        html += '<div class="arch-sub-panel" style="margin-top:10px;">';
-        html += '<div class="arch-sub-label">Executive Signals</div>';
-        sigDefs.forEach(function(s) {
-          if (!signals[s.key]) return;
-          html += '<div style="display:flex;gap:8px;font-size:0.79rem;padding:3px 0;border-bottom:1px solid var(--border);">'
-            + '<span style="color:var(--text-muted);flex-shrink:0;min-width:140px;">' + esc(s.label) + '</span>'
-            + '<span style="color:var(--text-primary);">' + esc(String(signals[s.key])) + '</span>'
-            + '</div>';
-        });
-        html += '</div>';
+      // C+D. Key Governance Findings
+      var topRisks     = risks.slice(0, 3);
+      var topStrengths = strengths.slice(0, 3);
+      html += '<div class="arch-sub-panel" style="margin-top:10px;">';
+      html += '<div class="arch-sub-label">Key Governance Findings</div>';
+      if (!topRisks.length && !topStrengths.length) {
+        html += '<div style="font-size:0.79rem;color:var(--sev-healthy-text);">No significant governance risks or concerns detected.</div>';
+      } else {
+        if (topRisks.length) {
+          html += '<div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin:8px 0 4px;">Risks</div>';
+          topRisks.forEach(function(risk) {
+            var sev      = risk.severity || 'medium';
+            var source   = risk.source   || '';
+            var riskText = risk.summary  || risk.text || '';
+            var sevCls   = { low: 'severity-low', medium: 'severity-medium', high: 'severity-high', critical: 'severity-critical' }[sev] || 'severity-unknown';
+            html += '<div class="arch-finding">'
+              + '<span class="timeline-badge ' + sevCls + '">' + esc(sev) + '</span>'
+              + '<span>';
+            if (source) {
+              html += '<span style="font-size:0.75rem;font-weight:600;color:var(--text-secondary);">' + esc(_govLabel(source)) + '</span>';
+              if (riskText) html += ' — ';
+            }
+            if (riskText) {
+              html += '<span style="font-size:0.77rem;">' + esc(riskText) + '</span>';
+            }
+            html += '</span></div>';
+          });
+        }
+        if (topStrengths.length) {
+          html += '<div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin:8px 0 4px;">Strengths</div>';
+          html += '<ul class="pf-signals">';
+          topStrengths.forEach(function(s) {
+            var sType = typeof s === 'object' ? (s.type || s.source || '') : '';
+            var sText = typeof s === 'object' ? (s.summary || s.text || '') : String(s);
+            html += '<li class="pf-signal">';
+            if (sType) {
+              html += '<span style="font-size:0.72rem;font-weight:600;color:var(--sev-healthy-text);">'
+                + esc(_govLabel(sType)) + '</span> — ';
+            }
+            html += esc(sText) + '</li>';
+          });
+          html += '</ul>';
+        }
       }
-
-      // C. Governance Risks (top 5)
-      var topRisks = risks.slice(0, 5);
-      if (topRisks.length) {
-        html += '<div class="arch-sub-panel" style="margin-top:10px;">';
-        html += '<div class="arch-sub-label">Governance Risks</div>';
-        topRisks.forEach(function(risk) {
-          var sev        = risk.severity || 'medium';
-          var source     = risk.source   || '';
-          var riskText   = risk.summary  || risk.text || '';
-          var sevCls     = { low: 'severity-low', medium: 'severity-medium', high: 'severity-high', critical: 'severity-critical' }[sev] || 'severity-unknown';
-          html += '<div class="arch-finding">'
-            + '<span class="timeline-badge ' + sevCls + '">' + esc(sev) + '</span>'
-            + '<span>';
-          if (source) {
-            html += '<span style="font-size:0.75rem;font-weight:600;color:var(--text-secondary);">' + esc(source) + '</span>';
-            if (riskText) html += ' — ';
-          }
-          if (riskText) {
-            html += '<span style="font-size:0.77rem;">' + esc(riskText) + '</span>';
-          }
-          html += '</span></div>';
-        });
-        html += '</div>';
-      }
-
-      // D. Strengths (top 5)
-      var topStrengths = strengths.slice(0, 5);
-      if (topStrengths.length) {
-        html += '<div class="arch-sub-panel" style="margin-top:10px;">';
-        html += '<div class="arch-sub-label">Governance Strengths</div>';
-        html += '<ul class="pf-signals">';
-        topStrengths.forEach(function(s) {
-          var sType    = typeof s === 'object' ? (s.type || s.source || '') : '';
-          var sText    = typeof s === 'object' ? (s.summary || s.text || '') : String(s);
-          html += '<li class="pf-signal">';
-          if (sType) {
-            html += '<span style="font-size:0.72rem;font-weight:600;color:var(--sev-healthy-text);">'
-              + esc(sType) + '</span> — ';
-          }
-          html += esc(sText) + '</li>';
-        });
-        html += '</ul>';
-        html += '</div>';
-      }
+      html += '</div>';
 
       // E. Recommendations (top 5)
       var topRecs = recs.slice(0, 5);
@@ -8535,7 +8028,7 @@
         html += '<div class="arch-sub-label" style="margin-top:14px;">Recommendations</div>';
         topRecs.forEach(function(r) {
           var text = typeof r === 'string' ? r : (r.text || r.recommendation || String(r));
-          html += '<div class="arch-rec">' + esc(text) + '</div>';
+          html += '<div class="arch-rec">' + esc(_govCleanRec(text)) + '</div>';
         });
       }
 
@@ -8562,7 +8055,6 @@
             _execKpi.governanceScore = d.governanceScore;
             renderExecutiveKpis();
             renderExecutiveBriefing();
-            renderPortfolioBriefing();
           }
         })
         .catch(function(err) {
@@ -8571,257 +8063,12 @@
         });
     }
 
-    // ── Architecture Watchlists ──────────────────────────────────────────────
-
-    function buildPortfolioWatchlistsHtml(data) {
-      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-        + 'Architecture watchlists unavailable until portfolio intelligence data is available.</p>';
-
-      if (!data || typeof data !== 'object') return UNAVAIL;
-      if (!data.watchlistLevel || data.watchlistLevel === 'unknown') return UNAVAIL;
-
-      function _wlLevelSev(level) {
-        if (level === 'clear' || level === 'none') return 'healthy';
-        if (level === 'monitor')                   return 'watch';
-        if (level === 'elevated' || level === 'urgent') return 'elevated';
-        if (level === 'critical')                  return 'critical';
-        return 'unknown';
-      }
-      function _wlLevelLabel(level) {
-        return { clear: 'HEALTHY', none: 'HEALTHY', monitor: 'WATCH', elevated: 'ELEVATED', urgent: 'ELEVATED', critical: 'CRITICAL' }[level]
-          || 'UNKNOWN';
-      }
-
-      var level    = data.watchlistLevel;
-      var score    = typeof data.watchlistScore === 'number' ? data.watchlistScore : 0;
-      var conf     = data.confidenceLevel || 'low';
-      var summary  = data.summary || '';
-      var cats     = data.categories    || {};
-      var queue    = Array.isArray(data.priorityQueue)   ? data.priorityQueue   : [];
-      var escalation = data.escalationSummary            || {};
-      var recs     = Array.isArray(data.recommendations) ? data.recommendations : [];
-      var meta     = data._meta || {};
-
-      var levelSev = _wlLevelSev(level);
-      var confCls  = 'conf-' + esc(conf);
-
-      // Positive empty state: portfolio is clear with nothing queued
-      if (level === 'clear' && !queue.length) {
-        return '<div class="pf-panel">'
-          + '<div class="pf-badges">'
-          + '<span class="pf-badge severity-healthy">' + esc(_wlLevelLabel(level)) + '</span>'
-          + '<span class="confidence-badge ' + confCls + '">' + esc(conf.toUpperCase() + ' CONFIDENCE') + '</span>'
-          + '</div>'
-          + '<p style="font-size:0.82rem;color:var(--sev-healthy-text);margin:8px 0 0;">'
-          + '&#10003; No repositories currently require architecture watchlist attention.</p>'
-          + '</div>';
-      }
-
-      var html = '<div class="pf-panel">';
-
-      // ── Header: score + badges + meta counts
-      html += '<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:10px;">';
-      html += '<div>';
-      html += '<div class="arch-score-row" style="margin-bottom:4px;">';
-      html += '<span class="arch-score-val">' + esc(String(score)) + '</span>';
-      html += '<span class="arch-score-denom">/ 100</span>';
-      html += '</div>';
-      html += '<div class="pf-badges">';
-      html += '<span class="pf-badge severity-' + levelSev + '">' + esc(_wlLevelLabel(level)) + '</span>';
-      html += '<span class="confidence-badge ' + confCls + '">' + esc(conf.toUpperCase() + ' CONFIDENCE') + '</span>';
-      html += '</div>';
-      html += '</div>';
-
-      var metaItems = [];
-      if (meta.repoCount != null)            metaItems.push([String(meta.repoCount),            'Repos']);
-      if (meta.watchlistedRepoCount != null) metaItems.push([String(meta.watchlistedRepoCount), 'Watchlisted']);
-      if (metaItems.length) {
-        html += '<div class="pf-counts" style="flex:1;justify-content:flex-end;">';
-        metaItems.forEach(function(item) {
-          html += '<div class="pf-count-item">'
-            + '<span class="pf-count-value">' + esc(item[0]) + '</span>'
-            + '<span class="pf-count-label">' + esc(item[1]) + '</span>'
-            + '</div>';
-        });
-        html += '</div>';
-      }
-      html += '</div>';
-
-      if (summary) {
-        html += '<div class="pf-summary">' + esc(summary) + '</div>';
-      }
-
-      if (meta.missingSnapshotCount > 0) {
-        html += '<p style="font-size:0.75rem;color:var(--text-muted);font-style:italic;margin:4px 0 10px;">'
-          + esc(String(meta.missingSnapshotCount)) + ' '
-          + (meta.missingSnapshotCount === 1 ? 'repository does' : 'repositories do')
-          + ' not yet have architecture snapshot coverage.</p>';
-      }
-
-      var progColor = score >= 70 ? 'var(--green)' : score >= 45 ? 'var(--orange)' : 'var(--red)';
-      html += '<div class="arch-prog" style="margin-bottom:14px;">'
-        + '<div class="arch-prog-fill" style="width:' + Math.min(100, score) + '%;background:' + progColor + ';"></div>'
-        + '</div>';
-
-      // B. Escalation Summary counts row
-      var escalEntries = [
-        { key: 'critical', label: 'Critical',  sev: 'critical'  },
-        { key: 'urgent',   label: 'Elevated',  sev: 'elevated'  },
-        { key: 'elevated', label: 'Elevated',  sev: 'elevated'  },
-        { key: 'monitor',  label: 'Watch',     sev: 'watch'     },
-        { key: 'none',     label: 'Healthy',   sev: 'healthy'   },
-      ].filter(function(e) { return (escalation[e.key] || 0) > 0; });
-      if (escalEntries.length) {
-        html += '<div class="pf-counts" style="margin-bottom:14px;">';
-        escalEntries.forEach(function(e) {
-          html += '<div class="pf-count-item">'
-            + '<span class="pf-count-value">' + esc(String(escalation[e.key])) + '</span>'
-            + '<span class="pf-count-label severity-' + e.sev + '">' + esc(e.label) + '</span>'
-            + '</div>';
-        });
-        html += '</div>';
-      }
-
-      // A. Priority / Attention Queue (top 10)
-      var topQueue = queue.slice(0, 10);
-      if (topQueue.length) {
-        html += '<div class="arch-sub-panel">';
-        html += '<div class="arch-sub-label">Attention Queue</div>';
-        topQueue.forEach(function(item) {
-          var name     = item.repoName || item.name || ('Repo ' + (item.repoId || '?'));
-          var pScore   = typeof item.priorityScore === 'number' ? item.priorityScore : null;
-          var escLevel = item.escalationLevel || 'none';
-          var escSev   = _wlLevelSev(escLevel);
-          var reasons  = Array.isArray(item.reasons) ? item.reasons : [];
-          var action   = item.recommendedAction || '';
-
-          html += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
-          html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px;">';
-          html += '<span class="pf-badge severity-' + escSev + '" style="font-size:0.7rem;padding:1px 5px;">'
-            + esc(_wlLevelLabel(escLevel)) + '</span>';
-          html += '<span style="font-size:0.82rem;font-weight:600;color:var(--text-primary);">' + esc(name) + '</span>';
-          if (pScore !== null) {
-            html += '<span style="font-size:0.71rem;color:var(--text-muted);margin-left:auto;">score: '
-              + esc(String(pScore)) + '</span>';
-          }
-          html += '</div>';
-          if (reasons.length) {
-            html += '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:2px;">'
-              + esc(reasons.slice(0, 2).join(' · ')) + '</div>';
-          }
-          if (action) {
-            html += '<div style="font-size:0.73rem;color:var(--text-muted);font-style:italic;">'
-              + esc(action) + '</div>';
-          }
-          html += '</div>';
-        });
-        if (queue.length > 10) {
-          html += '<div style="font-size:0.72rem;color:var(--text-muted);padding:4px 0;">+'
-            + (queue.length - 10) + ' more repositories in the attention queue</div>';
-        }
-        html += '</div>';
-      }
-
-      // C. Watchlist Categories
-      var catDefs = [
-        { key: 'criticalGovernance', label: 'Critical Governance' },
-        { key: 'degradingForecasts', label: 'Degrading Forecasts' },
-        { key: 'anomalyHeavy',       label: 'Anomaly Heavy'       },
-        { key: 'couplingPressure',   label: 'Coupling Pressure'   },
-        { key: 'regressionRisk',     label: 'Regression Risk'     },
-        { key: 'lowConfidence',      label: 'Low Confidence'      },
-        { key: 'emergingRisk',       label: 'Emerging Risk'       },
-      ];
-      var catHasContent = catDefs.some(function(d) {
-        return Array.isArray(cats[d.key]) && cats[d.key].length > 0;
-      });
-      if (catHasContent) {
-        html += '<div class="arch-sub-panel" style="margin-top:10px;">';
-        html += '<div class="arch-sub-label">Watchlist Categories</div>';
-        catDefs.forEach(function(d) {
-          var items = cats[d.key];
-          if (!Array.isArray(items) || !items.length) return;
-          var shown = items.slice(0, 3);
-          var extra = items.length - shown.length;
-          var names = shown.map(function(item) {
-            return typeof item === 'string' ? item : (item.repoName || item.name || '');
-          }).join(', ');
-          html += '<div style="display:flex;gap:8px;font-size:0.78rem;padding:2px 0;">'
-            + '<span style="color:var(--text-muted);flex-shrink:0;min-width:150px;">' + esc(d.label) + '</span>'
-            + '<span style="color:var(--text-secondary);">'
-            + esc(names) + (extra > 0 ? ' +' + extra + ' more' : '')
-            + ' <span style="color:var(--text-muted);">(' + esc(String(items.length)) + ')</span>'
-            + '</span>'
-            + '</div>';
-        });
-        html += '</div>';
-      }
-
-      // D. Recommendations (top 5)
-      var topRecs = recs.slice(0, 5);
-      if (topRecs.length) {
-        html += '<div class="arch-sub-label" style="margin-top:14px;">Recommendations</div>';
-        topRecs.forEach(function(r) {
-          var text = typeof r === 'string' ? r : (r.text || r.recommendation || String(r));
-          html += '<div class="arch-rec">' + esc(text) + '</div>';
-        });
-      }
-
-      html += '</div>';
-      return html;
-    }
-
-    function loadPortfolioWatchlists() {
-      var container = document.getElementById('portfolio-watchlists-panel');
-      if (!container) return;
-      var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-        + 'Architecture watchlists unavailable until portfolio intelligence data is available.</p>';
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/portfolio/watchlists', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403) return null;
-          if (!r.ok) return null;
-          return r.json().catch(function() { return null; });
-        })
-        .then(function(d) {
-          if (!container) return;
-          container.innerHTML = d ? buildPortfolioWatchlistsHtml(d) : UNAVAIL;
-          if (d) {
-            var wlMeta = d._meta || {};
-            if (wlMeta.watchlistedRepoCount != null) _execKpi.watchlistCount = wlMeta.watchlistedRepoCount;
-            var wlEsc  = d.escalationSummary || {};
-            if (wlEsc.critical != null) _execKpi.criticalRepos = wlEsc.critical;
-            renderExecutiveKpis();
-            renderExecutiveBriefing();
-            renderPortfolioBriefing();
-            // Populate per-repo watchlist intel from priorityQueue[] (has repoId)
-            var wlQueue = Array.isArray(d.priorityQueue) ? d.priorityQueue : [];
-            wlQueue.forEach(function(item) {
-              if (item.repoId == null) return;
-              mergeRepoIntelligence(item.repoId, {
-                repoName:                 item.repoName || item.name || null,
-                watchlistEscalationLevel: item.escalationLevel || null,
-                watchlistPriorityScore:   typeof item.priorityScore === 'number' ? item.priorityScore : null,
-                watchlistReasons:         Array.isArray(item.reasons) ? item.reasons : null,
-              });
-            });
-            if (_repos.length) applyFilter();
-          }
-        })
-        .catch(function(err) {
-          console.warn('[PortfolioWatchlists] failed to load:', err);
-          if (container) container.innerHTML = UNAVAIL;
-        });
-    }
-
     // ── Initial load + auto-refresh ──────────────────────────────────────────
 
     function refresh() {
       loadSummary();
       loadPortfolioArchitecture();
-      loadPortfolioForecast();
       loadPortfolioGovernance();
-      loadPortfolioWatchlists();
       loadRepos();
       loadAttentionQueue();
       loadNotifications();

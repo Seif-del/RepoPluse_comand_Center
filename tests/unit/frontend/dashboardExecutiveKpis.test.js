@@ -37,18 +37,6 @@ function buildExecutiveKpiCards(k) {
     if (s == null) return '';
     return s >= 80 ? 'severity-healthy' : s >= 60 ? 'severity-medium' : 'severity-high';
   }
-  function fcCls(l) {
-    if (!l) return '';
-    if (l === 'stable')    return 'severity-healthy';
-    if (l === 'watch')     return 'severity-medium';
-    if (l === 'degrading') return 'severity-high';
-    if (l === 'critical')  return 'severity-critical';
-    return 'severity-unknown';
-  }
-  function wlCls(n) {
-    if (n == null) return '';
-    return n === 0 ? 'severity-healthy' : n <= 4 ? 'severity-medium' : 'severity-high';
-  }
   function critCls(n) {
     if (n == null) return '';
     return n === 0 ? 'severity-healthy' : 'severity-critical';
@@ -60,8 +48,6 @@ function buildExecutiveKpiCards(k) {
 
   var archVal = k.architectureScore != null ? k.architectureScore : '—';
   var govVal  = k.governanceScore   != null ? k.governanceScore   : '—';
-  var fcVal   = k.forecastLevel     != null ? k.forecastLevel     : '—';
-  var wlVal   = k.watchlistCount    != null ? k.watchlistCount    : '—';
   var critVal = k.criticalRepos     != null ? k.criticalRepos     : '—';
 
   // Snapshot Coverage: percent badge + "N / M" ratio sub-label
@@ -84,8 +70,6 @@ function buildExecutiveKpiCards(k) {
   var fields = [
     ['Architecture Health', archVal, archCls(k.architectureScore)],
     ['Governance',          govVal,  govCls(k.governanceScore)],
-    ['Forecast Risk',       fcVal,   fcCls(k.forecastLevel)],
-    ['Watchlists',          wlVal,   wlCls(k.watchlistCount)],
     ['Critical Repos',      critVal, critCls(k.criticalRepos)],
   ];
 
@@ -97,15 +81,15 @@ function buildExecutiveKpiCards(k) {
 describe('buildExecutiveKpiCards — card labels', () => {
   const html = buildExecutiveKpiCards({});
 
-  test('renders Architecture Health label',  () => { expect(html).toContain('Architecture Health'); });
-  test('renders Governance label',           () => { expect(html).toContain('Governance'); });
-  test('renders Forecast Risk label',        () => { expect(html).toContain('Forecast Risk'); });
-  test('renders Watchlists label',           () => { expect(html).toContain('Watchlists'); });
-  test('renders Critical Repos label',       () => { expect(html).toContain('Critical Repos'); });
-  test('renders Snapshot Coverage label',    () => { expect(html).toContain('Snapshot Coverage'); });
-  test('does NOT render Confidence label',   () => { expect(html).not.toContain('Confidence'); });
-  test('renders exactly 6 card divs',        () => {
-    expect((html.match(/<div class="card">/g) || []).length).toBe(6);
+  test('renders Architecture Health label',   () => { expect(html).toContain('Architecture Health'); });
+  test('renders Governance label',            () => { expect(html).toContain('Governance'); });
+  test('renders Critical Repos label',        () => { expect(html).toContain('Critical Repos'); });
+  test('renders Snapshot Coverage label',     () => { expect(html).toContain('Snapshot Coverage'); });
+  test('does NOT render Confidence label',    () => { expect(html).not.toContain('Confidence'); });
+  test('does NOT render Forecast Risk label', () => { expect(html).not.toContain('Forecast Risk'); });
+  test('does NOT render Watchlists label',    () => { expect(html).not.toContain('Watchlists'); });
+  test('renders exactly 4 card divs',         () => {
+    expect((html.match(/<div class="card">/g) || []).length).toBe(4);
   });
 });
 
@@ -150,48 +134,6 @@ describe('buildExecutiveKpiCards — Governance color', () => {
   });
   test('governanceScore 59 maps to severity-high', () => {
     expect(buildExecutiveKpiCards({ governanceScore: 59 })).toContain('severity-high');
-  });
-});
-
-describe('buildExecutiveKpiCards — Forecast Risk color', () => {
-  test('stable maps to severity-healthy', () => {
-    expect(buildExecutiveKpiCards({ forecastLevel: 'stable' })).toContain('severity-healthy');
-  });
-  test('watch maps to severity-medium', () => {
-    expect(buildExecutiveKpiCards({ forecastLevel: 'watch' })).toContain('severity-medium');
-  });
-  test('degrading maps to severity-high', () => {
-    expect(buildExecutiveKpiCards({ forecastLevel: 'degrading' })).toContain('severity-high');
-  });
-  test('critical maps to severity-critical', () => {
-    expect(buildExecutiveKpiCards({ forecastLevel: 'critical' })).toContain('severity-critical');
-  });
-  test('unknown maps to severity-unknown', () => {
-    expect(buildExecutiveKpiCards({ forecastLevel: 'unknown' })).toContain('severity-unknown');
-  });
-  test('renders the forecastLevel string value', () => {
-    expect(buildExecutiveKpiCards({ forecastLevel: 'stable' })).toContain('stable');
-  });
-});
-
-describe('buildExecutiveKpiCards — Watchlists color', () => {
-  test('0 watchlists maps to severity-healthy', () => {
-    expect(buildExecutiveKpiCards({ watchlistCount: 0 })).toContain('severity-healthy');
-  });
-  test('1 watchlist maps to severity-medium', () => {
-    expect(buildExecutiveKpiCards({ watchlistCount: 1 })).toContain('severity-medium');
-  });
-  test('4 watchlists maps to severity-medium', () => {
-    expect(buildExecutiveKpiCards({ watchlistCount: 4 })).toContain('severity-medium');
-  });
-  test('5 watchlists maps to severity-high', () => {
-    expect(buildExecutiveKpiCards({ watchlistCount: 5 })).toContain('severity-high');
-  });
-  test('10 watchlists maps to severity-high', () => {
-    expect(buildExecutiveKpiCards({ watchlistCount: 10 })).toContain('severity-high');
-  });
-  test('renders the count value', () => {
-    expect(buildExecutiveKpiCards({ watchlistCount: 3 })).toContain('3');
   });
 });
 
@@ -300,12 +242,6 @@ describe('buildExecutiveKpiCards — Snapshot Coverage color', () => {
 });
 
 describe('buildExecutiveKpiCards — XSS escaping', () => {
-  test('escapes forecastLevel value in output', () => {
-    const html = buildExecutiveKpiCards({ forecastLevel: '<script>alert(1)</script>' });
-    expect(html).not.toContain('<script>');
-    expect(html).toContain('&lt;script&gt;');
-  });
-
   test('renders architectureScore as string safely', () => {
     expect(buildExecutiveKpiCards({ architectureScore: 42 })).toContain('42');
   });

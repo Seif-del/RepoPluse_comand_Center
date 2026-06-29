@@ -111,27 +111,12 @@ function computeRepoPriority(repo, aq, archData, fcData) {
       : 0;
   }
 
-  var wlSev;
-  var wle = archData && archData.watchlistEscalationLevel;
-  if (wle) {
-    wlSev = wle === 'critical' ? 1.00
-          : wle === 'urgent'   ? 0.67
-          : wle === 'elevated' ? 0.33
-          : wle === 'monitor'  ? 0.17
-          :                      0;
-  } else {
-    wlSev = aqLevel === 'critical' ? 1.00
-      : aqLevel === 'high'   ? 0.67
-      : aqLevel === 'medium' ? 0.33
-      : 0;
-  }
-
   var repoLabel = repo ? (repo.label || '') : '';
   var opSev = repoLabel === 'critical'  ? 1.00
     : repoLabel === 'at-risk' ? 0.67
     : 0;
 
-  var score = archSev * 0.50 + govSev * 0.20 + fcSev * 0.20 + wlSev * 0.05 + opSev * 0.05;
+  var score = archSev * 0.50 + govSev * 0.20 + fcSev * 0.20 + opSev * 0.05;
 
   if (score >= 0.50) return 'critical';
   if (score >= 0.25) return 'elevated';
@@ -139,83 +124,62 @@ function computeRepoPriority(repo, aq, archData, fcData) {
   return 'healthy';
 }
 
-// ── buildRepoPriorityReasons (copied verbatim from dashboard.html) ────────────
-function buildRepoPriorityReasons(repo, aq, archData, fcData) {
+// ── buildArchDriversHtml (copied verbatim from dashboard.html) ───────────────
+function buildArchDriversHtml(repo, archData, fcData, archCache) {
   var items = [];
 
-  if (archData !== undefined) {
-    if (archData && archData.architectureHealthLevel) {
-      var hl = archData.architectureHealthLevel;
-      if      (hl === 'risky')   items.push({ label: 'Architecture Risky',  cls: 'severity-critical' });
-      else if (hl === 'weak')    items.push({ label: 'Architecture Weak',   cls: 'severity-elevated' });
-      else if (hl === 'watch')   items.push({ label: 'Architecture Watch',  cls: 'severity-watch' });
-      else if (hl === 'healthy') { /* healthy → no arch reason */ }
-      else                       items.push({ label: 'Coverage Gap',         cls: 'severity-watch' }); // unknown
+  // ── Per-click architecture signals (preferred over generic health level) ──
+  if (archCache) {
+    if (archCache.unresolvedApiCalls != null && archCache.unresolvedApiCalls > 0) {
+      items.push({ label: 'API Gaps',            cls: 'severity-elevated' });
+    }
+    if (items.length < 2 && archCache.implementationCompleteness != null && archCache.implementationCompleteness < 70) {
+      items.push({ label: 'Implementation Gaps', cls: 'severity-watch' });
+    }
+    var COUPLING_RISK = ['risky', 'weak', 'elevated', 'high'];
+    if (items.length < 2 && archCache.couplingRisk && COUPLING_RISK.indexOf(archCache.couplingRisk) >= 0) {
+      items.push({ label: 'High Coupling',       cls: 'severity-watch' });
+    }
+    if (items.length < 2 && archCache.boundaryViolationCount != null && archCache.boundaryViolationCount > 0) {
+      items.push({ label: 'Boundary Violations', cls: 'severity-elevated' });
+    }
+    if (items.length < 2 && archCache.confidenceLevel === 'Low') {
+      items.push({ label: 'Low Confidence',      cls: 'severity-watch' });
+    }
+  }
+
+  // ── Coverage Gap (when no architecture intel — checked after specific signals) ──
+  if (items.length === 0) {
+    var covGap = false;
+    if (archData === undefined) {
+      var s = repo ? repo.score : null;
+      if (s == null) covGap = true;
+    } else if (!archData) {
+      covGap = true;
     } else {
-      items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
+      var hl = archData.architectureHealthLevel || null;
+      if (!hl || (hl !== 'risky' && hl !== 'weak' && hl !== 'watch' && hl !== 'healthy')) {
+        covGap = true;
+      }
     }
-  } else {
-    var s = repo ? repo.score : null;
-    if (s == null) {
-      items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
-    } else if (s >= 70) {
-      items.push({ label: 'Architecture Risky', cls: 'severity-critical' });
-    } else if (s >= 45) {
-      items.push({ label: 'Architecture Weak', cls: 'severity-elevated' });
-    } else if (s >= 20) {
-      items.push({ label: 'Architecture Watch', cls: 'severity-watch' });
-    }
+    if (covGap) items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
   }
 
-  var aqLevel = aq ? (aq.attentionLevel || 'unknown') : 'unknown';
-  if (aqLevel === 'critical') {
-    items.push({ label: 'Governance Critical', cls: 'severity-critical' });
-  } else if (aqLevel === 'high') {
-    items.push({ label: 'Governance Elevated', cls: 'severity-elevated' });
-  } else if (aqLevel === 'medium') {
-    items.push({ label: 'Governance Moderate', cls: 'severity-watch' });
+  // ── Forecast signals (fills remaining slot) ────────────────────────────
+  if (items.length < 2 && fcData) {
+    var fl = fcData.forecastLevel || null;
+    if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
+    else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
+    else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch'    });
   }
 
-  if (fcData !== undefined) {
-    if (fcData && fcData.forecastLevel && fcData.forecastLevel !== 'unknown') {
-      var fl = fcData.forecastLevel;
-      if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
-      else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
-      else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch' });
-    }
-  } else {
-    var fcTrend  = derivePredictiveTrend(repo, aq);
-    var fcTLabel = fcTrend ? (fcTrend.label || '') : '';
-    if (fcTLabel === 'Escalating' || fcTLabel === 'Forecast Crit') {
-      items.push({ label: 'Forecast Critical', cls: 'severity-critical' });
-    } else if (fcTLabel === 'Deteriorating' || fcTLabel === 'Forecast High') {
-      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
-    } else if (fcTLabel === 'Volatile' || fcTLabel === 'Persistent' || fcTLabel === 'PR Risk') {
-      items.push({ label: 'Forecast Watch', cls: 'severity-watch' });
-    }
-  }
-
-  if (archData && archData.watchlistEscalationLevel) {
-    var wle2 = archData.watchlistEscalationLevel;
-    if      (wle2 === 'critical')                      items.push({ label: 'Watchlist Critical', cls: 'severity-critical' });
-    else if (wle2 === 'urgent' || wle2 === 'elevated') items.push({ label: 'Watchlist Elevated', cls: 'severity-elevated' });
-  }
-
+  // ── No evidence-based drivers found → em dash ─────────────────────────
   if (items.length === 0) {
-    var repoLabel = repo ? (repo.label || '') : '';
-    if (repoLabel === 'critical') {
-      items.push({ label: 'Operational Critical', cls: 'severity-critical' });
-    } else if (repoLabel === 'at-risk') {
-      items.push({ label: 'Operational At-Risk', cls: 'severity-elevated' });
-    }
+    return '<div class="tbl-reasons"><span style="color:var(--text-muted);">&mdash;</span></div>';
   }
 
-  if (items.length === 0) {
-    items.push({ label: 'No Significant Issues', cls: 'severity-healthy' });
-  }
-
-  var visible  = items.slice(0, 3);
-  var overflow = items.length - 3;
+  var visible  = items.slice(0, 2);
+  var overflow = items.length - 2;
   return '<div class="tbl-reasons">'
     + visible.map(function(it) {
         return '<span class="reason-tag ' + it.cls + '" title="' + esc(it.label) + '">'
@@ -266,16 +230,11 @@ function _resolveOverviewArchData(repoId) {
             : (perClickArch && perClickArch.architectureHealthScore != null) ? perClickArch.architectureHealthScore
             : null;
 
-  var wle = intel ? (intel.watchlistEscalationLevel || null) : null;
-  var wlr = intel ? (intel.watchlistReasons         || null) : null;
-
   if (!intel && !perClickArch) return null;
 
   return {
     architectureHealthLevel:  level,
     architectureHealthScore:  score,
-    watchlistEscalationLevel: wle,
-    watchlistReasons:         wlr,
   };
 }
 
@@ -357,17 +316,16 @@ describe('computeRepoPriority — architecture dimension (50%)', () => {
 });
 
 describe('computeRepoPriority — governance/attention dimension (20%)', () => {
-  // Architecture healthy (score < 20), only governance+watchlist contribute.
-  test('aq=critical, score=10 → Elevated (gov 1.0*0.20 + wl 1.0*0.05 = 0.25 → exactly Elevated threshold)', () => {
-    expect(computeRepoPriority({ score: 10, label: 'healthy' }, aqOf('critical'))).toBe('elevated');
+  // Architecture healthy (score < 20), only governance contributes.
+  test('aq=critical, score=10 → Watch (gov 1.0*0.20 = 0.20 < Elevated threshold 0.25)', () => {
+    expect(computeRepoPriority({ score: 10, label: 'healthy' }, aqOf('critical'))).toBe('watch');
   });
 
-  test('aq=high, score=10 → Watch (gov 0.67*0.20 + wl 0.67*0.05 = 0.134+0.034 = 0.168 < 0.25)', () => {
-    // 0.134 + 0.0335 = 0.1675 → Watch (below Elevated threshold)
+  test('aq=high, score=10 → Watch (gov 0.67*0.20 = 0.134 < 0.25)', () => {
     expect(computeRepoPriority({ score: 10, label: 'healthy' }, aqOf('high'))).toBe('watch');
   });
 
-  test('aq=medium, score=10 → Healthy (gov 0.33*0.20 + wl 0.33*0.05 = 0.066+0.017 = 0.083 < 0.10)', () => {
+  test('aq=medium, score=10 → Healthy (gov 0.33*0.20 = 0.066 < 0.10)', () => {
     expect(computeRepoPriority({ score: 10, label: 'healthy' }, aqOf('medium'))).toBe('healthy');
   });
 
@@ -389,13 +347,13 @@ describe('computeRepoPriority — forecast dimension (20%)', () => {
 
   test('Escalating trend → pushes score up (escalating = 1.0 * 0.20)', () => {
     const escalatingAq = aqOf('medium', { trajectory: 'escalating', reasons: [] });
-    // score=10: arch=0, gov=0.33*0.20=0.066, fc=1.0*0.20=0.20, wl=0.33*0.05=0.0165 → total 0.2825 → Elevated
+    // score=10: arch=0, gov=0.33*0.20=0.066, fc=1.0*0.20=0.20 → total 0.266 → Elevated
     expect(computeRepoPriority({ score: 10, label: 'healthy' }, escalatingAq)).toBe('elevated');
   });
 
   test('Deteriorating trend → elevated tier (0.67 * 0.20)', () => {
     const detAq = aqOf('medium', { trajectory: 'deteriorating', reasons: [] });
-    // arch=0, gov=0.0825, fc=0.134, wl=0.033 → 0.249 → Watch (just under Elevated)
+    // arch=0, gov=0.33*0.20=0.066, fc=0.67*0.20=0.134 → 0.20 → Watch (just under Elevated)
     const result = computeRepoPriority({ score: 10, label: 'healthy' }, detAq);
     expect(['watch', 'elevated']).toContain(result);
   });
@@ -422,8 +380,8 @@ describe('computeRepoPriority — combined signal escalation', () => {
     expect(computeRepoPriority({ score: 50 }, aqOf('critical'))).toBe('critical');
   });
 
-  test('arch elevated + aq=high → Critical (0.335+0.134+0.034=0.503 ≥ 0.50)', () => {
-    expect(computeRepoPriority({ score: 50 }, aqOf('high'))).toBe('critical');
+  test('arch elevated + aq=high → Elevated (0.335+0.134=0.469 < 0.50)', () => {
+    expect(computeRepoPriority({ score: 50 }, aqOf('high'))).toBe('elevated');
   });
 
   test('arch watch + aq=critical → Elevated (0.165+0.20+0.05=0.415 < 0.50)', () => {
@@ -460,10 +418,10 @@ describe('computeRepoPriority — operational risk dimension (5%)', () => {
     expect(computeRepoPriority({ score: null, label: 'at-risk' }, noAq())).toBe('watch');
   });
 
-  test('label=at-risk + aq=critical → Elevated (0+0.20+0+0.05+0.034=0.284)', () => {
-    // score=10: arch=0, gov=1.0*0.20=0.20, fc=0, wl=1.0*0.05=0.05, op=0.67*0.05=0.0335 → 0.2835 → Elevated
+  test('label=at-risk + aq=critical → Watch (0+0.20+0+0.034=0.234 < 0.25)', () => {
+    // score=10: arch=0, gov=1.0*0.20=0.20, fc=0, op=0.67*0.05=0.0335 → 0.2335 → Watch
     const result = computeRepoPriority({ score: 10, label: 'at-risk' }, aqOf('critical'));
-    expect(result).toBe('elevated');
+    expect(result).toBe('watch');
   });
 });
 
@@ -544,15 +502,15 @@ describe('computeRepoPriority — sort ordering (Priority severity first)', () =
   });
 });
 
-describe('computeRepoPriority — recalibrated weighting (50/20/20/5/5)', () => {
+describe('computeRepoPriority — recalibrated weighting (50/20/20/5)', () => {
   test('architecture critical alone forces Critical (1.0*0.50=0.50 ≥ threshold)', () => {
-    // Only arch signal; no gov/watchlist/forecast/op.
+    // Only arch signal; no gov/forecast/op.
     expect(computeRepoPriority({ score: 70 }, noAq())).toBe('critical');
   });
 
-  test('governance critical alone does not force Critical (gov+wl max = 0.20+0.05=0.25 → Elevated)', () => {
-    // score < 20 → archSev=0; aq=critical: govSev=0.20, wlSev=0.05 → total 0.25 → Elevated only
-    expect(computeRepoPriority({ score: 10, label: 'healthy' }, aqOf('critical'))).toBe('elevated');
+  test('governance critical alone does not force Critical (gov max = 0.20 → Watch)', () => {
+    // score < 20 → archSev=0; aq=critical: govSev=0.20 → total 0.20 → Watch only
+    expect(computeRepoPriority({ score: 10, label: 'healthy' }, aqOf('critical'))).toBe('watch');
   });
 
   test('forecast critical alone does not force Critical or Elevated (fc=1.0*0.20=0.20 → Watch)', () => {
@@ -586,157 +544,6 @@ describe('computeRepoPriority — recalibrated weighting (50/20/20/5/5)', () => 
   test('null architecture + aq=critical stays Elevated (not Critical)', () => {
     // arch=0.165 + gov=0.20 + wl=0.05 = 0.415 → Elevated (below 0.50 Critical threshold)
     expect(computeRepoPriority({ score: null }, aqOf('critical'))).toBe('elevated');
-  });
-});
-
-// ── buildRepoPriorityReasons ──────────────────────────────────────────────────
-
-describe('buildRepoPriorityReasons — architecture dimension', () => {
-  test('score >= 70 → "Architecture Risky" (severity-critical)', () => {
-    const out = buildRepoPriorityReasons({ score: 70 }, noAq());
-    expect(out).toContain('Architecture Risky');
-    expect(out).toContain('severity-critical');
-  });
-
-  test('score 50 → "Architecture Weak" (severity-elevated)', () => {
-    const out = buildRepoPriorityReasons({ score: 50 }, noAq());
-    expect(out).toContain('Architecture Weak');
-    expect(out).toContain('severity-elevated');
-  });
-
-  test('score 30 → "Architecture Watch" (severity-watch)', () => {
-    const out = buildRepoPriorityReasons({ score: 30 }, noAq());
-    expect(out).toContain('Architecture Watch');
-    expect(out).toContain('severity-watch');
-  });
-
-  test('score 10 (healthy) → "No Significant Issues" (severity-healthy)', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, noAq());
-    expect(out).toContain('No Significant Issues');
-    expect(out).toContain('severity-healthy');
-  });
-
-  test('score null → "Coverage Gap" instead of generic operational reasons', () => {
-    const out = buildRepoPriorityReasons({ score: null }, noAq());
-    expect(out).toContain('Coverage Gap');
-    expect(out).not.toContain('Architecture Risky');
-  });
-
-  test('null repo → "Coverage Gap" (no crash)', () => {
-    expect(() => buildRepoPriorityReasons(null, noAq())).not.toThrow();
-    const out = buildRepoPriorityReasons(null, noAq());
-    expect(out).toContain('Coverage Gap');
-  });
-});
-
-describe('buildRepoPriorityReasons — governance dimension', () => {
-  test('aq=critical, healthy arch → "Governance Critical"', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, aqOf('critical'));
-    expect(out).toContain('Governance Critical');
-    expect(out).toContain('severity-critical');
-  });
-
-  test('aq=high → "Governance Elevated"', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, aqOf('high'));
-    expect(out).toContain('Governance Elevated');
-    expect(out).toContain('severity-elevated');
-  });
-
-  test('aq=medium → "Governance Moderate"', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, aqOf('medium'));
-    expect(out).toContain('Governance Moderate');
-    expect(out).toContain('severity-watch');
-  });
-
-  test('aq=low → no governance reason → "No Significant Issues"', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'healthy' }, aqOf('low'));
-    expect(out).not.toContain('Governance');
-    expect(out).toContain('No Significant Issues');
-  });
-});
-
-describe('buildRepoPriorityReasons — forecast dimension', () => {
-  test('escalating trajectory → "Forecast Critical"', () => {
-    const out = buildRepoPriorityReasons({ score: 10 }, aqOf('low', { trajectory: 'escalating', reasons: [] }));
-    expect(out).toContain('Forecast Critical');
-    expect(out).toContain('severity-critical');
-  });
-
-  test('deteriorating trajectory → "Forecast Degrading"', () => {
-    const out = buildRepoPriorityReasons({ score: 10 }, aqOf('low', { trajectory: 'deteriorating', reasons: [] }));
-    expect(out).toContain('Forecast Degrading');
-    expect(out).toContain('severity-elevated');
-  });
-
-  test('volatile trajectory → "Forecast Watch"', () => {
-    const out = buildRepoPriorityReasons({ score: 10 }, aqOf('low', { trajectory: 'volatile', reasons: ['Volatile operational trajectory'] }));
-    expect(out).toContain('Forecast Watch');
-    expect(out).toContain('severity-watch');
-  });
-
-  test('Critical forecast level reason → "Forecast Critical"', () => {
-    const out = buildRepoPriorityReasons({ score: 10 }, aqOf('low', { trajectory: null, reasons: ['Critical forecast level detected'] }));
-    expect(out).toContain('Forecast Critical');
-  });
-});
-
-describe('buildRepoPriorityReasons — priority ordering', () => {
-  test('arch risky + gov critical + escalating → all three reasons present', () => {
-    const aq = aqOf('critical', { trajectory: 'escalating', reasons: [] });
-    const out = buildRepoPriorityReasons({ score: 75 }, aq);
-    expect(out).toContain('Architecture Risky');
-    expect(out).toContain('Governance Critical');
-    expect(out).toContain('Forecast Critical');
-  });
-
-  test('architecture reason appears before governance in output', () => {
-    const out = buildRepoPriorityReasons({ score: 50 }, aqOf('critical'));
-    const archIdx = out.indexOf('Architecture Weak');
-    const govIdx  = out.indexOf('Governance Critical');
-    expect(archIdx).toBeGreaterThanOrEqual(0);
-    expect(govIdx).toBeGreaterThanOrEqual(0);
-    expect(archIdx).toBeLessThan(govIdx);
-  });
-
-  test('max 3 reasons shown — overflow suppressed via +N badge', () => {
-    // arch + gov + forecast = 3 items → no overflow badge (exactly at limit)
-    const aq = aqOf('critical', { trajectory: 'escalating', reasons: [] });
-    const out = buildRepoPriorityReasons({ score: 75 }, aq);
-    expect(out).not.toContain('reason-tag-more');
-  });
-});
-
-describe('buildRepoPriorityReasons — operational fallback rules', () => {
-  test('operational label=critical shown only when no arch/gov/forecast signal', () => {
-    // score < 20 → no arch; no aq; no trend → only op signal
-    const out = buildRepoPriorityReasons({ score: 10, label: 'critical' }, noAq());
-    expect(out).toContain('Operational Critical');
-  });
-
-  test('operational label=at-risk shown when no other signals', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'at-risk' }, noAq());
-    expect(out).toContain('Operational At-Risk');
-  });
-
-  test('operational label suppressed when arch signal exists', () => {
-    // arch risky + op critical → op should NOT appear
-    const out = buildRepoPriorityReasons({ score: 75, label: 'critical' }, noAq());
-    expect(out).toContain('Architecture Risky');
-    expect(out).not.toContain('Operational Critical');
-  });
-
-  test('operational label suppressed when governance signal exists', () => {
-    // healthy arch + aq=critical → governance shown, op NOT shown
-    const out = buildRepoPriorityReasons({ score: 10, label: 'critical' }, aqOf('critical'));
-    expect(out).toContain('Governance Critical');
-    expect(out).not.toContain('Operational Critical');
-  });
-
-  test('null score + no aq + no label → "Coverage Gap" (not operational fallback)', () => {
-    const out = buildRepoPriorityReasons({ score: null, label: 'healthy' }, noAq());
-    expect(out).toContain('Coverage Gap');
-    expect(out).not.toContain('Operational');
-    expect(out).not.toContain('No Significant Issues');
   });
 });
 
@@ -825,77 +632,255 @@ describe('computeRepoPriority — fcData parameter (real architecture forecast)'
   });
 });
 
-// ── buildRepoPriorityReasons — real architecture data ────────────────────────
+// ── buildArchDriversHtml ─────────────────────────────────────────────────────
 
-describe('buildRepoPriorityReasons — archData parameter', () => {
-  test('archData=null → Coverage Gap (not Healthy, not operational)', () => {
-    const out = buildRepoPriorityReasons({ score: 5, label: 'healthy' }, noAq(), null, null);
+describe('buildArchDriversHtml — architecture health level mapping', () => {
+  test('archData.level=risky → em dash (no health-label chips)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Low Health');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('archData.level=weak → em dash (no health-label chips)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'weak' }, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Weak Health');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('archData.level=watch → em dash (no health-label chips)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'watch' }, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Health Watch');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('archData.level=healthy → em dash (health labels removed)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Healthy');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('archData=null → "Coverage Gap" (severity-watch)', () => {
+    const out = buildArchDriversHtml({}, null, null);
     expect(out).toContain('Coverage Gap');
-    expect(out).not.toContain('No Significant Issues');
-    expect(out).not.toContain('Operational');
+    expect(out).toContain('severity-watch');
   });
 
-  test('archData.level=risky overrides low repo.score → Architecture Risky', () => {
-    // repo.score=5 (healthy operational) — archData must win
-    const out = buildRepoPriorityReasons({ score: 5 }, noAq(), { architectureHealthLevel: 'risky' }, null);
-    expect(out).toContain('Architecture Risky');
-    expect(out).toContain('severity-critical');
-    expect(out).not.toContain('Coverage Gap');
+  test('archData.level unknown/missing → "Coverage Gap"', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'unknown' }, null);
+    expect(out).toContain('Coverage Gap');
   });
 
-  test('archData.level=weak → Architecture Weak', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'weak' }, null);
-    expect(out).toContain('Architecture Weak');
-    expect(out).toContain('severity-elevated');
-  });
-
-  test('archData.level=healthy → no arch reason → No Significant Issues', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, null);
-    expect(out).not.toContain('Architecture');
-    expect(out).not.toContain('Coverage Gap');
-    expect(out).toContain('No Significant Issues');
+  test('archData.level absent (no level key) → "Coverage Gap"', () => {
+    const out = buildArchDriversHtml({}, {}, null);
+    expect(out).toContain('Coverage Gap');
   });
 });
 
-describe('buildRepoPriorityReasons — fcData parameter', () => {
-  test('fcData.forecastLevel=critical → Forecast Critical', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, { forecastLevel: 'critical' });
+describe('buildArchDriversHtml — legacy path (archData=undefined)', () => {
+  test('score=null → "Coverage Gap"', () => {
+    const out = buildArchDriversHtml({ score: null }, undefined, null);
+    expect(out).toContain('Coverage Gap');
+  });
+
+  test('score=20 (< 45) → em dash (health labels removed, no Coverage Gap for non-null score)', () => {
+    const out = buildArchDriversHtml({ score: 20 }, undefined, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Low Health');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('score=60 (45-69) → em dash (health labels removed)', () => {
+    const out = buildArchDriversHtml({ score: 60 }, undefined, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Weak Health');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('score=75 (70-84) → em dash (health labels removed)', () => {
+    const out = buildArchDriversHtml({ score: 75 }, undefined, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Health Watch');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('score=90 (≥ 85) → em dash (health labels removed)', () => {
+    const out = buildArchDriversHtml({ score: 90 }, undefined, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Healthy');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('null repo → "Coverage Gap" (no crash)', () => {
+    expect(() => buildArchDriversHtml(null, undefined, null)).not.toThrow();
+    expect(buildArchDriversHtml(null, undefined, null)).toContain('Coverage Gap');
+  });
+});
+
+describe('buildArchDriversHtml — forecast slot', () => {
+  test('healthy arch + fcData.level=critical → Forecast Critical in slot 2', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, { forecastLevel: 'critical' });
     expect(out).toContain('Forecast Critical');
     expect(out).toContain('severity-critical');
   });
 
-  test('fcData.forecastLevel=high → Forecast Degrading', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, { forecastLevel: 'high' });
+  test('healthy arch + fcData.level=high → Forecast Degrading', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, { forecastLevel: 'high' });
     expect(out).toContain('Forecast Degrading');
     expect(out).toContain('severity-elevated');
   });
 
-  test('fcData.forecastLevel=watch → Forecast Watch', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, { forecastLevel: 'watch' });
+  test('healthy arch + fcData.level=watch → Forecast Watch', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, { forecastLevel: 'watch' });
     expect(out).toContain('Forecast Watch');
+    expect(out).toContain('severity-watch');
   });
 
-  test('fcData.forecastLevel=stable → no forecast reason', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, { forecastLevel: 'stable' });
+  test('healthy arch + fcData.level=stable → no forecast driver → em dash', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, { forecastLevel: 'stable' });
     expect(out).not.toContain('Forecast');
-    expect(out).toContain('No Significant Issues');
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Healthy');
   });
 
-  test('fcData=null → no forecast reason emitted', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, null);
+  test('fcData=null → no forecast driver', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null);
     expect(out).not.toContain('Forecast');
   });
 
-  test('archData.level=risky + fcData.level=critical → both Architecture Risky and Forecast Critical', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'risky' }, { forecastLevel: 'critical' });
-    expect(out).toContain('Architecture Risky');
+  test('risky arch + fcData=critical → Forecast Critical only (Low Health is now fallback-only)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, { forecastLevel: 'critical' });
     expect(out).toContain('Forecast Critical');
+    expect(out).not.toContain('Low Health');
+    const tags = (out.match(/class="reason-tag /g) || []).length;
+    expect(tags).toBe(1);
   });
 
-  test('archData=null + fcData.level=critical → Coverage Gap + Forecast Critical', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), null, { forecastLevel: 'critical' });
+  test('null archData + fcData.level=critical → Coverage Gap + Forecast Critical', () => {
+    const out = buildArchDriversHtml({}, null, { forecastLevel: 'critical' });
     expect(out).toContain('Coverage Gap');
     expect(out).toContain('Forecast Critical');
+  });
+});
+
+describe('buildArchDriversHtml — no operational signals', () => {
+  test('does not emit "No Commits" driver', () => {
+    const out = buildArchDriversHtml({ score: 90, label: 'at-risk' }, { architectureHealthLevel: 'healthy' }, null);
+    expect(out).not.toContain('No Commits');
+  });
+
+  test('does not emit "Bus Factor" driver', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null);
+    expect(out).not.toContain('Bus Factor');
+  });
+
+  test('does not emit "Low Activity" driver', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null);
+    expect(out).not.toContain('Low Activity');
+  });
+
+  test('does not emit "CI Unknown" driver', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null);
+    expect(out).not.toContain('CI Unknown');
+  });
+
+  test('does not emit governance labels', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null);
+    expect(out).not.toContain('Governance');
+  });
+});
+
+describe('buildArchDriversHtml — max 2 chips and structure', () => {
+  test('max 2 chips visible (null archData + critical forecast → Coverage Gap + Forecast Critical)', () => {
+    const out = buildArchDriversHtml({}, null, { forecastLevel: 'critical' });
+    expect(out).toContain('Coverage Gap');
+    expect(out).toContain('Forecast Critical');
+    const tags = (out.match(/class="reason-tag /g) || []).length;
+    expect(tags).toBe(2);
+  });
+
+  test('healthy arch with no forecast → em dash (0 chips)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null);
+    expect(out).toContain('&mdash;');
+    const tags = (out.match(/class="reason-tag /g) || []).length;
+    expect(tags).toBe(0);
+  });
+
+  test('output is wrapped in tbl-reasons div', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null);
+    expect(out).toContain('class="tbl-reasons"');
+  });
+});
+
+// ── buildArchDriversHtml — per-click architecture signals ────────────────────
+
+describe('buildArchDriversHtml — per-click architecture signals (archCache)', () => {
+  test('unresolvedApiCalls > 0 → API Gaps (severity-elevated)', () => {
+    const out = buildArchDriversHtml({}, null, null, { unresolvedApiCalls: 3 });
+    expect(out).toContain('API Gaps');
+    expect(out).toContain('severity-elevated');
+  });
+
+  test('implementationCompleteness < 70 → Implementation Gaps (severity-watch)', () => {
+    const out = buildArchDriversHtml({}, null, null, { implementationCompleteness: 50 });
+    expect(out).toContain('Implementation Gaps');
+    expect(out).toContain('severity-watch');
+  });
+
+  test('couplingRisk=risky → High Coupling (severity-watch)', () => {
+    const out = buildArchDriversHtml({}, null, null, { couplingRisk: 'risky' });
+    expect(out).toContain('High Coupling');
+    expect(out).toContain('severity-watch');
+  });
+
+  test('couplingRisk=weak → High Coupling', () => {
+    const out = buildArchDriversHtml({}, null, null, { couplingRisk: 'weak' });
+    expect(out).toContain('High Coupling');
+  });
+
+  test('boundaryViolationCount > 0 → Boundary Violations (severity-elevated)', () => {
+    const out = buildArchDriversHtml({}, null, null, { boundaryViolationCount: 2 });
+    expect(out).toContain('Boundary Violations');
+    expect(out).toContain('severity-elevated');
+  });
+
+  test('confidenceLevel=Low → Low Confidence (severity-watch)', () => {
+    const out = buildArchDriversHtml({}, null, null, { confidenceLevel: 'Low' });
+    expect(out).toContain('Low Confidence');
+    expect(out).toContain('severity-watch');
+  });
+
+  test('archCache signals preferred over health level: risky health + API Gaps → shows API Gaps not Low Health', () => {
+    const out = buildArchDriversHtml(
+      {},
+      { architectureHealthLevel: 'risky' },
+      null,
+      { unresolvedApiCalls: 5 }
+    );
+    expect(out).toContain('API Gaps');
+    expect(out).not.toContain('Low Health');
+  });
+
+  test('archCache=null → em dash (health level labels removed)', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Low Health');
+  });
+
+  test('max 2 from archCache signals: API Gaps + Implementation Gaps → only 2 chips', () => {
+    const out = buildArchDriversHtml({}, null, null, {
+      unresolvedApiCalls: 3,
+      implementationCompleteness: 50,
+      boundaryViolationCount: 1,
+      couplingRisk: 'risky',
+    });
+    const tags = (out.match(/class="reason-tag /g) || []).length;
+    expect(tags).toBe(2);
+    expect(out).toContain('API Gaps');
+    expect(out).toContain('Implementation Gaps');
   });
 });
 
@@ -956,116 +941,7 @@ describe('mergeRepoIntelligence — merge behavior', () => {
   });
 });
 
-// ── computeRepoPriority — watchlist escalation from archData ─────────────────
 
-describe('computeRepoPriority — watchlist escalation via archData', () => {
-  test('archData.watchlistEscalationLevel=critical → wlSev=1.00 (0.05 contribution)', () => {
-    // arch=healthy(0), gov=0, fc=0 (null), wl=1.0*0.05=0.05 → Healthy (below 0.10)
-    expect(computeRepoPriority(
-      {}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'critical' },
-      null
-    )).toBe('healthy');
-  });
-
-  test('arch=null + watchlist=critical → Watch (arch 0.165 + wl 0.05 = 0.215)', () => {
-    // archData null → archSev=0.33, wle=critical → wlSev=1.0
-    expect(computeRepoPriority(
-      {}, noAq(),
-      { architectureHealthLevel: null, watchlistEscalationLevel: 'critical' },
-      null
-    )).toBe('watch');
-  });
-
-  test('arch=risky + watchlist=critical → score 0.50+0.05=0.55 → Critical', () => {
-    expect(computeRepoPriority(
-      {}, noAq(),
-      { architectureHealthLevel: 'risky', watchlistEscalationLevel: 'critical' },
-      null
-    )).toBe('critical');
-  });
-
-  test('watchlist=urgent → wlSev=0.67 (0.034 contribution)', () => {
-    // arch=healthy(0), wl=0.67*0.05=0.034 → Healthy
-    expect(computeRepoPriority(
-      {}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'urgent' },
-      null
-    )).toBe('healthy');
-  });
-
-  test('no archData.watchlistEscalationLevel → falls back to aqLevel', () => {
-    // govSev from aq=critical + wlSev from aq=critical → 0.20+0.05=0.25 → Elevated
-    expect(computeRepoPriority(
-      {}, aqOf('critical'),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: null },
-      null
-    )).toBe('elevated');
-  });
-});
-
-// ── buildRepoPriorityReasons — watchlist escalation ──────────────────────────
-
-describe('buildRepoPriorityReasons — watchlist escalation', () => {
-  test('watchlistEscalationLevel=critical emits Watchlist Critical', () => {
-    const out = buildRepoPriorityReasons(
-      {}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'critical' },
-      null
-    );
-    expect(out).toContain('Watchlist Critical');
-    expect(out).toContain('severity-critical');
-  });
-
-  test('watchlistEscalationLevel=urgent emits Watchlist Elevated (collapsed to ELEVATED tier)', () => {
-    const out = buildRepoPriorityReasons(
-      {}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'urgent' },
-      null
-    );
-    expect(out).toContain('Watchlist Elevated');
-    expect(out).not.toContain('Watchlist Urgent');
-    expect(out).toContain('severity-elevated');
-  });
-
-  test('watchlistEscalationLevel=elevated emits Watchlist Elevated (severity-elevated)', () => {
-    const out = buildRepoPriorityReasons(
-      {}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'elevated' },
-      null
-    );
-    expect(out).toContain('Watchlist Elevated');
-    expect(out).toContain('severity-elevated');
-  });
-
-  test('watchlist=monitor → no watchlist reason emitted', () => {
-    const out = buildRepoPriorityReasons(
-      {}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'monitor' },
-      null
-    );
-    expect(out).not.toContain('Watchlist');
-  });
-
-  test('arch=risky overrides display order before watchlist', () => {
-    const out = buildRepoPriorityReasons(
-      {}, noAq(),
-      { architectureHealthLevel: 'risky', watchlistEscalationLevel: 'critical' },
-      null
-    );
-    const archIdx = out.indexOf('Architecture Risky');
-    const wlIdx   = out.indexOf('Watchlist Critical');
-    expect(archIdx).toBeGreaterThanOrEqual(0);
-    expect(wlIdx).toBeGreaterThanOrEqual(0);
-    expect(archIdx).toBeLessThan(wlIdx);
-  });
-
-  test('null archData → Coverage Gap, no watchlist reason', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), null, null);
-    expect(out).toContain('Coverage Gap');
-    expect(out).not.toContain('Watchlist');
-  });
-});
 
 // ── portfolio intelligence → table priority hydration ────────────────────────
 
@@ -1148,12 +1024,11 @@ describe('_resolveOverviewArchData — source precedence', () => {
   });
 
   test('intel without arch data but exists → returns object with null level (Coverage Gap, not Loading)', () => {
-    mergeRepoIntelligence(3, { watchlistEscalationLevel: 'critical' });
+    mergeRepoIntelligence(3, { hasArchitectureSnapshot: false });
     const d = _resolveOverviewArchData(3);
     expect(d).not.toBeNull();                          // object, not null → no "Loading..."
     expect(d.architectureHealthLevel).toBeNull();      // Coverage Gap
     expect(d.architectureHealthScore).toBeNull();
-    expect(d.watchlistEscalationLevel).toBe('critical');
   });
 
   test('no intel but per-click arch exists → uses per-click', () => {
@@ -1178,11 +1053,6 @@ describe('_resolveOverviewArchData — source precedence', () => {
     expect(d.architectureHealthLevel).toBe('risky');   // 30 < 45 → risky via score derivation
   });
 
-  test('watchlistEscalationLevel from intel propagated', () => {
-    mergeRepoIntelligence(8, { architectureHealthLevel: 'weak', watchlistEscalationLevel: 'critical' });
-    const d = _resolveOverviewArchData(8);
-    expect(d.watchlistEscalationLevel).toBe('critical');
-  });
 });
 
 // ── _resolveOverviewFcData ────────────────────────────────────────────────────
@@ -1483,21 +1353,47 @@ function buildArchitectureAssessment(opts) {
   var hasSnap  = !!(opts && opts.hasArchitectureSnapshot);
   var conf     = (opts && opts.architectureConfidence) || null;
 
+  // ── Evidence collection (from per-click archCache fields) ────────────
+  var bv    = (opts && opts.boundaryViolationCount     != null) ? opts.boundaryViolationCount     : 0;
+  var api   = (opts && opts.unresolvedApiCalls         != null) ? opts.unresolvedApiCalls         : 0;
+  var impl  = (opts && opts.implementationCompleteness != null) ? opts.implementationCompleteness : null;
+  var coup  = (opts && opts.couplingRisk)              || null;
+  var COUP_ELEVATED = ['risky', 'weak', 'elevated', 'high'];
+  var evidence = [];
+  if (bv > 0)   evidence.push(bv   + ' boundary violation'  + (bv  !== 1 ? 's' : ''));
+  if (api > 0)  evidence.push(api  + ' unresolved API linkage' + (api !== 1 ? 's' : ''));
+  if (impl != null && impl < 70) evidence.push('implementation completeness at ' + impl + '%');
+  if (coup && COUP_ELEVATED.indexOf(coup) >= 0) evidence.push('coupling concentration elevated');
+
+  // ── Primary tier ────────────────────────────────────────────────────
   var isCritical = priority === 'critical' || (score != null && score < 45);
   var tier, text, cls;
+  var note = score != null ? ' (score: ' + score + ')' : '';
 
   if (isCritical) {
     tier = 'critical'; cls = 'severity-critical';
-    var note = score != null ? ' (score: ' + score + ')' : '';
-    text = 'Architecture health is critical' + note
-         + '. Structural indicators suggest significant implementation, coupling, or integration risk.';
+    text = 'Architecture health is critical' + note + '.';
+    if (evidence.length > 0) {
+      text += ' Detected: ' + evidence.join(', ') + '.';
+    } else {
+      text += ' Structural indicators suggest significant implementation, coupling, or integration risk.';
+    }
   } else if (priority === 'elevated') {
     tier = 'elevated'; cls = 'severity-high';
-    text = 'Architecture health requires attention. Structural quality indicators show elevated risk'
-         + ' that should be reviewed before additional complexity is introduced.';
+    text = 'Architecture health requires attention' + note + '.';
+    if (evidence.length > 0) {
+      text += ' Detected: ' + evidence.join(', ') + '.';
+    } else {
+      text += ' Structural quality indicators show elevated risk'
+           + ' that should be reviewed before additional complexity is introduced.';
+    }
   } else if (priority === 'watch') {
     tier = 'watch'; cls = 'severity-medium';
-    text = 'Architecture is currently stable but exhibits signals that should remain under observation.';
+    if (evidence.length > 0) {
+      text = 'Architecture is under observation' + note + '. Detected: ' + evidence.join(', ') + '.';
+    } else {
+      text = 'Architecture is currently stable but exhibits signals that should remain under observation.';
+    }
   } else if (priority === 'healthy') {
     tier = 'healthy'; cls = 'severity-healthy';
     text = 'Architecture appears structurally healthy with no significant architectural risk indicators detected.';
@@ -1571,10 +1467,6 @@ function buildOverviewCardsHtml(repo, aq, archData, fcData) {
     else                       { archCardVal = 'Coverage Gap'; archCardCls = 'severity-medium'; }
   }
 
-  var ovPriKey = computeRepoPriority(repo, aq, archData, fcData);
-  var ovPriVal = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' }[ovPriKey] || ovPriKey;
-  var ovPriCls = { critical: 'severity-critical', elevated: 'severity-elevated', watch: 'severity-watch', healthy: 'severity-healthy' }[ovPriKey] || 'severity-unknown';
-
   var ovFcVal, ovFcCls;
   if (!fcData || !fcData.forecastLevel) {
     ovFcVal = 'Not Enough History'; ovFcCls = 'severity-unknown';
@@ -1620,7 +1512,6 @@ function buildOverviewCardsHtml(repo, aq, archData, fcData) {
   });
 
   return card('Architecture Health',    archCardVal, archCardCls)
-    + card('Architectural Priority',    ovPriVal,    ovPriCls)
     + card('Forecast',                  ovFcVal,     ovFcCls)
     + card('Governance',                ovGovVal,    ovGovCls)
     + card('Snapshot Coverage',         ovSnapVal,   ovSnapCls)
@@ -1639,7 +1530,7 @@ function buildAttentionDriversHtml(aq) {
         + '<span class="attn-driver-pts">+' + esc(String(d.contribution)) + '</span>'
         + '</li>';
     }).join('');
-  return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Top Risk Drivers</div>'
+  return '<div class="repo-detail-label section-secondary" style="margin-top:18px;">Operational Risk Drivers</div>'
     + '<ul class="attn-driver-list">' + rows + '</ul>';
 }
 
@@ -1664,15 +1555,17 @@ describe('buildOverviewCardsHtml — Overview uses portfolio intel immediately',
     expect(html).not.toContain('Coverage Gap');
   });
 
-  test('Overview Priority matches table priority when intel=risky → both Critical', () => {
+  test('Overview Architecture Health shows Risky when intel=risky (priority card removed)', () => {
     mergeRepoIntelligence(100, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
     const arch = _resolveOverviewArchData(100);
     const fc   = _resolveOverviewFcData(100);
-    // Table uses computeRepoPriority directly from intel-derived archData
+    // Table priority still correctly computes 'critical'
     const tablePri = computeRepoPriority(REPO, null, arch, fc);
     expect(tablePri).toBe('critical');
+    // Overview shows Architecture Health "Risky" (priority card no longer present)
     const html = buildOverviewCardsHtml(REPO, null, arch, fc, null);
-    expect(html).toContain('Critical');
+    expect(html).toContain('Risky');
+    expect(html).not.toContain('Architectural Priority');
   });
 
   test('intel arch=risky + in-flight fetch → still shows Risky (intel wins over Loading)', () => {
@@ -2292,6 +2185,88 @@ describe('buildArchitectureAssessment — combined scenarios', () => {
     expect(a.text).not.toContain('Forecast');
     expect(a.text).not.toContain('coverage is incomplete');
     expect(a.text).not.toContain('Assessment confidence is reduced');
+  });
+});
+
+// ── buildArchitectureAssessment — evidence-based text ────────────────────────
+
+describe('buildArchitectureAssessment — evidence-based text', () => {
+  const snapConf = { hasArchitectureSnapshot: true, architectureConfidence: 'High', forecastLevel: 'medium' };
+
+  test('critical + boundary violations → "Detected: N boundary violations."', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority:   'critical',
+      boundaryViolationCount:  3,
+    });
+    expect(a.text).toContain('Detected: 3 boundary violations.');
+    expect(a.text).not.toContain('Structural indicators suggest');
+  });
+
+  test('critical + unresolved API calls → "Detected: N unresolved API linkages."', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority:  'critical',
+      unresolvedApiCalls:     5,
+    });
+    expect(a.text).toContain('Detected: 5 unresolved API linkages.');
+  });
+
+  test('elevated + implementationCompleteness < 70 → evidence text', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority:      'elevated',
+      implementationCompleteness: 55,
+    });
+    expect(a.text).toContain('Detected: implementation completeness at 55%.');
+    expect(a.text).not.toContain('Structural quality indicators show elevated risk');
+  });
+
+  test('watch + couplingRisk=risky → "Architecture is under observation. Detected: coupling concentration elevated."', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority: 'watch',
+      couplingRisk:          'risky',
+    });
+    expect(a.text).toContain('Architecture is under observation');
+    expect(a.text).toContain('Detected: coupling concentration elevated.');
+    expect(a.text).not.toContain('currently stable but exhibits signals');
+  });
+
+  test('watch + no evidence → generic stable text preserved', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority: 'watch',
+    });
+    expect(a.text).toContain('Architecture is currently stable but exhibits signals that should remain under observation.');
+  });
+
+  test('critical + no evidence → generic critical text preserved', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority: 'critical',
+    });
+    expect(a.text).toContain('Structural indicators suggest significant implementation, coupling, or integration risk.');
+  });
+
+  test('singular boundary violation: 1 → "1 boundary violation" (no s)', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority:  'critical',
+      boundaryViolationCount: 1,
+    });
+    expect(a.text).toContain('1 boundary violation.');
+    expect(a.text).not.toContain('1 boundary violations');
+  });
+
+  test('multiple evidence items joined with comma', () => {
+    const a = buildArchitectureAssessment({
+      ...snapConf,
+      architecturalPriority:  'critical',
+      boundaryViolationCount: 2,
+      unresolvedApiCalls:     4,
+    });
+    expect(a.text).toContain('2 boundary violations, 4 unresolved API linkages');
   });
 });
 
@@ -3143,66 +3118,9 @@ describe('buildArchitectureRiskProfileHtml — reads archCache fields written by
   });
 });
 
-// ── Severity vocabulary alignment — reason tags use CRITICAL/ELEVATED/WATCH/HEALTHY ──
+// ── Overview — Architectural Priority card removed ────────────────────────────
 
-describe('buildRepoPriorityReasons — severity vocabulary alignment', () => {
-  test('Architecture Weak emits severity-elevated (not severity-high)', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'weak' }, null);
-    expect(out).toContain('Architecture Weak');
-    expect(out).toContain('severity-elevated');
-    expect(out).not.toContain('severity-high');
-  });
-
-  test('Architecture Watch emits severity-watch (not severity-medium)', () => {
-    const out = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'watch' }, null);
-    expect(out).toContain('Architecture Watch');
-    expect(out).toContain('severity-watch');
-    expect(out).not.toContain('severity-medium');
-  });
-
-  test('Coverage Gap (null archData) emits severity-watch', () => {
-    const out = buildRepoPriorityReasons(null, noAq(), null, null);
-    expect(out).toContain('Coverage Gap');
-    expect(out).toContain('severity-watch');
-    expect(out).not.toContain('severity-medium');
-  });
-
-  test('Coverage Gap (legacy null score) emits severity-watch', () => {
-    const out = buildRepoPriorityReasons({ score: null }, noAq());
-    expect(out).toContain('Coverage Gap');
-    expect(out).toContain('severity-watch');
-  });
-
-  test('Operational At-Risk emits severity-elevated (not severity-high)', () => {
-    const out = buildRepoPriorityReasons({ score: 10, label: 'at-risk' }, noAq());
-    expect(out).toContain('Operational At-Risk');
-    expect(out).toContain('severity-elevated');
-    expect(out).not.toContain('severity-high');
-  });
-
-  test('urgent and elevated watchlist both collapse to Watchlist Elevated / severity-elevated', () => {
-    const outU = buildRepoPriorityReasons({}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'urgent' }, null);
-    const outE = buildRepoPriorityReasons({}, noAq(),
-      { architectureHealthLevel: 'healthy', watchlistEscalationLevel: 'elevated' }, null);
-    expect(outU).toContain('Watchlist Elevated');
-    expect(outU).toContain('severity-elevated');
-    expect(outU).not.toContain('Watchlist Urgent');
-    expect(outE).toContain('Watchlist Elevated');
-    expect(outE).toContain('severity-elevated');
-  });
-
-  test('severity-critical and severity-healthy are unchanged', () => {
-    const crit = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'risky' }, null);
-    expect(crit).toContain('severity-critical');
-    const heal = buildRepoPriorityReasons({}, noAq(), { architectureHealthLevel: 'healthy' }, null);
-    expect(heal).toContain('severity-healthy');
-  });
-});
-
-// ── Overview card Architectural Priority badge uses aligned vocabulary ─────────
-
-describe('buildOverviewCardsHtml — Architectural Priority badge vocabulary alignment', () => {
+describe('buildOverviewCardsHtml — Architectural Priority card removed', () => {
   const REPO_V = { id: 550, fullName: 'org/vocab-test', score: null, label: 'healthy' };
 
   beforeEach(() => {
@@ -3212,35 +3130,33 @@ describe('buildOverviewCardsHtml — Architectural Priority badge vocabulary ali
     _archFetchInFlightByRepoId = {};
   });
 
-  test('elevated priority repo → priority badge uses severity-elevated', () => {
+  test('overview does not render "Architectural Priority" card label', () => {
     mergeRepoIntelligence(550, { architectureHealthLevel: 'weak', architectureHealthScore: 55 });
     const arch = _resolveOverviewArchData(550);
-    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('elevated');
     const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
-    expect(html).toContain('severity-elevated');
+    expect(html).not.toContain('Architectural Priority');
   });
 
-  test('watch priority repo → priority badge uses severity-watch', () => {
-    mergeRepoIntelligence(550, { architectureHealthLevel: 'watch', architectureHealthScore: 75 });
-    const arch = _resolveOverviewArchData(550);
-    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('watch');
-    const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
-    expect(html).toContain('severity-watch');
-  });
-
-  test('critical priority repo → priority badge uses severity-critical (unchanged)', () => {
+  test('Architecture Health card still present after priority card removal', () => {
     mergeRepoIntelligence(550, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
     const arch = _resolveOverviewArchData(550);
-    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('critical');
     const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('Architecture Health');
     expect(html).toContain('severity-critical');
   });
 
-  test('healthy priority repo → priority badge uses severity-healthy (unchanged)', () => {
+  test('Architecture Health shows "Risky" for risky level', () => {
+    mergeRepoIntelligence(550, { architectureHealthLevel: 'risky', architectureHealthScore: 22 });
+    const arch = _resolveOverviewArchData(550);
+    const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('Risky');
+  });
+
+  test('Architecture Health shows "Healthy" for healthy level', () => {
     mergeRepoIntelligence(550, { architectureHealthLevel: 'healthy', architectureHealthScore: 90 });
     const arch = _resolveOverviewArchData(550);
-    expect(computeRepoPriority(REPO_V, null, arch, null)).toBe('healthy');
     const html = buildOverviewCardsHtml(REPO_V, null, arch, null, null);
+    expect(html).toContain('Healthy');
     expect(html).toContain('severity-healthy');
   });
 });
@@ -3272,11 +3188,11 @@ describe('buildAttentionDriversHtml — guard conditions', () => {
 });
 
 describe('buildAttentionDriversHtml — render', () => {
-  test('section heading "Top Risk Drivers" present when drivers non-empty', () => {
+  test('section heading "Operational Risk Drivers" present when drivers non-empty', () => {
     const html = buildAttentionDriversHtml({
       drivers: [{ label: 'CI pipeline is failing', contribution: 40 }],
     });
-    expect(html).toContain('Top Risk Drivers');
+    expect(html).toContain('Operational Risk Drivers');
     expect(html).not.toContain('Attention Drivers');
   });
 
