@@ -892,3 +892,308 @@ describe('assessImplementationCompleteness — frontendBackendCoverage', () => {
     expect(r.frontendBackendCoverage.backendCoveragePercent).toBe(80);
   });
 });
+
+// ── execution/* service-layer detection ──────────────────────────────────────
+
+describe('assessImplementationCompleteness — execution/* service-layer detection', () => {
+  test('route importing execution/* does NOT emit route_without_service_path (Mode 1)', () => {
+    // This repo uses execution/ as its service layer, not services/.
+    // hasServiceLayer=true because services/alertDecision.js etc. exist at root level.
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/routes/notificationRoutes.js', "const { getNotifications } = require('../../execution/notifications/getNotifications');\nrouter.get('/', async (req, res) => res.json(await getNotifications({ db: req.app.locals.db, userId: req.user.userId })));\n")],
+      inventory: makeInventory({
+        routes:   ['backend/routes/notificationRoutes.js'],
+        services: ['services/alertDecision.js'],
+        hasApiLayer: true, hasServiceLayer: true,
+      }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [
+          { from: 'backend/routes/notificationRoutes.js', to: 'execution/notifications/getNotifications.js', importPath: '../../execution/notifications/getNotifications', importType: 'require' },
+        ],
+      }),
+    });
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+
+  test('route importing execution/* is counted as having a service import', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      inventory: makeInventory({
+        routes:   ['backend/routes/notificationRoutes.js'],
+        services: ['services/alertDecision.js'],
+        hasApiLayer: true, hasServiceLayer: true,
+      }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [
+          { from: 'backend/routes/notificationRoutes.js', to: 'execution/notifications/getNotifications.js', importPath: '../../execution/notifications/getNotifications', importType: 'require' },
+        ],
+      }),
+    });
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(1);
+  });
+
+  test('all routes using execution/* produce 100% routeServiceCoverage (Mode 1)', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      inventory: makeInventory({
+        routes:   ['backend/routes/authRoutes.js', 'backend/routes/notificationRoutes.js'],
+        services: ['services/alertDecision.js'],
+        hasApiLayer: true, hasServiceLayer: true,
+      }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [
+          { from: 'backend/routes/authRoutes.js',         to: 'execution/auth/exchangeOAuthCode.js',            importPath: '../../execution/auth/exchangeOAuthCode',            importType: 'require' },
+          { from: 'backend/routes/notificationRoutes.js', to: 'execution/notifications/getNotifications.js',    importPath: '../../execution/notifications/getNotifications',    importType: 'require' },
+        ],
+      }),
+    });
+    expect(r.routeServiceCoverage.coveragePercent).toBe(100);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+
+  test('execution/* edge prevents scaffold-like classification', () => {
+    // A static-JSON route would normally be scaffold_like, but an execution/ import
+    // means it has real orchestration — _isScaffoldLike should return false.
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/routes/notificationRoutes.js', "router.get('/notifications', (req, res) => res.json([]));\n")],
+      inventory: makeInventory({
+        routes:   ['backend/routes/notificationRoutes.js'],
+        services: ['services/alertDecision.js'],
+        hasApiLayer: true, hasServiceLayer: true,
+      }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [
+          { from: 'backend/routes/notificationRoutes.js', to: 'execution/notifications/getNotifications.js', importPath: '../../execution/notifications/getNotifications', importType: 'require' },
+        ],
+      }),
+    });
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeUndefined();
+  });
+
+  test('services/* paths still recognized after regex update (regression guard)', () => {
+    // Existing services/ convention must continue to be recognized.
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      inventory: makeInventory({
+        routes:   ['routes/users.js'],
+        services: ['services/UserService.js'],
+        hasApiLayer: true, hasServiceLayer: true,
+      }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [
+          { from: 'routes/users.js', to: 'services/UserService.js', importPath: '../services/UserService', importType: 'require' },
+        ],
+      }),
+    });
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(1);
+  });
+
+  test('mixed routes: execution/* and services/* both count toward coverage', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      inventory: makeInventory({
+        routes:   ['routes/users.js', 'backend/routes/notificationRoutes.js'],
+        services: ['services/UserService.js'],
+        hasApiLayer: true, hasServiceLayer: true,
+      }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [
+          { from: 'routes/users.js',                      to: 'services/UserService.js',                     importPath: '../services/UserService',                     importType: 'require' },
+          { from: 'backend/routes/notificationRoutes.js', to: 'execution/notifications/getNotifications.js', importPath: '../../execution/notifications/getNotifications', importType: 'require' },
+        ],
+      }),
+    });
+    expect(r.routeServiceCoverage.routeFileCount).toBe(2);
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(2);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(100);
+  });
+});
+
+// ── False-positive suppression: module.exports + .md exclusion ───────────────
+
+describe('assessImplementationCompleteness — false-positive suppression (Step #9)', () => {
+  test('exported pure function with return [] is not flagged as placeholder', () => {
+    // Pure computation module: no require/async, but has module.exports — should be suppressed.
+    const code = [
+      "'use strict';",
+      'function getPortfolioHistory(rows) {',
+      '  if (!Array.isArray(rows)) return [];',
+      '  return rows.map(function(r) { return { id: r.id, score: r.score }; });',
+      '}',
+      'module.exports = { getPortfolioHistory };',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('execution/risk/getPortfolioHistory.js', code)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('execution/risk/getPortfolioHistory.js');
+  });
+
+  test('exported pure function with return null is not flagged as placeholder', () => {
+    const code = [
+      "'use strict';",
+      'function scoreRepositoryMaturity(isoDate) {',
+      '  if (!isoDate) return null;',
+      '  var ms = Date.parse(isoDate);',
+      '  if (!isFinite(ms)) return null;',
+      '  return ms;',
+      '}',
+      'module.exports = { scoreRepositoryMaturity };',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('execution/risk/scoreRepositoryMaturity.js', code)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('execution/risk/scoreRepositoryMaturity.js');
+  });
+
+  test('module containing "placeholder" in a recommendation string is not flagged when exported', () => {
+    // Architecture analyzer recommends "resolve placeholder patterns" — the word appears in a string,
+    // not as a stub signal. The module.exports makes it rich code.
+    const code = [
+      "'use strict';",
+      'function analyzeArchitectureDrift(before, after) {',
+      '  var recs = [];',
+      "  recs.push('Review new implementation weakness signals and resolve placeholder or scaffold patterns.');",
+      '  return { recs: recs };',
+      '}',
+      'module.exports = { analyzeArchitectureDrift };',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('execution/architecture/analyzeArchitectureDrift.js', code)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('execution/architecture/analyzeArchitectureDrift.js');
+  });
+
+  test('markdown file containing "Placeholder charts" is not flagged', () => {
+    // Wireframe specs and documentation contain "Placeholder" as English prose — not code stubs.
+    const mdContent = [
+      '# Dashboard Wireframe',
+      '',
+      '| Section | Content |',
+      '|---------|---------|',
+      '| Charts  | Placeholder charts |',
+      '| Cards   | Placeholder cards  |',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('frontend/27_dashboard_wireframe_spec.md', mdContent)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('frontend/27_dashboard_wireframe_spec.md');
+  });
+
+  test('PROGRESS.md mentioning placeholder in prose is not flagged', () => {
+    const mdContent = '# PROGRESS.md\n\nCapability: expose incomplete or placeholder implementations\n';
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('PROGRESS.md', mdContent)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('PROGRESS.md');
+  });
+
+  test('real stub — throw Not implemented without module.exports — is still flagged', () => {
+    // No module.exports, no require, no async — a genuine unimplemented stub.
+    const code = "function login() { throw new Error('Not implemented'); }";
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('execution/auth/login.js', code)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeDefined();
+    expect(r.placeholderAssessment.files).toContain('execution/auth/login.js');
+  });
+
+  test('real stub — TODO in a file without exports — is still flagged', () => {
+    const code = "// TODO: implement rate limiting\nfunction rateLimit() {}";
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('middleware/rateLimit.js', code)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeDefined();
+  });
+
+  test('named exported function with return null guard is not flagged (not scaffold or placeholder)', () => {
+    // A named, exported pure function with a return-null guard is a legitimate module — not a stub.
+    // Both a named function definition AND module.exports must be present for suppression.
+    const code = [
+      "'use strict';",
+      'function nullGuard(x) {',
+      '  if (!x) return null;',
+      '  return x.value;',
+      '}',
+      'module.exports = { nullGuard };',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('execution/risk/nullGuard.js', code)],
+    });
+    // Not in routeFiles/componentFiles inventory, so no scaffold signal
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeUndefined();
+    // Named function + module.exports suppresses the return-null guard-clause false positive
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+  });
+});
+
+describe('assessImplementationCompleteness — false-positive suppression (Step #12)', () => {
+  test('HTML file with placeholder= attributes and return null guards is not flagged', () => {
+    // frontend/dashboard.html: placeholder= is an HTML input hint attribute, not a code stub.
+    // return null in frontend fetch wrappers are HTTP guard clauses, not unimplemented stubs.
+    const html = [
+      '<input type="search" id="repo-search-input" placeholder="Search repositories…">',
+      '<script>',
+      'function loadArchitecture(repoId) {',
+      '  return fetch(\'/api/repos/\' + repoId + \'/architecture\')',
+      '    .then(function(r) {',
+      '      if (r.status === 401 || r.status === 403) return null;',
+      '      if (!r.ok) return null;',
+      '      return r.json().catch(function() { return null; });',
+      '    });',
+      '}',
+      '</script>',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('frontend/dashboard.html', html)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('frontend/dashboard.html');
+  });
+
+  test('manage-repos.html with placeholder= attribute is not flagged', () => {
+    const html = '<input type="url" class="url-input" placeholder="https://github.com/owner/repo">';
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('frontend/manage-repos.html', html)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('frontend/manage-repos.html');
+  });
+
+  test('markdown exclusion still works after adding html exclusion (regression guard)', () => {
+    const mdContent = '# Spec\n\nTODO: add placeholder charts\nreturn null when no data';
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('spec/wireframe.md', mdContent)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('spec/wireframe.md');
+  });
+
+  test('real JavaScript stub is still flagged after adding html exclusion (regression guard)', () => {
+    const code = "// TODO: implement session refresh\nfunction refreshSession() {}";
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('execution/auth/refreshSession.js', code)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeDefined();
+    expect(r.placeholderAssessment.files).toContain('execution/auth/refreshSession.js');
+  });
+});

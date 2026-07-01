@@ -2531,7 +2531,7 @@
     function buildArchDriversHtml(repo, archData, fcData, archCache) {
       var items = [];
 
-      // ── Per-click architecture signals (preferred over generic health level) ──
+      // ── Strong signals (preferred, up to 2) ───────────────────────────────
       if (archCache) {
         if (archCache.unresolvedApiCalls != null && archCache.unresolvedApiCalls > 0) {
           items.push({ label: 'API Gaps',            cls: 'severity-elevated' });
@@ -2539,19 +2539,16 @@
         if (items.length < 2 && archCache.implementationCompleteness != null && archCache.implementationCompleteness < 70) {
           items.push({ label: 'Implementation Gaps', cls: 'severity-watch' });
         }
+        if (items.length < 2 && archCache.boundaryViolationCount != null && archCache.boundaryViolationCount > 0) {
+          items.push({ label: 'Boundary Violations', cls: 'severity-elevated' });
+        }
         var COUPLING_RISK = ['risky', 'weak', 'elevated', 'high'];
         if (items.length < 2 && archCache.couplingRisk && COUPLING_RISK.indexOf(archCache.couplingRisk) >= 0) {
           items.push({ label: 'High Coupling',       cls: 'severity-watch' });
         }
-        if (items.length < 2 && archCache.boundaryViolationCount != null && archCache.boundaryViolationCount > 0) {
-          items.push({ label: 'Boundary Violations', cls: 'severity-elevated' });
-        }
-        if (items.length < 2 && archCache.confidenceLevel === 'Low') {
-          items.push({ label: 'Low Confidence',      cls: 'severity-watch' });
-        }
       }
 
-      // ── Coverage Gap (when no architecture intel — checked after specific signals) ──
+      // ── Coverage Gap (when no architecture intel — checked after strong signals) ──
       if (items.length === 0) {
         var covGap = false;
         if (archData === undefined) {
@@ -2568,12 +2565,22 @@
         if (covGap) items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
       }
 
-      // ── Forecast signals (fills remaining slot) ────────────────────────────
+      // ── Strong forecast signals (fills remaining slot up to 2) ────────────
       if (items.length < 2 && fcData) {
         var fl = fcData.forecastLevel || null;
-        if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
-        else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
-        else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch'    });
+        if      (fl === 'critical') items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
+        else if (fl === 'high')     items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
+      }
+
+      // ── Fallback signals (one only, when no stronger evidence exists) ──────
+      if (items.length === 0) {
+        if (archCache && archCache.couplingRisk === 'watch') {
+          items.push({ label: 'Weak Coupling',  cls: 'severity-watch' });
+        } else if (fcData && (fcData.forecastLevel === 'medium' || fcData.forecastLevel === 'watch')) {
+          items.push({ label: 'Forecast Watch', cls: 'severity-watch' });
+        } else if (archCache && archCache.confidenceLevel === 'low') {
+          items.push({ label: 'Low Confidence', cls: 'severity-watch' });
+        }
       }
 
       // ── No evidence-based drivers found → em dash ─────────────────────────
@@ -7657,9 +7664,29 @@
             _mergeIntelByName(r.repoName, {
               repoName:                r.repoName,
               architectureHealthScore: hs,
-              architectureHealthLevel: _archLevelFromScore(hs),
+              architectureHealthLevel: r.architectureHealthLevel || _archLevelFromScore(hs),
               hasArchitectureSnapshot: true,
             });
+          });
+          // Bug Fix #2: seed _archDataByRepoId from portfolio response so Architecture
+          // Drivers chips appear on initial page load without a per-click fetch.
+          // A richer per-click entry (already loaded) is never overwritten.
+          benched.forEach(function(r) {
+            if (r.repoId == null) return;
+            if (_archDataByRepoId[r.repoId]) return;
+            _archDataByRepoId[r.repoId] = {
+              architectureHealthLevel:    r.architectureHealthLevel    || 'unknown',
+              architectureHealthScore:    r.architectureHealthScore    != null ? r.architectureHealthScore    : null,
+              confidenceLevel:            r.confidenceLevel            || 'unknown',
+              unresolvedApiCalls:         r.unresolvedApiCalls         != null ? r.unresolvedApiCalls         : 0,
+              implementationCompleteness: r.implementationCompleteness != null ? r.implementationCompleteness : null,
+              couplingRisk:               r.couplingRisk               || 'healthy',
+              boundaryViolationCount:     r.boundaryViolationCount     != null ? r.boundaryViolationCount     : 0,
+              apiLinkageLevel:            null,
+              implementationLevel:        null,
+              boundaryHealthScore:        null,
+              linkageScore:               null,
+            };
           });
           if (_repos.length) applyFilter();
         })

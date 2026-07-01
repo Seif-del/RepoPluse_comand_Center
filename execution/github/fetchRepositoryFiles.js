@@ -5,7 +5,8 @@
 //
 // Input:  { accessToken, fullName, branch?, fetchFn }
 // Output: { files: Array<{ path, content, sizeBytes, language, lastModified }>,
-//           debug: { branch, fetchedTreeCount, eligibleFileCount, fetchedFileCount, skippedFileCount } }
+//           debug: { branch, fetchedTreeCount, eligibleFileCount, fetchedFileCount,
+//                     skippedFileCount, failedFetchCount, skippedLargeFileCount } }
 //
 // Branch handling:
 //   - If branch is omitted (or blank), fetches /repos/{fullName} to get default_branch.
@@ -16,13 +17,17 @@
 //   - Skips unsupported/binary extensions
 //   - Caps at 300 files total
 //   - Caps per-file content at 400 KB (decoded)
-//   - Resilient to individual blob failures (Promise.allSettled)
+//   - Fetches blob content with throttled concurrency (not unbounded parallel)
+//     to avoid triggering GitHub secondary rate limiting on larger repos
+//   - Resilient to individual blob failures (Promise.allSettled semantics)
 //   - Never executes code or writes to disk
 //   - Never includes access token in returned objects or thrown errors
 
 const GITHUB_API          = 'https://api.github.com';
 const MAX_FILES           = 300;
 const MAX_FILE_SIZE_BYTES = 400 * 1024;
+const CONCURRENCY_LIMIT   = 8;
+const MAX_BLOB_WARNINGS   = 10;
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
@@ -93,6 +98,35 @@ function _githubHeaders(accessToken) {
   };
 }
 
+// Runs `worker` over `items` with at most `limit` in flight at once.
+// Returns an array of Promise.allSettled-shaped results, aligned by index
+// with `items`, so callers can keep treating outcomes the same way.
+async function _runWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runOne() {
+    for (;;) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      try {
+        results[currentIndex] = { status: 'fulfilled', value: await worker(items[currentIndex]) };
+      } catch (err) {
+        results[currentIndex] = { status: 'rejected', reason: err };
+      }
+    }
+  }
+
+  const workerCount = Math.min(limit, items.length);
+  const runners = [];
+  for (let i = 0; i < workerCount; i++) {
+    runners.push(runOne());
+  }
+  await Promise.all(runners);
+  return results;
+}
+
 /**
  * Fetches text source files from a GitHub repository.
  *
@@ -104,7 +138,8 @@ function _githubHeaders(accessToken) {
  * @returns {Promise<{
  *   files: Array<{path, content, sizeBytes, language, lastModified}>,
  *   debug: { branch: string, fetchedTreeCount: number, eligibleFileCount: number,
- *            fetchedFileCount: number, skippedFileCount: number }
+ *            fetchedFileCount: number, skippedFileCount: number,
+ *            failedFetchCount: number, skippedLargeFileCount: number }
  * }>}
  * @throws {Error} code INVALID_ACCESS_TOKEN — accessToken not a non-empty string
  * @throws {Error} code INVALID_ARGUMENT     — fullName not a non-empty string
@@ -188,48 +223,91 @@ async function fetchRepositoryFiles(params) {
     .filter(function(item) { return !_isTestFile(item.path); })
     .slice(0, MAX_FILES);
 
-  // ── Stage 3: fetch content for each file (resilient) ─────────────────────────
-  const settlements = await Promise.allSettled(
-    eligible.map(async function(item) {
-      const contentRes = await fetchFn(
-        GITHUB_API + '/repos/' + fullName + '/contents/' + item.path + '?ref=' + branch,
-        { headers }
-      );
-      if (!contentRes.ok) {
-        console.warn('[architecture] github blob fetch failed', { repo: fullName, branch, path: item.path, status: contentRes.status });
-        return null;
-      }
+  // ── Stage 3: fetch content for each file (throttled, resilient) ──────────────
+  // Bounded to CONCURRENCY_LIMIT in-flight requests at a time instead of firing
+  // all eligible blob requests in parallel, to avoid GitHub secondary rate
+  // limiting silently dropping a large fraction of the file sample.
+  const settlements = await _runWithConcurrency(eligible, CONCURRENCY_LIMIT, async function(item) {
+    const contentRes = await fetchFn(
+      GITHUB_API + '/repos/' + fullName + '/contents/' + item.path + '?ref=' + branch,
+      { headers }
+    );
+    if (!contentRes.ok) {
+      return { outcome: 'failed', path: item.path, status: contentRes.status };
+    }
 
-      const data = await contentRes.json();
-      if (!data.content || data.encoding !== 'base64') return null;
+    const data = await contentRes.json();
+    if (!data.content || data.encoding !== 'base64') {
+      return { outcome: 'failed', path: item.path, status: contentRes.status };
+    }
 
-      const decoded  = Buffer.from(data.content, 'base64').toString('utf8');
-      const sizeBytes = Buffer.byteLength(decoded, 'utf8');
-      if (sizeBytes > MAX_FILE_SIZE_BYTES) return null;
+    const decoded   = Buffer.from(data.content, 'base64').toString('utf8');
+    const sizeBytes = Buffer.byteLength(decoded, 'utf8');
+    if (sizeBytes > MAX_FILE_SIZE_BYTES) {
+      return { outcome: 'large', path: item.path };
+    }
 
-      return {
+    return {
+      outcome: 'ok',
+      file: {
         path:         item.path,
         content:      decoded,
         sizeBytes:    sizeBytes,
         language:     _language(item.path),
         lastModified: null,
-      };
-    })
-  );
+      },
+    };
+  });
 
-  // ── Stage 4: collect fulfilled non-null files ─────────────────────────────────
-  const files = settlements
-    .filter(function(r) { return r.status === 'fulfilled' && r.value !== null; })
-    .map(function(r) { return r.value; });
+  // ── Stage 4: collect outcomes, split failures vs. oversized skips ────────────
+  const files               = [];
+  const failedBlobWarnings  = [];
+  let   failedFetchCount    = 0;
+  let   skippedLargeFileCount = 0;
+
+  settlements.forEach(function(r, idx) {
+    if (r.status === 'rejected') {
+      failedFetchCount++;
+      failedBlobWarnings.push({ path: eligible[idx].path, status: null, message: r.reason && r.reason.message });
+      return;
+    }
+    const outcome = r.value;
+    if (outcome.outcome === 'ok') {
+      files.push(outcome.file);
+    } else if (outcome.outcome === 'large') {
+      skippedLargeFileCount++;
+    } else {
+      failedFetchCount++;
+      failedBlobWarnings.push({ path: outcome.path, status: outcome.status });
+    }
+  });
+
+  // Cap individual per-file warnings so a large-scale rate-limit event doesn't
+  // flood logs; emit one summary warning for whatever wasn't logged individually.
+  failedBlobWarnings.slice(0, MAX_BLOB_WARNINGS).forEach(function(w) {
+    const logEntry = { repo: fullName, branch, path: w.path, status: w.status };
+    if (w.message) logEntry.message = w.message;
+    console.warn('[architecture] github blob fetch failed', logEntry);
+  });
+  if (failedBlobWarnings.length > MAX_BLOB_WARNINGS) {
+    console.warn('[architecture] github blob fetch failures summary', {
+      repo:                        fullName,
+      branch,
+      failedFetchCount:            failedBlobWarnings.length,
+      additionalFailuresNotLogged: failedBlobWarnings.length - MAX_BLOB_WARNINGS,
+    });
+  }
 
   return {
     files,
     debug: {
       branch,
-      fetchedTreeCount:  tree.length,
-      eligibleFileCount: eligible.length,
-      fetchedFileCount:  files.length,
-      skippedFileCount:  eligible.length - files.length,
+      fetchedTreeCount:      tree.length,
+      eligibleFileCount:     eligible.length,
+      fetchedFileCount:      files.length,
+      skippedFileCount:      failedFetchCount + skippedLargeFileCount,
+      failedFetchCount:      failedFetchCount,
+      skippedLargeFileCount: skippedLargeFileCount,
     },
   };
 }

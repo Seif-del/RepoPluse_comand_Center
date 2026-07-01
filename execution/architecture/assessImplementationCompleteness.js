@@ -35,6 +35,12 @@ function _isRichCode(nonCommentCode) {
   if (/\b[A-Z][A-Za-z]*Controller\s*\.\s*[a-z]/.test(nonCommentCode)) return true;
   if (/\b[A-Z][A-Za-z]*Repository\s*\.\s*[a-z]/.test(nonCommentCode)) return true;
   if (/\bdb\s*\./.test(nonCommentCode))                              return true;
+  // Pure computation modules: named function definition + module.exports both required.
+  // This suppresses false positives from guard clauses (return null/[]) and domain-vocabulary
+  // strings in fully implemented modules. Empty stubs (module.exports = {}) and arrow-function
+  // stubs (module.exports = { fn: () => throw ... }) are intentionally NOT suppressed here.
+  if (/\bfunction\s+[A-Za-z_$]\w*\s*\(/.test(nonCommentCode) &&
+      /\bmodule\.exports\b/.test(nonCommentCode))                    return true;
   return false;
 }
 
@@ -102,7 +108,7 @@ function _isScaffoldLike(file, edges, routeFiles, componentFiles, frontendFiles)
   const content  = file.content || '';
 
   const hasServiceEdge = edges.some(function(e) {
-    return e.from === filePath && /services?\//i.test(e.to);
+    return e.from === filePath && /(services?|execution)\//i.test(e.to);
   });
   if (hasServiceEdge) return false;
 
@@ -258,7 +264,7 @@ function assessImplementationCompleteness(params) {
     const serviceFileSet = new Set(serviceFiles);
     routeFiles.forEach(function(rf) {
       const hasEdge = edges.some(function(e) {
-        return e.from === rf && (serviceFileSet.has(e.to) || /services?\//i.test(e.to));
+        return e.from === rf && (serviceFileSet.has(e.to) || /(services?|execution)\//i.test(e.to));
       });
       if (hasEdge) {
         routeFilesWithServiceImportCount++;
@@ -270,7 +276,7 @@ function assessImplementationCompleteness(params) {
     // Count service edges even if no signal (for coverage metric)
     routeFiles.forEach(function(rf) {
       const hasEdge = edges.some(function(e) {
-        return e.from === rf && /services?\//i.test(e.to);
+        return e.from === rf && /(services?|execution)\//i.test(e.to);
       });
       if (hasEdge) routeFilesWithServiceImportCount++;
     });
@@ -294,6 +300,8 @@ function assessImplementationCompleteness(params) {
 
   const placeholderFilesList = [];
   files.forEach(function(f) {
+    if (/\.md$/i.test(f.path))   return;
+    if (/\.html$/i.test(f.path)) return;
     if (_hasPlaceholderHint(f.content)) {
       placeholderFilesList.push(f.path);
     }

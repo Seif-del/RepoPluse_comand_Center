@@ -408,6 +408,64 @@ describe('syncRepositoryArchitectureSnapshots', () => {
     );
   });
 
+  // ── Low fetch coverage warning (Architecture Risk Reduction Step #3) ──────
+
+  it('logs a warning when fetched/eligible file ratio is below 80%, but still refreshes', async () => {
+    const logger = makeLogger();
+    fetchRepositoryFiles.mockResolvedValue({
+      files: MOCK_FILES_RESULT.files,
+      debug: { branch: 'main', fetchedTreeCount: 10, eligibleFileCount: 10, fetchedFileCount: 5, failedFetchCount: 5, skippedLargeFileCount: 0 },
+    });
+    const db     = makeDb({ rows: [makeRow({ snapshotAt: null })] });
+    const result = await callSync({ db, logger });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[syncArchSnapshots] low file fetch coverage for repo',
+      1, 'owner/repo',
+      expect.objectContaining({ eligibleFileCount: 10, fetchedFileCount: 5 })
+    );
+    expect(result.refreshed).toBe(1);
+    expect(result.results[0].status).toBe('refreshed');
+  });
+
+  it('does not log a low-coverage warning when fetched/eligible ratio is at or above 80%', async () => {
+    const logger = makeLogger();
+    fetchRepositoryFiles.mockResolvedValue({
+      files: MOCK_FILES_RESULT.files,
+      debug: { branch: 'main', fetchedTreeCount: 10, eligibleFileCount: 10, fetchedFileCount: 8, failedFetchCount: 2, skippedLargeFileCount: 0 },
+    });
+    const db = makeDb({ rows: [makeRow({ snapshotAt: null })] });
+    await callSync({ db, logger });
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      '[syncArchSnapshots] low file fetch coverage for repo',
+      expect.anything(), expect.anything(), expect.anything()
+    );
+  });
+
+  it('does not log a low-coverage warning when eligibleFileCount is 0', async () => {
+    const logger = makeLogger();
+    fetchRepositoryFiles.mockResolvedValue({
+      files: [],
+      debug: { branch: 'main', fetchedTreeCount: 0, eligibleFileCount: 0, fetchedFileCount: 0, failedFetchCount: 0, skippedLargeFileCount: 0 },
+    });
+    buildRepositoryArchitectureSnapshot.mockReturnValue(MOCK_SNAPSHOT_NO_FILES);
+    const db = makeDb({ rows: [makeRow({ snapshotAt: null })] });
+    await callSync({ db, logger });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not fail or skip the snapshot when coverage is low', async () => {
+    fetchRepositoryFiles.mockResolvedValue({
+      files: MOCK_FILES_RESULT.files,
+      debug: { branch: 'main', fetchedTreeCount: 10, eligibleFileCount: 10, fetchedFileCount: 3, failedFetchCount: 7, skippedLargeFileCount: 0 },
+    });
+    const db     = makeDb({ rows: [makeRow({ snapshotAt: null })] });
+    const result = await callSync({ db });
+    expect(result.failed).toBe(0);
+    expect(result.refreshed).toBe(1);
+    const insertCalled = db.query.mock.calls.some(c => c[0].includes('INSERT INTO repo_architecture_snapshots'));
+    expect(insertCalled).toBe(true);
+  });
+
   // ── repoName passed through ───────────────────────────────────────────────
 
   it('passes fullName as repoName to buildRepositoryArchitectureSnapshot', async () => {

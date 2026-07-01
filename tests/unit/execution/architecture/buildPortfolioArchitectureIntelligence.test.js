@@ -708,6 +708,135 @@ describe('buildPortfolioArchitectureIntelligence — benchmarkedRepositories', (
   });
 });
 
+// ── benchmarkedRepositories — driver signal fields (Bug Fix #2) ───────────────
+
+describe('buildPortfolioArchitectureIntelligence — benchmarkedRepositories driver signal fields', () => {
+  it('includes unresolvedApiCalls from apiLinkage.coverage.unresolvedFrontendCallCount', () => {
+    const repos = [makeRepo({ repoId: 1, apiLinkage: { coverage: { frontendCallCount: 10, backendRouteCount: 10, linkedFrontendCallCount: 4, unresolvedFrontendCallCount: 6, orphanedBackendRouteCount: 0, frontendCoveragePercent: 40, backendCoveragePercent: 100 } } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].unresolvedApiCalls).toBe(6);
+  });
+
+  it('unresolvedApiCalls is 0 when coverage is missing', () => {
+    const repos = [makeRepo({ repoId: 1, apiLinkage: {} })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].unresolvedApiCalls).toBe(0);
+  });
+
+  it('includes implementationCompleteness from implementationCompleteness.completenessScore', () => {
+    const repos = [makeRepo({ repoId: 1, implementationCompleteness: { completenessScore: 55, completenessLevel: 'partial', signals: [], placeholderAssessment: { placeholderCount: 0, files: [] }, scaffoldAssessment: { scaffoldLikeFileCount: 0, files: [] } } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].implementationCompleteness).toBe(55);
+  });
+
+  it('implementationCompleteness is null when completenessScore is absent', () => {
+    const repos = [makeRepo({ repoId: 1, implementationCompleteness: {} })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].implementationCompleteness).toBeNull();
+  });
+
+  it('includes boundaryViolationCount as violations array length', () => {
+    const repos = [makeRepo({ repoId: 1, boundaryVerification: { violations: [
+      { type: 'frontend_imports_backend', severity: 'high', summary: 's1' },
+      { type: 'model_imports_route',      severity: 'medium', summary: 's2' },
+    ] } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].boundaryViolationCount).toBe(2);
+  });
+
+  it('boundaryViolationCount is 0 when violations is empty', () => {
+    const repos = [makeRepo({ repoId: 1, boundaryVerification: { violations: [] } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].boundaryViolationCount).toBe(0);
+  });
+
+  it('boundaryViolationCount is 0 when boundaryVerification is missing', () => {
+    const repos = [makeRepo({ repoId: 1, boundaryVerification: {} })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].boundaryViolationCount).toBe(0);
+  });
+
+  it('includes per-repo confidenceLevel', () => {
+    const repos = [makeRepo({ repoId: 1, confidenceLevel: 'medium' })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].confidenceLevel).toBe('medium');
+  });
+
+  it('confidenceLevel defaults to unknown when missing', () => {
+    const repo = makeRepo({ repoId: 1 });
+    delete repo.confidenceLevel;
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: [repo] });
+    expect(benchmarkedRepositories[0].confidenceLevel).toBe('unknown');
+  });
+
+  it('couplingRisk is healthy when no coupling signals', () => {
+    const repos = [makeHealthyRepo(1, 'a/a')];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].couplingRisk).toBe('healthy');
+  });
+
+  it('couplingRisk is watch when circularDependencyCount > 0', () => {
+    const repos = [makeRepo({ repoId: 1, dependencyGraph: { couplingMetrics: { totalEdges: 10, circularDependencyCount: 1, highFanOutFiles: [], highFanInFiles: [] } } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].couplingRisk).toBe('watch');
+  });
+
+  it('couplingRisk is weak when circularDependencyCount > 2', () => {
+    const repos = [makeRepo({ repoId: 1, dependencyGraph: { couplingMetrics: { totalEdges: 20, circularDependencyCount: 3, highFanOutFiles: [], highFanInFiles: [] } } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].couplingRisk).toBe('weak');
+  });
+
+  it('couplingRisk is risky when circularDependencyCount > 5', () => {
+    const repos = [makeRepo({ repoId: 1, dependencyGraph: { couplingMetrics: { totalEdges: 50, circularDependencyCount: 6, highFanOutFiles: [], highFanInFiles: [] } } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].couplingRisk).toBe('risky');
+  });
+
+  it('couplingRisk is risky when highFanOutFiles > 5', () => {
+    const repos = [makeRepo({ repoId: 1, dependencyGraph: { couplingMetrics: { totalEdges: 10, circularDependencyCount: 0, highFanOutFiles: ['a','b','c','d','e','f'], highFanInFiles: [] } } })];
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: repos });
+    expect(benchmarkedRepositories[0].couplingRisk).toBe('risky');
+  });
+
+  it('couplingRisk is healthy when dependencyGraph is missing', () => {
+    const repo = makeRepo({ repoId: 1 });
+    delete repo.dependencyGraph;
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: [repo] });
+    expect(benchmarkedRepositories[0].couplingRisk).toBe('healthy');
+  });
+
+  it('risky repo from makeRiskyRepo produces correct driver signals', () => {
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: [makeRiskyRepo(1, 'a/a')] });
+    const entry = benchmarkedRepositories[0];
+    expect(entry.unresolvedApiCalls).toBe(6);
+    expect(entry.implementationCompleteness).toBe(40);
+    expect(entry.couplingRisk).toBe('weak');
+    expect(entry.boundaryViolationCount).toBe(1);
+    expect(entry.confidenceLevel).toBe('low');
+  });
+
+  it('healthy repo from makeHealthyRepo produces zero/clean driver signals', () => {
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: [makeHealthyRepo(1, 'a/a')] });
+    const entry = benchmarkedRepositories[0];
+    expect(entry.unresolvedApiCalls).toBe(0);
+    expect(entry.implementationCompleteness).toBe(88);
+    expect(entry.couplingRisk).toBe('healthy');
+    expect(entry.boundaryViolationCount).toBe(0);
+    expect(entry.confidenceLevel).toBe('high');
+  });
+
+  it('all five driver signal fields are present in every entry', () => {
+    const { benchmarkedRepositories } = buildPortfolioArchitectureIntelligence({ repositories: [makeRepo({ repoId: 1 })] });
+    const entry = benchmarkedRepositories[0];
+    expect(entry).toHaveProperty('unresolvedApiCalls');
+    expect(entry).toHaveProperty('implementationCompleteness');
+    expect(entry).toHaveProperty('couplingRisk');
+    expect(entry).toHaveProperty('boundaryViolationCount');
+    expect(entry).toHaveProperty('confidenceLevel');
+  });
+});
+
 // ── Top findings aggregation ──────────────────────────────────────────────────
 
 describe('buildPortfolioArchitectureIntelligence — topFindings', () => {

@@ -358,6 +358,29 @@ function _benchmarkedRepositories(repos) {
       ? percentileMap.get(repo.repoId)
       : 0;
     const relPos = _relativePosition(percentile, repo.architectureHealthLevel || 'unknown');
+
+    // Per-repo driver signal fields (Bug Fix #2): populate Architecture Drivers on
+    // initial table render without requiring a per-click /api/repos/:id/architecture fetch.
+    const cm     = (repo.dependencyGraph && repo.dependencyGraph.couplingMetrics) || null;
+    const apiCov = (repo.apiLinkage && repo.apiLinkage.coverage) || {};
+    const ic     = repo.implementationCompleteness || {};
+    const bvArr  = (repo.boundaryVerification && Array.isArray(repo.boundaryVerification.violations))
+                 ? repo.boundaryVerification.violations : [];
+
+    // Mirror frontend _deriveCouplingLevel() thresholds exactly.
+    let couplingRisk;
+    if (!cm) {
+      couplingRisk = 'healthy';
+    } else {
+      const circular = _safeNumber(cm.circularDependencyCount);
+      const avgOut   = typeof cm.averageOutDegree === 'number' ? cm.averageOutDegree : 0;
+      const fanOut   = _safeArray(cm.highFanOutFiles).length;
+      if      (circular > 5 || avgOut > 8 || fanOut > 5) couplingRisk = 'risky';
+      else if (circular > 2 || avgOut > 5 || fanOut > 2) couplingRisk = 'weak';
+      else if (circular > 0 || avgOut > 3 || fanOut > 0) couplingRisk = 'watch';
+      else                                                 couplingRisk = 'healthy';
+    }
+
     return {
       repoId:                  repo.repoId,
       repoName:                repo.repoName,
@@ -365,7 +388,12 @@ function _benchmarkedRepositories(repos) {
       architectureHealthLevel: repo.architectureHealthLevel || 'unknown',
       rank,
       percentile,
-      relativePosition: relPos,
+      relativePosition:        relPos,
+      unresolvedApiCalls:         _safeNumber(apiCov.unresolvedFrontendCallCount),
+      implementationCompleteness: typeof ic.completenessScore === 'number' ? ic.completenessScore : null,
+      couplingRisk,
+      boundaryViolationCount:     bvArr.length,
+      confidenceLevel:            repo.confidenceLevel || 'unknown',
     };
   });
 }

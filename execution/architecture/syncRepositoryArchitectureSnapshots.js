@@ -14,12 +14,15 @@
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const DEFAULT_LIMIT  = 10;
+const MIN_FETCH_COVERAGE_RATIO = 0.8; // warn when fetched/eligible files drops below 80%
 
 /**
  * @param {object}   params
  * @param {object}   params.db                                - pg pool (query method)
  * @param {Function} params.decryptToken                      - (ciphertext) => plaintext
  * @param {Function} params.fetchRepositoryFiles              - ({ accessToken, fullName }) => { files, debug }
+ *   debug may include eligibleFileCount/fetchedFileCount/failedFetchCount/skippedLargeFileCount;
+ *   a warning is logged (not a failure) when fetched/eligible coverage drops below 80%
  * @param {Function} params.buildRepositoryArchitectureSnapshot
  * @param {Date}    [params.now]                              - current time (default: new Date())
  * @param {number}  [params.ttlMs]                           - freshness threshold ms (default: 6 h)
@@ -117,6 +120,19 @@ async function syncRepositoryArchitectureSnapshots({
       const fetchResult = await fetchRepositoryFiles({ accessToken, fullName });
       files         = fetchResult.files;
       defaultBranch = (fetchResult.debug && fetchResult.debug.branch) || 'main';
+
+      // ── Warn (do not fail) when file coverage looks unreliable ───────────
+      const debug = fetchResult.debug || {};
+      const eligibleFileCount = debug.eligibleFileCount || 0;
+      const fetchedFileCount  = debug.fetchedFileCount  || 0;
+      if (eligibleFileCount > 0 && (fetchedFileCount / eligibleFileCount) < MIN_FETCH_COVERAGE_RATIO) {
+        logger.warn('[syncArchSnapshots] low file fetch coverage for repo', repoId, fullName, {
+          eligibleFileCount,
+          fetchedFileCount,
+          failedFetchCount:      debug.failedFetchCount,
+          skippedLargeFileCount: debug.skippedLargeFileCount,
+        });
+      }
     } catch (err) {
       logger.warn('[syncArchSnapshots] file fetch failed for repo', repoId, err.message);
       failed++;

@@ -504,6 +504,88 @@ describe('fetchRepositoryFiles — diagnostic logging', () => {
   });
 });
 
+// ── Throttled concurrency (Architecture Risk Reduction Step #3) ────────────────
+
+describe('fetchRepositoryFiles — throttled concurrency', () => {
+  it('returns all successful files when eligible count exceeds the concurrency limit', async () => {
+    const paths     = Array.from({ length: 25 }, (_, i) => `src/file${i}.js`);
+    const tree      = paths.map(p => makeBlob(p, 'x'));
+    const contents  = Object.fromEntries(paths.map(p => [p, makeContentEntry('content')]));
+    const fetchFn   = makeFetchFn({ tree, contents });
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(25);
+    expect(files.map(f => f.path).sort()).toEqual(paths.slice().sort());
+    expect(debug.eligibleFileCount).toBe(25);
+    expect(debug.fetchedFileCount).toBe(25);
+    expect(debug.failedFetchCount).toBe(0);
+  });
+
+  it('never has more than CONCURRENCY_LIMIT content requests in flight at once', async () => {
+    const paths = Array.from({ length: 20 }, (_, i) => `src/file${i}.js`);
+    const tree  = paths.map(p => makeBlob(p, 'x'));
+
+    let inFlight    = 0;
+    let maxInFlight = 0;
+    const fetchFn = jest.fn(async (url) => {
+      if (url.includes('/contents/')) {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise(resolve => setImmediate(resolve));
+        inFlight--;
+        const pathMatch = url.match(/\/contents\/(.+?)\?ref=/);
+        const filePath  = pathMatch ? pathMatch[1] : '';
+        return { ok: true, json: async () => makeContentEntry('content for ' + filePath) };
+      }
+      if (url.includes('/git/trees/')) return { ok: true, json: async () => ({ tree }) };
+      return { ok: true, json: async () => ({ default_branch: 'main' }) };
+    });
+
+    const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(20);
+    expect(maxInFlight).toBeLessThanOrEqual(8);
+    expect(maxInFlight).toBeGreaterThan(1); // confirms requests do run concurrently, not serially
+  });
+
+  it('failed fetches increment debug.failedFetchCount', async () => {
+    const paths = ['a.js', 'b.js', 'c.js'];
+    const tree  = paths.map(p => makeBlob(p, 'x'));
+    const contents = { 'a.js': makeContentEntry('ok') }; // b.js, c.js → 404
+    const fetchFn = makeFetchFn({ tree, contents });
+    const { debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.failedFetchCount).toBe(2);
+    expect(debug.skippedLargeFileCount).toBe(0);
+    expect(debug.skippedFileCount).toBe(2);
+  });
+
+  it('large files increment debug.skippedLargeFileCount, not failedFetchCount', async () => {
+    const largeContent = 'x'.repeat(401 * 1024);
+    const tree = [makeBlob('big.js', 'a'), makeBlob('small.js', 'a')];
+    const contents = {
+      'big.js':   makeContentEntry(largeContent),
+      'small.js': makeContentEntry('ok'),
+    };
+    const fetchFn = makeFetchFn({ tree, contents });
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('small.js');
+    expect(debug.skippedLargeFileCount).toBe(1);
+    expect(debug.failedFetchCount).toBe(0);
+    expect(debug.skippedFileCount).toBe(1);
+  });
+
+  it('caps individual blob-failure warnings and emits one summary warning beyond the cap', async () => {
+    const paths = Array.from({ length: 15 }, (_, i) => `broken${i}.js`);
+    const tree  = paths.map(p => makeBlob(p, 'a'));
+    const fetchFn = makeFetchFn({ tree, contents: {} }); // all 404
+    await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    const individualWarnings = _warnSpy.mock.calls.filter(c => c[0] === '[architecture] github blob fetch failed');
+    const summaryWarnings    = _warnSpy.mock.calls.filter(c => c[0] === '[architecture] github blob fetch failures summary');
+    expect(individualWarnings.length).toBe(10);
+    expect(summaryWarnings.length).toBe(1);
+    expect(summaryWarnings[0][1]).toMatchObject({ failedFetchCount: 15, additionalFailuresNotLogged: 5 });
+  });
+});
+
 // ── Test file exclusion ───────────────────────────────────────────────────────
 
 describe('fetchRepositoryFiles — test file exclusion', () => {

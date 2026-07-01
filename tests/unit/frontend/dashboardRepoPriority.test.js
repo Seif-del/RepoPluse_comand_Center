@@ -128,7 +128,7 @@ function computeRepoPriority(repo, aq, archData, fcData) {
 function buildArchDriversHtml(repo, archData, fcData, archCache) {
   var items = [];
 
-  // ── Per-click architecture signals (preferred over generic health level) ──
+  // ── Strong signals (preferred, up to 2) ───────────────────────────────
   if (archCache) {
     if (archCache.unresolvedApiCalls != null && archCache.unresolvedApiCalls > 0) {
       items.push({ label: 'API Gaps',            cls: 'severity-elevated' });
@@ -136,19 +136,16 @@ function buildArchDriversHtml(repo, archData, fcData, archCache) {
     if (items.length < 2 && archCache.implementationCompleteness != null && archCache.implementationCompleteness < 70) {
       items.push({ label: 'Implementation Gaps', cls: 'severity-watch' });
     }
+    if (items.length < 2 && archCache.boundaryViolationCount != null && archCache.boundaryViolationCount > 0) {
+      items.push({ label: 'Boundary Violations', cls: 'severity-elevated' });
+    }
     var COUPLING_RISK = ['risky', 'weak', 'elevated', 'high'];
     if (items.length < 2 && archCache.couplingRisk && COUPLING_RISK.indexOf(archCache.couplingRisk) >= 0) {
       items.push({ label: 'High Coupling',       cls: 'severity-watch' });
     }
-    if (items.length < 2 && archCache.boundaryViolationCount != null && archCache.boundaryViolationCount > 0) {
-      items.push({ label: 'Boundary Violations', cls: 'severity-elevated' });
-    }
-    if (items.length < 2 && archCache.confidenceLevel === 'Low') {
-      items.push({ label: 'Low Confidence',      cls: 'severity-watch' });
-    }
   }
 
-  // ── Coverage Gap (when no architecture intel — checked after specific signals) ──
+  // ── Coverage Gap (when no architecture intel — checked after strong signals) ──
   if (items.length === 0) {
     var covGap = false;
     if (archData === undefined) {
@@ -165,12 +162,22 @@ function buildArchDriversHtml(repo, archData, fcData, archCache) {
     if (covGap) items.push({ label: 'Coverage Gap', cls: 'severity-watch' });
   }
 
-  // ── Forecast signals (fills remaining slot) ────────────────────────────
+  // ── Strong forecast signals (fills remaining slot up to 2) ────────────
   if (items.length < 2 && fcData) {
     var fl = fcData.forecastLevel || null;
-    if      (fl === 'critical')                  items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
-    else if (fl === 'high')                      items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
-    else if (fl === 'medium' || fl === 'watch')  items.push({ label: 'Forecast Watch',     cls: 'severity-watch'    });
+    if      (fl === 'critical') items.push({ label: 'Forecast Critical',  cls: 'severity-critical' });
+    else if (fl === 'high')     items.push({ label: 'Forecast Degrading', cls: 'severity-elevated' });
+  }
+
+  // ── Fallback signals (one only, when no stronger evidence exists) ──────
+  if (items.length === 0) {
+    if (archCache && archCache.couplingRisk === 'watch') {
+      items.push({ label: 'Weak Coupling',  cls: 'severity-watch' });
+    } else if (fcData && (fcData.forecastLevel === 'medium' || fcData.forecastLevel === 'watch')) {
+      items.push({ label: 'Forecast Watch', cls: 'severity-watch' });
+    } else if (archCache && archCache.confidenceLevel === 'low') {
+      items.push({ label: 'Low Confidence', cls: 'severity-watch' });
+    }
   }
 
   // ── No evidence-based drivers found → em dash ─────────────────────────
@@ -847,10 +854,17 @@ describe('buildArchDriversHtml — per-click architecture signals (archCache)', 
     expect(out).toContain('severity-elevated');
   });
 
-  test('confidenceLevel=Low → Low Confidence (severity-watch)', () => {
-    const out = buildArchDriversHtml({}, null, null, { confidenceLevel: 'Low' });
+  test("confidenceLevel='low' (backend canonical, lowercase) → Low Confidence fallback chip", () => {
+    // Low Confidence is a fallback signal (Refinement #9). archData must have a valid level so
+    // Coverage Gap does not preempt it (archData=null → Coverage Gap fires first, items.length=1).
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null, { confidenceLevel: 'low' });
     expect(out).toContain('Low Confidence');
     expect(out).toContain('severity-watch');
+  });
+
+  test("confidenceLevel='Low' (capital L) does NOT fire Low Confidence chip after Bug A case fix", () => {
+    const out = buildArchDriversHtml({}, null, null, { confidenceLevel: 'Low' });
+    expect(out).not.toContain('Low Confidence');
   });
 
   test('archCache signals preferred over health level: risky health + API Gaps → shows API Gaps not Low Health', () => {
@@ -3377,5 +3391,261 @@ describe('buildAttentionDriversHtml — does not mutate aq.drivers', () => {
     });
     buildAttentionDriversHtml({ drivers });
     expect(drivers).toHaveLength(8);
+  });
+});
+
+// ── buildArchDriversHtml — portfolio-seeded archCache (Bug Fix #2) ────────────
+// These tests prove that portfolio-provided archCache values (from loadPortfolioArchitecture
+// via benchmarkedRepositories) drive Architecture Drivers chips on initial page load,
+// without requiring a per-click /api/repos/:id/architecture fetch.
+// The same buildArchDriversHtml function is used for both paths — these tests document
+// the portfolio-seeded shape works identically to per-click data.
+
+describe('buildArchDriversHtml — portfolio-seeded archCache (Bug Fix #2)', () => {
+  test('unresolvedApiCalls > 0 from portfolio → API Gaps chip', () => {
+    const portfolioCache = { unresolvedApiCalls: 4, implementationCompleteness: null, couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, null, null, portfolioCache);
+    expect(out).toContain('API Gaps');
+    expect(out).toContain('severity-elevated');
+  });
+
+  test('implementationCompleteness < 70 from portfolio → Implementation Gaps chip', () => {
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: 40, couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, null, null, portfolioCache);
+    expect(out).toContain('Implementation Gaps');
+    expect(out).toContain('severity-watch');
+  });
+
+  test('couplingRisk=weak from portfolio → High Coupling chip', () => {
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: null, couplingRisk: 'weak', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, null, null, portfolioCache);
+    expect(out).toContain('High Coupling');
+  });
+
+  test('couplingRisk=risky from portfolio → High Coupling chip', () => {
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: null, couplingRisk: 'risky', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, null, null, portfolioCache);
+    expect(out).toContain('High Coupling');
+  });
+
+  test('boundaryViolationCount > 0 from portfolio → Boundary Violations chip', () => {
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: null, couplingRisk: 'healthy', boundaryViolationCount: 1, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, null, null, portfolioCache);
+    expect(out).toContain('Boundary Violations');
+    expect(out).toContain('severity-elevated');
+  });
+
+  test("confidenceLevel='low' (backend canonical, lowercase) from portfolio → Low Confidence fallback chip", () => {
+    // Low Confidence is a fallback (Refinement #9); needs valid archData so Coverage Gap
+    // doesn't preempt. Realistic: repos WITH a snapshot have a known level, not null.
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: null, couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'low' };
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null, portfolioCache);
+    expect(out).toContain('Low Confidence');
+  });
+
+  test('all-clean portfolio signals → em dash (no chips)', () => {
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: 80, couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null, portfolioCache);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('reason-tag ');
+  });
+
+  test('risky portfolio signals produce max 2 chips', () => {
+    const portfolioCache = { unresolvedApiCalls: 6, implementationCompleteness: 40, couplingRisk: 'weak', boundaryViolationCount: 1, confidenceLevel: 'low' };
+    const out = buildArchDriversHtml({}, null, null, portfolioCache);
+    const tags = (out.match(/class="reason-tag /g) || []).length;
+    expect(tags).toBe(2);
+    expect(out).toContain('API Gaps');
+    expect(out).toContain('Implementation Gaps');
+  });
+
+  test('portfolio archCache preferred over health level: risky health + portfolio signals → chips not Low Health', () => {
+    const portfolioCache = { unresolvedApiCalls: 3, implementationCompleteness: null, couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null, portfolioCache);
+    expect(out).toContain('API Gaps');
+    expect(out).not.toContain('Low Health');
+  });
+
+  test('portfolio cache with null implementationCompleteness does not produce Implementation Gaps', () => {
+    const portfolioCache = { unresolvedApiCalls: 0, implementationCompleteness: null, couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'high' };
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null, portfolioCache);
+    expect(out).not.toContain('Implementation Gaps');
+  });
+
+  test('guard: pre-existing _archDataByRepoId entry drives chips even without per-click fetch', () => {
+    // Simulates what loadPortfolioArchitecture() seeds: _archDataByRepoId[repoId] = { ... }
+    _archDataByRepoId[99] = {
+      unresolvedApiCalls: 5, implementationCompleteness: 35,
+      couplingRisk: 'weak',  boundaryViolationCount: 2, confidenceLevel: 'high',
+    };
+    const archCache = _archDataByRepoId[99] || null;
+    const out = buildArchDriversHtml({}, null, null, archCache);
+    expect(out).toContain('API Gaps');
+    expect(out).not.toContain('&mdash;');
+    delete _archDataByRepoId[99];
+  });
+});
+
+// ── buildArchDriversHtml — Bug Fix #4 (lowercase confidenceLevel + unknown-level Coverage Gap) ──
+// Bug A: backend always sends confidenceLevel as lowercase ('low'/'medium'/'high').
+//   buildArchDriversHtml was comparing === 'Low' (capital L) → Low Confidence chip never fired.
+//   Fix: comparison changed to === 'low'.
+// Bug B: loadPortfolioArchitecture was recomputing architectureHealthLevel via _archLevelFromScore(0)
+//   → 'risky' for no-snapshot repos, instead of using the API-provided 'unknown' level.
+//   'risky' is in the valid set checked by Coverage Gap, so covGap stayed false and em dash showed.
+//   Fix: use r.architectureHealthLevel || _archLevelFromScore(hs) so 'unknown' propagates correctly.
+
+describe('buildArchDriversHtml — Bug Fix #4 (lowercase confidenceLevel + unknown-level Coverage Gap)', () => {
+  test("Bug A: 'low' (backend canonical, lowercase) fires Low Confidence fallback chip", () => {
+    // Low Confidence moved to fallback (Refinement #9). Use valid archData so Coverage Gap
+    // doesn't preempt; no other signals present to let fallback reach Low Confidence.
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'watch' }, null, { confidenceLevel: 'low' });
+    expect(out).toContain('Low Confidence');
+    expect(out).toContain('severity-watch');
+  });
+
+  test("Bug A: 'Low' (capital L) does NOT fire Low Confidence chip after case fix", () => {
+    const out = buildArchDriversHtml({}, null, null, { confidenceLevel: 'Low' });
+    expect(out).not.toContain('Low Confidence');
+  });
+
+  test("Bug B: archData.architectureHealthLevel='unknown' (API value for no-snapshot repos after Fix B) → Coverage Gap", () => {
+    // After Fix B, _mergeIntelByName receives r.architectureHealthLevel='unknown' from the
+    // portfolio API instead of the recomputed _archLevelFromScore(0)='risky'.
+    // 'unknown' is not in the valid health-level set, so Coverage Gap correctly fires.
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'unknown' }, null, null);
+    expect(out).toContain('Coverage Gap');
+    expect(out).not.toContain('&mdash;');
+  });
+
+  test("Bug B pre-fix: archData.architectureHealthLevel='risky' with null archCache → em dash (Coverage Gap suppressed)", () => {
+    // Before Fix B, no-snapshot repos had 'risky' written into _repoIntelligenceById via
+    // _archLevelFromScore(0). Since 'risky' is a valid level, covGap stayed false and em dash
+    // appeared instead of Coverage Gap. After Fix B, no-snapshot repos correctly get 'unknown'.
+    // Repos with genuine risky scores still show em dash (archCache signals drive chips, not level).
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Coverage Gap');
+  });
+
+  test("Bug A + Bug B: no-snapshot repo with 'unknown' level → Coverage Gap (not Low Confidence)", () => {
+    // After Refinement #9: Low Confidence is fallback-only. When archData='unknown' (no snapshot),
+    // Coverage Gap fires first (items.length=1). Fallback block is skipped (items.length > 0).
+    // Coverage Gap correctly describes the repo — no architecture analysis has been run.
+    // Low Confidence as fallback only fires when archData has a known level but confidence is low.
+    const noSnapshotCache = {
+      unresolvedApiCalls: 0, implementationCompleteness: null,
+      couplingRisk: 'healthy', boundaryViolationCount: 0, confidenceLevel: 'low',
+    };
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'unknown' }, null, noSnapshotCache);
+    expect(out).toContain('Coverage Gap');
+    expect(out).not.toContain('Low Confidence');
+    expect(out).not.toContain('&mdash;');
+  });
+});
+
+// ── buildArchDriversHtml — fallback signals (Refinement #9) ─────────────────
+// When no strong driver (API Gaps, Implementation Gaps, Boundary Violations, High Coupling,
+// Forecast Critical, Forecast Degrading) or Coverage Gap applies, render ONE fallback signal
+// in priority order: Weak Coupling (couplingRisk==='watch') → Forecast Watch → Low Confidence.
+
+describe('buildArchDriversHtml — fallback signals (Refinement #9)', () => {
+  test('couplingRisk=watch + no strong signals → Weak Coupling fallback chip', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'weak' }, null, { couplingRisk: 'watch' });
+    expect(out).toContain('Weak Coupling');
+    expect(out).toContain('severity-watch');
+    expect(out).not.toContain('&mdash;');
+  });
+
+  test('fcData.forecastLevel=watch + no strong signals → Forecast Watch fallback chip', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, { forecastLevel: 'watch' }, null);
+    expect(out).toContain('Forecast Watch');
+    expect(out).toContain('severity-watch');
+    expect(out).not.toContain('&mdash;');
+  });
+
+  test('fcData.forecastLevel=medium + no strong signals → Forecast Watch fallback chip', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, { forecastLevel: 'medium' }, null);
+    expect(out).toContain('Forecast Watch');
+    expect(out).not.toContain('&mdash;');
+  });
+
+  test('archCache.confidenceLevel=low + no strong signals → Low Confidence fallback chip', () => {
+    // archData must have a known valid level so Coverage Gap doesn't preempt the fallback block.
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'risky' }, null, { confidenceLevel: 'low' });
+    expect(out).toContain('Low Confidence');
+    expect(out).toContain('severity-watch');
+    expect(out).not.toContain('&mdash;');
+  });
+
+  test('strong signal present + fallback condition → only strong signal, fallback suppressed', () => {
+    // API Gaps (strong) present alongside couplingRisk=watch (fallback) → strong fires,
+    // fallback block skipped because items.length > 0 after strong signals.
+    const out = buildArchDriversHtml(
+      {},
+      { architectureHealthLevel: 'risky' },
+      null,
+      { unresolvedApiCalls: 5, couplingRisk: 'watch' }
+    );
+    expect(out).toContain('API Gaps');
+    expect(out).not.toContain('Weak Coupling');
+  });
+
+  test('Weak Coupling has higher priority than Forecast Watch when both conditions present', () => {
+    const out = buildArchDriversHtml(
+      {},
+      { architectureHealthLevel: 'healthy' },
+      { forecastLevel: 'watch' },
+      { couplingRisk: 'watch' }
+    );
+    expect(out).toContain('Weak Coupling');
+    expect(out).not.toContain('Forecast Watch');
+  });
+
+  test('Forecast Watch has higher priority than Low Confidence when both conditions present', () => {
+    const out = buildArchDriversHtml(
+      {},
+      { architectureHealthLevel: 'healthy' },
+      { forecastLevel: 'watch' },
+      { confidenceLevel: 'low' }
+    );
+    expect(out).toContain('Forecast Watch');
+    expect(out).not.toContain('Low Confidence');
+  });
+
+  test('only one fallback chip renders when all three fallback conditions are present', () => {
+    const out = buildArchDriversHtml(
+      {},
+      { architectureHealthLevel: 'healthy' },
+      { forecastLevel: 'watch' },
+      { couplingRisk: 'watch', confidenceLevel: 'low' }
+    );
+    const tags = (out.match(/class="reason-tag /g) || []).length;
+    expect(tags).toBe(1);
+    expect(out).toContain('Weak Coupling');
+    expect(out).not.toContain('Forecast Watch');
+    expect(out).not.toContain('Low Confidence');
+  });
+
+  test('Coverage Gap takes priority over all fallback signals', () => {
+    // archData=null → Coverage Gap fires (items.length=1) → fallback block not entered.
+    const out = buildArchDriversHtml(
+      {},
+      null,
+      { forecastLevel: 'watch' },
+      { couplingRisk: 'watch', confidenceLevel: 'low' }
+    );
+    expect(out).toContain('Coverage Gap');
+    expect(out).not.toContain('Weak Coupling');
+    expect(out).not.toContain('Forecast Watch');
+    expect(out).not.toContain('Low Confidence');
+  });
+
+  test('no fallback condition present → em dash', () => {
+    const out = buildArchDriversHtml({}, { architectureHealthLevel: 'healthy' }, null, null);
+    expect(out).toContain('&mdash;');
+    expect(out).not.toContain('Weak Coupling');
+    expect(out).not.toContain('Forecast Watch');
+    expect(out).not.toContain('Low Confidence');
   });
 });
