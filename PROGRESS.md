@@ -9,9 +9,9 @@ Last updated: **2026-06-30** (API Linkage Improvement — Wave 1: connect per-re
 
 ## Repository Status Classification
 
-**Current Phase:** Phase 5–7 (partial) — Architecture Intelligence complete; Real-Time accepted (ADR-002); Notifications integrated + partially verified (worker routing verified 2026-06-12; positive send paths + payload content unit-tested 2026-06-14; nodemailer dependency placement resolved 2026-06-15; SMTP sandbox delivery verified via Mailhog 2026-06-15; production relay unverified; in-app persistence layer scaffolded + unit-tested 2026-06-16; sendAlert.js wired to writeNotification 2026-06-16; snapshotWorker wired to pass db pool 2026-06-16 — in-app channel runtime-active when DATABASE_URL configured; notification API routes added 2026-06-16; dashboard notification UI added 2026-06-16 — in-app channel fully implemented across all layers); Operational Resilience incomplete; CI workflow operational (2026-06-13); Playwright E2E toolchain scaffolded 2026-06-16 (`@playwright/test` installed, `playwright.config.js` created, `test:e2e` script added); Playwright webServer startup hardened 2026-06-16 (`cross-env PROJECT_SOURCE=file npm run dev`); first Playwright dashboard smoke tests passing 2026-06-16 (`tests/e2e/dashboard.smoke.spec.js` — 8/8 tests passing; unauthenticated path verified in Chromium headless; authenticated E2E and DB-seeded notification E2E absent); Playwright authenticated session bootstrap complete 2026-06-17 (`tests/e2e/globalSetup.js` added — seeds `upsertUser` + `createSession` against test DB; storageState saved to `tests/e2e/.auth/user.json`; `playwright.config.js` wired; `tests/e2e/.auth/` gitignored; no test-only route added; no production auth logic modified; verified `node tests/e2e/globalSetup.js` → exit 0); **authenticated notification E2E browser-tested 2026-06-17** (`tests/e2e/notifications.authenticated.spec.js` — 2/2 passing in Chromium headless: unread badge visible + count=1 verified, panel opens + title + HIGH badge visible, mark-read PATCH 200 verified, badge `hidden=""` + empty text verified on re-fetch; real session cookie via storageState; real DB-seeded notification row; real `GET /api/notifications` + `PATCH /api/notifications/:id/read` exercised; no production code changed; `#notif-badge` CSS visual-hide defect **resolved 2026-06-17** — added `#notif-badge[hidden] { display: none !important }` CSS rule; `not.toBeVisible()` assertion now passes; 10/10 E2E passing); **FR-009 repository name search integrated 2026-06-17** — backend `?search=` param with ILIKE + 200-char limit + HTTP 400 on invalid; frontend `#repo-search-input` in filter bar; `buildReposUrl` supports riskLevel + search composition; 260/260 backend route tests + 53/53 frontend filter tests passing; **FR-009 activity recency filter integrated 2026-06-17** — backend `?activeSince=` param (7d/30d/90d/stale); stale includes `last_synced_at IS NULL`; frontend `#repo-recency-select` dropdown + change listener; `buildReposUrl` supports riskLevel + search + activeSince ordering; 282/282 backend route tests + 65/65 frontend filter tests passing  
+**Current Phase:** Phase 5–7 (partial) — Analyzer Improvement Step #8 complete 2026-07-09 (Next.js App Router path matcher extended in extractRouteApiStructure.js to recognize apps/*/, packages/*/, services/*/, libs/*/ workspace/monorepo layouts, each with or without a further src/ segment; dynamic/catch-all normalization and Step #5 backendRoutes merge unchanged; pages/api intentionally left root-anchored only; zero scoring/linking/UI/frontend-call-extraction changes); Analyzer Improvement Step #7 complete 2026-07-09 (app.setGlobalPrefix() detection added to extractRouteApiStructure.js, applied only to framework:'nestjs' backendRoutes via the existing _joinNestPath helper — closes the gap explicitly flagged in Step #6, confirmed end-to-end against the real repo_id=98 main.ts + AuthController now resolving to POST /api/v1/auth/login and linking; zero scoring/UI changes); Analyzer Improvement Step #6 complete 2026-07-09 (NestJS object-form @Controller({path, version}) decorator support added to extractRouteApiStructure.js — directly closes the root cause proven in the 2026-07-08 repo_id=98 investigation, where 14/15 real NestJS controllers used this syntax and were silently skipped; version+path resolved independent of key order, array/imported-constant/computed-expression values still safely skipped; zero scoring/linking/UI changes); Analyzer Improvement Step #5 complete 2026-07-08 (Next.js App Router routes now merged into backendRoutes in extractRouteApiStructure.js and therefore participate in linkFrontendBackendApis matching — root cause was that nextRoutes was computed but never passed into linkage; pages/api still excluded, preserved unchanged; zero changes needed to linkFrontendBackendApis.js/verifyArchitectureBoundaries.js/assessImplementationCompleteness.js/buildRepositoryArchitectureSnapshot.js/UI); Analyzer Improvement Step #4 complete 2026-07-08 (analyzerCoverage measurement-confidence metadata added — framework-hint detection (NestJS decorators, Next.js App Router files, BFF fetch wrappers) vs. actual extraction success, 4 warning conditions, unsupportedRisk low/medium/high, surfaced at snapshot top level and rendered as a neutral-styled "Analyzer Coverage" panel in the Architecture tab; zero scoring/linkage-formula changes, verified by formula-equality test); Analyzer Improvement Step #3 complete 2026-07-08 (serverFetch/apiFetch/internalFetch/backendFetch BFF call detection added to extractRouteApiStructure.js — same path forms as fetch() incl. concatenation/template interpolation/method options, reuses existing frontendApiCalls.client field, zero scoring/linking/route-extraction/UI changes); Analyzer Improvement Step #2 complete 2026-07-08 (Next.js App Router route-handler detection extended in extractRouteApiStructure.js — src/app/api prefix, export const PATCH/DELETE arrow-and-function-expression exports, export { GET, POST } list form incl. aliasing, method-less route.ts now safely skipped instead of wildcard-guessed; zero scoring/UI changes); Analyzer Improvement Step #1 complete 2026-07-08 (NestJS decorator-based route detection added to extractRouteApiStructure.js — @Controller/@Get/@Post/@Put/@Patch/@Delete resolved via regex + brace-depth class-body scan, dynamic paths skipped safely, wired into existing backendRoutes contract with zero scoring/UI changes); Repository Overview Refinement #10 complete 2026-07-07 (Overview tab simplified: Operational Metrics reduced to Commits (7d) only; Risk Score/PR Health/Recent Events sections and their build/load functions removed as dead weight; Operational Risk Drivers confirmed already-conditional, no change needed); Architecture Intelligence complete; Real-Time accepted (ADR-002); Notifications integrated + partially verified (worker routing verified 2026-06-12; positive send paths + payload content unit-tested 2026-06-14; nodemailer dependency placement resolved 2026-06-15; SMTP sandbox delivery verified via Mailhog 2026-06-15; production relay unverified; in-app persistence layer scaffolded + unit-tested 2026-06-16; sendAlert.js wired to writeNotification 2026-06-16; snapshotWorker wired to pass db pool 2026-06-16 — in-app channel runtime-active when DATABASE_URL configured; notification API routes added 2026-06-16; dashboard notification UI added 2026-06-16 — in-app channel fully implemented across all layers); Operational Resilience incomplete; CI workflow operational (2026-06-13); Playwright E2E toolchain scaffolded 2026-06-16 (`@playwright/test` installed, `playwright.config.js` created, `test:e2e` script added); Playwright webServer startup hardened 2026-06-16 (`cross-env PROJECT_SOURCE=file npm run dev`); first Playwright dashboard smoke tests passing 2026-06-16 (`tests/e2e/dashboard.smoke.spec.js` — 8/8 tests passing; unauthenticated path verified in Chromium headless; authenticated E2E and DB-seeded notification E2E absent); Playwright authenticated session bootstrap complete 2026-06-17 (`tests/e2e/globalSetup.js` added — seeds `upsertUser` + `createSession` against test DB; storageState saved to `tests/e2e/.auth/user.json`; `playwright.config.js` wired; `tests/e2e/.auth/` gitignored; no test-only route added; no production auth logic modified; verified `node tests/e2e/globalSetup.js` → exit 0); **authenticated notification E2E browser-tested 2026-06-17** (`tests/e2e/notifications.authenticated.spec.js` — 2/2 passing in Chromium headless: unread badge visible + count=1 verified, panel opens + title + HIGH badge visible, mark-read PATCH 200 verified, badge `hidden=""` + empty text verified on re-fetch; real session cookie via storageState; real DB-seeded notification row; real `GET /api/notifications` + `PATCH /api/notifications/:id/read` exercised; no production code changed; `#notif-badge` CSS visual-hide defect **resolved 2026-06-17** — added `#notif-badge[hidden] { display: none !important }` CSS rule; `not.toBeVisible()` assertion now passes; 10/10 E2E passing); **FR-009 repository name search integrated 2026-06-17** — backend `?search=` param with ILIKE + 200-char limit + HTTP 400 on invalid; frontend `#repo-search-input` in filter bar; `buildReposUrl` supports riskLevel + search composition; 260/260 backend route tests + 53/53 frontend filter tests passing; **FR-009 activity recency filter integrated 2026-06-17** — backend `?activeSince=` param (7d/30d/90d/stale); stale includes `last_synced_at IS NULL`; frontend `#repo-recency-select` dropdown + change listener; `buildReposUrl` supports riskLevel + search + activeSince ordering; 282/282 backend route tests + 65/65 frontend filter tests passing  
 **Overall Maturity:** Partially Implemented / Integrated  
-**Test Status:** 7,145 / 7,215 passing serially under `npm test --runInBand` (70 skipped = 63 integration DB + 7 SMTP opt-in; 0 failing) — updated 2026-06-30 (API Linkage Improvement Wave 1: net +59 tests; 7,145/7,145 non-skipped passing; prior: Architecture Risk Reduction Step #12: net +4 tests; 7,086/7,086 non-skipped passing; prior: Architecture Risk Reduction Step #9: net +8 tests; 7,082/7,082 non-skipped passing; prior: Architecture Risk Reduction Step #7: net +6 tests; 7,074/7,074 non-skipped passing; prior: Architecture Risk Reduction Step #5: net +19 tests; 7,068/7,068 non-skipped passing; prior: Architecture Risk Reduction Step #3: net +9 tests; 7,049/7,049 non-skipped passing; prior: Repository Status Refinement #9: net +10 tests; 7,040/7,040 non-skipped passing; prior: Repository Status Bug Fix #4: net +6 tests; 7,030/7,030 non-skipped passing; prior: Repository Status Bug Fix #2: net +29 tests (18 backend + 11 frontend); 7,024/7,024 non-skipped passing; prior: Repository Status Bug Fix #1: net 0 tests; 7,065/7,065 passing; prior: Repository Status Refinement #8: net 0 tests (11 replacements); 352/352 in `dashboardRepoPriority.test.js`; prior: Repository Status Refinements #5–#7: net +17 tests; 352/352 in `dashboardRepoPriority.test.js`; prior: Repository Status Refinement #4: net −14 tests; 335/335 in `dashboardRepoPriority.test.js`; prior: Repository Status Refinements #1–#3: net +3 tests; 349/349 in `dashboardRepoPriority.test.js`; prior: Engineering Governance Refinements #5–#7: `dashboardGovernance.test.js` rewritten — grammar fix for plural noun subjects (`gaps`/`concerns`/`anomalies`/etc. → "require" even when alone; singular nouns → "requires"); new `_govLabel(key)` standalone function maps 30+ backend camelCase and snake_case identifiers to executive display labels (e.g. `architectureRegressions` → "Architecture Regressions", `couplingAlerts` → "Dependency Coupling", `stable_forecast` → "Stable Forecast"); new `_govCleanRec(text)` standalone function cleans "Immediately address critical governance risks: code1, code2" recommendation pattern by translating internal codes to labels via `_govLabel`; Key Governance Findings capped to top-3 risks + top-3 strengths (was 5 each); risk `source` and strength `sType` rendered via `_govLabel`; recommendations rendered via `_govCleanRec`; test file rewritten: 99 total tests (up from 62) — 21 `_govLabel` tests, 5 `_govCleanRec` tests, 55 `_govSummaryHtml` tests (updated grammar assertions: "architecture gaps" → "require", "maturity gaps" → "require"; singular "forecast instability" → "requires"), 18 `buildPortfolioGovernanceHtml` integration tests (top-3 cap, identifier translation for source/sType, recommendation cleaning); net +37; prior: Engineering Governance Refinement #4: `dashboardGovernance.test.js` rewritten — "Governance Risks" and "Governance Strengths" merged into "Key Governance Findings" section with Risks/Strengths subsections; grammar fixed in `_govSummaryHtml` (single concern → "requires", multiple → "require"); net +15 (62 total in file vs. 47 before); prior: Engineering Governance Refinements #1–#3: new `dashboardGovernance.test.js` net +47 — `_govSummaryHtml` 24 tests + `buildPortfolioGovernanceHtml` integration 23 tests; Executive Signals section removed, intervention banner replaced with Portfolio Governance Summary, driver paragraphs removed; prior: Portfolio Architecture Refinement #16: new `dashboardPortfolioApiIntegration.test.js` net +27; prior: Portfolio Architecture Refinement #15: new `dashboardPortfolioRecommendations.test.js` net +44; prior: Portfolio Architecture Refinement #14: new `dashboardPortfolioCoupling.test.js` net +35; prior: Portfolio Architecture Refinement #13: new `dashboardPortfolioRiskSummary.test.js` net +34; prior: Dashboard Refinements #9–#12: `dashboardExecutiveBriefing.test.js` net +1; prior: Dashboard Refinement #8: `dashboardExecutiveBriefing.test.js` net -23; prior: Dashboard Refinement #7: `dashboardExecutiveBriefing.test.js` net +4; prior: Dashboard Refinement #5: `dashboardExecutiveBriefing.test.js` net +5; prior: Dashboard Refinement #4: `dashboardExecutiveBriefing.test.js` net -3; prior: Dashboard Alignment #3: `dashboardPortfolioTabs.test.js` updated to 2-tab structure, net -1; prior: Dashboard Alignment #2: `dashboardExecutiveBriefing.test.js` 5 watchlistCount tests replaced/removed, net -1; prior: Dashboard Refinement #3: `dashboardExecutiveKpis.test.js` net -13; prior: Dashboard Refinement #1: `dashboardPortfolioTabs.test.js` updated to 3-tab structure, net +8; prior: 6,786 / 6,856 passing 2026-06-19 +11 distribution-based response guard tests); DB integration suite total: 63 opt-in tests across 4 files; SMTP integration suite 7 opt-in tests (skipped under `npm test`, 7/7 passing with `TEST_INTEGRATION=true` + Mailhog running)  
+**Test Status:** 7,240 / 7,310 passing serially under `npm test --runInBand` (70 skipped = 63 integration DB + 7 SMTP opt-in; 0 failing) — updated 2026-07-09 (Analyzer Improvement Step #8: net +21 tests — monorepo App Router workspace-layout tests added, incl. full linkage verification; 7,240/7,240 non-skipped passing; prior: Analyzer Improvement Step #7: net +16 tests — global prefix detection tests added, incl. repo_id=98 end-to-end linkage closure; 7,219/7,219 non-skipped passing; prior: Analyzer Improvement Step #6: net +20 tests — NestJS object-form controller tests added, incl. two exact repo_id=98 controller-body regressions; 7,203/7,203 non-skipped passing; prior: Analyzer Improvement Step #5: net +14 tests — App Router linkage tests added, 1 pre-existing Step #4 assertion corrected to reflect the now-fixed backendRoutes count; 7,183/7,183 non-skipped passing; prior: Analyzer Improvement Step #4: net +36 tests — analyzerCoverage warning/UI tests added across extractRouteApiStructure, buildRepositoryArchitectureSnapshot, and dashboardArchitectureTab; 7,169/7,169 non-skipped passing; prior: Analyzer Improvement Step #3: net +11 tests — serverFetch/BFF wrapper detection tests added; 7,133/7,133 non-skipped passing; prior: Analyzer Improvement Step #2: net +12 tests — Next.js App Router route-handler tests added; 7,122/7,122 non-skipped passing; prior: Analyzer Improvement Step #1: net +16 tests — NestJS route detection tests added; 7,110/7,110 non-skipped passing; prior: 2026-07-07 (Repository Overview Refinement #10: net -51 tests — dead-function test coverage removed for buildRepoRiskHtml/buildRepoPrHealthHtml/buildRepoEventsHtml, buildRepoMetricsHtml trimmed to Commits (7d) only; 7,094/7,094 non-skipped passing; prior: 2026-06-30 (API Linkage Improvement Wave 1: net +59 tests; 7,145/7,145 non-skipped passing; prior: Architecture Risk Reduction Step #12: net +4 tests; 7,086/7,086 non-skipped passing; prior: Architecture Risk Reduction Step #9: net +8 tests; 7,082/7,082 non-skipped passing; prior: Architecture Risk Reduction Step #7: net +6 tests; 7,074/7,074 non-skipped passing; prior: Architecture Risk Reduction Step #5: net +19 tests; 7,068/7,068 non-skipped passing; prior: Architecture Risk Reduction Step #3: net +9 tests; 7,049/7,049 non-skipped passing; prior: Repository Status Refinement #9: net +10 tests; 7,040/7,040 non-skipped passing; prior: Repository Status Bug Fix #4: net +6 tests; 7,030/7,030 non-skipped passing; prior: Repository Status Bug Fix #2: net +29 tests (18 backend + 11 frontend); 7,024/7,024 non-skipped passing; prior: Repository Status Bug Fix #1: net 0 tests; 7,065/7,065 passing; prior: Repository Status Refinement #8: net 0 tests (11 replacements); 352/352 in `dashboardRepoPriority.test.js`; prior: Repository Status Refinements #5–#7: net +17 tests; 352/352 in `dashboardRepoPriority.test.js`; prior: Repository Status Refinement #4: net −14 tests; 335/335 in `dashboardRepoPriority.test.js`; prior: Repository Status Refinements #1–#3: net +3 tests; 349/349 in `dashboardRepoPriority.test.js`; prior: Engineering Governance Refinements #5–#7: `dashboardGovernance.test.js` rewritten — grammar fix for plural noun subjects (`gaps`/`concerns`/`anomalies`/etc. → "require" even when alone; singular nouns → "requires"); new `_govLabel(key)` standalone function maps 30+ backend camelCase and snake_case identifiers to executive display labels (e.g. `architectureRegressions` → "Architecture Regressions", `couplingAlerts` → "Dependency Coupling", `stable_forecast` → "Stable Forecast"); new `_govCleanRec(text)` standalone function cleans "Immediately address critical governance risks: code1, code2" recommendation pattern by translating internal codes to labels via `_govLabel`; Key Governance Findings capped to top-3 risks + top-3 strengths (was 5 each); risk `source` and strength `sType` rendered via `_govLabel`; recommendations rendered via `_govCleanRec`; test file rewritten: 99 total tests (up from 62) — 21 `_govLabel` tests, 5 `_govCleanRec` tests, 55 `_govSummaryHtml` tests (updated grammar assertions: "architecture gaps" → "require", "maturity gaps" → "require"; singular "forecast instability" → "requires"), 18 `buildPortfolioGovernanceHtml` integration tests (top-3 cap, identifier translation for source/sType, recommendation cleaning); net +37; prior: Engineering Governance Refinement #4: `dashboardGovernance.test.js` rewritten — "Governance Risks" and "Governance Strengths" merged into "Key Governance Findings" section with Risks/Strengths subsections; grammar fixed in `_govSummaryHtml` (single concern → "requires", multiple → "require"); net +15 (62 total in file vs. 47 before); prior: Engineering Governance Refinements #1–#3: new `dashboardGovernance.test.js` net +47 — `_govSummaryHtml` 24 tests + `buildPortfolioGovernanceHtml` integration 23 tests; Executive Signals section removed, intervention banner replaced with Portfolio Governance Summary, driver paragraphs removed; prior: Portfolio Architecture Refinement #16: new `dashboardPortfolioApiIntegration.test.js` net +27; prior: Portfolio Architecture Refinement #15: new `dashboardPortfolioRecommendations.test.js` net +44; prior: Portfolio Architecture Refinement #14: new `dashboardPortfolioCoupling.test.js` net +35; prior: Portfolio Architecture Refinement #13: new `dashboardPortfolioRiskSummary.test.js` net +34; prior: Dashboard Refinements #9–#12: `dashboardExecutiveBriefing.test.js` net +1; prior: Dashboard Refinement #8: `dashboardExecutiveBriefing.test.js` net -23; prior: Dashboard Refinement #7: `dashboardExecutiveBriefing.test.js` net +4; prior: Dashboard Refinement #5: `dashboardExecutiveBriefing.test.js` net +5; prior: Dashboard Refinement #4: `dashboardExecutiveBriefing.test.js` net -3; prior: Dashboard Alignment #3: `dashboardPortfolioTabs.test.js` updated to 2-tab structure, net -1; prior: Dashboard Alignment #2: `dashboardExecutiveBriefing.test.js` 5 watchlistCount tests replaced/removed, net -1; prior: Dashboard Refinement #3: `dashboardExecutiveKpis.test.js` net -13; prior: Dashboard Refinement #1: `dashboardPortfolioTabs.test.js` updated to 3-tab structure, net +8; prior: 6,786 / 6,856 passing 2026-06-19 +11 distribution-based response guard tests); DB integration suite total: 63 opt-in tests across 4 files; SMTP integration suite 7 opt-in tests (skipped under `npm test`, 7/7 passing with `TEST_INTEGRATION=true` + Mailhog running)  
 **PROGRESS.md Status:** Created 2026-06-12 (first creation — was absent, violating CLAUDE.md Creation Rule)  
 **CI Status:** `.github/workflows/ci.yml` added 2026-06-13 — triggers on push to any branch and PR to main; Node 20; `npm ci` + `npm test`; `NODE_ENV=test`; no secrets; integration tests self-skip (no `TEST_INTEGRATION`) — **first successful run 2026-06-13** (commit `4e58590`, push trigger, 32 s, 6,494/6,519 tests passed on ubuntu-latest)
 
@@ -114,7 +114,7 @@ They are not bugs — they are implementation decisions that have been formally 
   - `execution/github/fetchRepo.js`, `fetchRepoMetrics.js`, `fetchCiStatus.js`, `fetchContributorInfo.js`, `fetchPullRequestHealth.js`, `fetchReleaseInfo.js`, `fetchRepositoryFiles.js`, `fetchUserRepos.js`
   - `execution/github/syncUserRepos.js` — sync repos to DB
   - `execution/syncGithubProjects.js` — full project sync pipeline
-  - `backend/routes/repoRoutes.js` — `POST /api/repos/sync`, `POST /api/repos/register`
+  - `backend/routes/repoCoreRoutes.js` (mounted via `repoRoutes.js`, split 2026-07-11) — `POST /api/repos/sync`, `POST /api/repos/register`
 - **Tests:** Unit tests pass for all GitHub fetchers and sync logic.
 - **Gaps:** No rate-limit retry/backoff for GitHub API (NFR-004 partial). No integration tests for live GitHub calls.
 
@@ -173,7 +173,7 @@ They are not bugs — they are implementation decisions that have been formally 
   - `execution/risk/buildPortfolioMaturityIndex.js`, `buildTelemetryCoverageSummary.js`
   - `execution/risk/scoreRepositoryMaturity.js`, `getRepositoryMaturityTrend.js`
   - `execution/risk/getAttentionQueue.js`, `getOperationalConfidence.js`
-  - `backend/routes/repoRoutes.js` — `GET /api/repos/:id/risk`, `/escalation`, `/forecast`, `/confidence`, `/maturity`, `/maturity-trend`, `/engineering-volatility`, `/pr-health`, `/events`
+  - `backend/routes/repoRiskRoutes.js` (mounted via `repoRoutes.js`, split 2026-07-11) — `GET /api/repos/:id/risk`, `/escalation`, `/forecast`, `/confidence`, `/maturity`, `/maturity-trend`, `/engineering-volatility`, `/pr-health`, `/events`
 - **Architecture Intelligence** (extends Phase 5 into deep analysis):
   - 24 architecture execution modules in `execution/architecture/`:
     - `buildRepositoryArchitectureSnapshot.js`, `syncRepositoryArchitectureSnapshots.js`
@@ -188,8 +188,9 @@ They are not bugs — they are implementation decisions that have been formally 
     - `buildRemediationRecommendations.js`, `deduplicateRecommendations.js`, `normalizeRecommendationWording.js`
     - `predictChangeRisk.js`, `verifyArchitectureBoundaries.js`
     - `assessImplementationCompleteness.js`, `deduplicateTopFindings.js`
-  - `backend/routes/repoRoutes.js` — `GET /api/repos/:id/architecture`, `/architecture/forecast`, `/remediation`, `POST /:id/change-risk`
-  - `backend/routes/portfolioRoutes.js` — `GET /api/portfolio/architecture`, `/forecast`, `/governance`, `/watchlists`, `/executive-summary`, `/history`, `/changes`, `/anomalies`, `/anomaly-clusters`, `/telemetry-coverage`, `/behavioral-stability`, `/maturity`
+  - `backend/routes/repoArchitectureRoutes.js` (mounted via `repoRoutes.js`, split 2026-07-11) — `GET /api/repos/:id/architecture`, `/architecture/forecast`, `/remediation`, `POST /:id/change-risk`
+  - `backend/routes/portfolioArchitectureRoutes.js` (mounted via `portfolioRoutes.js`, split 2026-07-11) — `GET /api/portfolio/architecture`, `/forecast`, `/watchlists`, `/anomalies`, `/anomaly-clusters`, `/telemetry-coverage`
+  - `backend/routes/portfolioGovernanceRoutes.js` (mounted via `portfolioRoutes.js`, split 2026-07-11) — `GET /api/portfolio/governance`, `/executive-summary`, `/history`, `/changes`, `/behavioral-stability`, `/maturity`
 - **Tests:** 24 architecture unit test files. All pass.
 - **Gaps:** No integration tests for architecture snapshot sync against a live database.
 
@@ -329,6 +330,758 @@ They are not bugs — they are implementation decisions that have been formally 
 ---
 
 ## Recent Implementation History
+
+### 2026-07-11 — Coupling Refinement #4: Exclude Documentation from Dependency Extraction
+
+**Capability:** Architecture Intelligence data-quality fix (`execution/architecture/buildImportDependencyGraph.js`) — confirmed issue, not part of the original three coupling-review refactoring opportunities: `buildImportDependencyGraph` was scanning Markdown/documentation content as executable source, so `require(...)`/`import ...` syntax appearing as illustrative code samples inside README/PROGRESS.md/CLAUDE.md-style files was parsed as real dependency edges and unresolved imports.
+**Deliverable status:** Bug fix / analyzer accuracy improvement — extraction only; route extraction, API linkage, architecture scoring formulas, and dependency resolution for real source files are untouched.
+
+#### What Changed
+
+- **`execution/architecture/buildImportDependencyGraph.js`**:
+  1. Added `DOC_EXTENSIONS = new Set(['.md', '.mdx'])` and `CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'])` constants.
+  2. Added `_extname(path)` and `_isDocumentationFile(path, category)` helpers, placed directly after the existing `_category(path)` classifier. A file is documentation when its extension is `.md`/`.mdx` (requirement minimum), **or** when the repository's own pre-existing category convention already classifies it `'docs'` (e.g. any non-code file under a `docs/` folder — `_category` already treats `^docs/` as documentation regardless of extension) **and** its extension is not one of `CODE_EXTENSIONS`. The `CODE_EXTENSIONS` guard is unconditional — a `.js`/`.jsx`/`.ts`/`.tsx`/`.mjs`/`.cjs` file is never treated as documentation even if it physically lives under a `docs/` folder, so requirement 5 ("preserve import extraction for these six extensions") holds in all cases, not just the common one.
+  3. In the main `-- Parse imports --` loop inside `buildImportDependencyGraph()`, added a single guard: `if (_isDocumentationFile(f.path, catMap.get(f.path))) continue;` before `_extractImports(f.content)` is called. This is the only control-flow change — the node-building, resolution, boundary-hint, cycle-detection, and coupling-metrics logic below it are untouched.
+- No changes to `_extractImports`, `_resolve`, `_category`, `_stripComments`, `IMPORT_PATTERNS`, `SUPPORTED_EXTENSIONS`, `_findCycles`, `_buildBoundaryHints`, or `_buildSummary` — every other code path in the file is byte-for-byte unchanged.
+
+#### Node-Retention Decision (requirement 3)
+
+**Chosen behavior: retain documentation files as graph nodes with zero outbound edges and zero unresolved imports, rather than removing them from `nodes` entirely.**
+
+Before deciding, both downstream consumers of `dependencyGraph.nodes` were located and inspected:
+- `execution/architecture/assessImplementationCompleteness.js` (`_hasStructure`, line ~136) — ORs `nodes.length > 0` together with category/hint/route signals to decide whether *any* architectural structure was detected at all.
+- `execution/architecture/verifyArchitectureBoundaries.js` (`hasStructure`, line ~376) — the same pattern, ORing `dependencyGraph.nodes.length > 0` with several other structural-presence signals.
+
+Both treat a non-empty `nodes` array as one of several independent "this repository has *some* structure" signals. Fully removing documentation files from `nodes` would change this signal specifically for the edge case of a repository (or file subset) containing only documentation and no other structural evidence — a real, if narrow, behavior change to two modules explicitly out of scope for this task ("do not change architecture scoring formulas"). Retaining doc nodes with `outboundCount: 0` and no `unresolvedImports` entries satisfies every other part of the preferred contract (no fake edges, no fake unresolved imports, no doc paths in `highFanOutFiles`) while leaving `nodes.length` semantics exactly as they were, per the task's explicit fallback instruction ("retain them with zero outbound edges only if tests or downstream consumers require it").
+
+One consequence of retention, verified as correct rather than incidental: a *real* source file that legitimately `require()`s a documentation file (e.g. `require('./README.md')` to load raw text) still resolves to an edge — the doc file remains in `fileSet` and is a valid resolution target. Only a documentation file's own content is excluded from being *parsed* for outbound imports.
+
+#### Not Changed
+
+- Repository file fetching, route extraction (`extractRouteApiStructure.js`), API linkage extraction (`linkFrontendBackendApis.js`), architecture scoring formulas (`scoreEngineeringGovernance.js`, `assessImplementationCompleteness.js`, `verifyArchitectureBoundaries.js`) — zero lines touched in any of these files
+- Dependency resolution for real source files — `_resolve()` is unmodified; a `.js`/`.ts`/etc. file's imports resolve exactly as before, including when the import target happens to be a documentation file
+- `.json`, `.yml`/`.yaml`, `.sql`, `.html` — none of these extensions are touched by `_isDocumentationFile`; the only way a non-`.md`/`.mdx` file is excluded is via the pre-existing `'docs'` category (i.e. living under a `docs/` folder) combined with not having a code extension — this is scoped narrowly to the existing documentation convention, not a blanket exclusion of these file types anywhere in a repository
+- `.js`/`.jsx`/`.ts`/`.tsx`/`.mjs`/`.cjs` import extraction — unconditionally preserved, including for such files placed under a `docs/` folder (verified by a dedicated test)
+
+#### Validation
+
+- **`tests/unit/execution/architecture/buildImportDependencyGraph.test.js`** — 12 new tests added in a new `describe('buildImportDependencyGraph — documentation exclusion')` block (was 69 tests, now 81): Markdown file with `require(...)` produces no edge; Markdown file with ES `import` syntax produces no edge; MDX file with import/require snippets produces no edge; documentation files produce no `unresolvedImports` (external, non-relative, and missing-relative varieties all suppressed); a `.js` file with the identical require/import text still produces the expected edge (proves the guard is content-blind and extension/category-driven, not text-pattern-driven); TypeScript import extraction unchanged; `highFanOutFiles` excludes a documentation file even when it superficially references 6 distinct paths; total edge count excludes documentation-derived edges while still counting a real file's edge in the same input; the task's own realistic regression snippet (`PROGRESS.md`-style content with two `require()` calls) contributes zero edges/unresolved imports; documentation files still appear as nodes with `outboundCount: 0` and `category: 'docs'` (locks in the node-retention decision above); a real source file importing a documentation file still resolves to an edge; a `.js` file physically placed under a `docs/` folder still has its imports extracted (proves the `CODE_EXTENSIONS` guard wins over the `'docs'` category).
+- `npx jest tests/unit/execution/architecture/buildImportDependencyGraph.test.js --runInBand` → **1/1 suite passing, 81/81 tests passing**
+- `npx jest tests/unit/execution/architecture --runInBand` (all 24 architecture unit test files, including `assessImplementationCompleteness.test.js` and `verifyArchitectureBoundaries.test.js`, the two downstream consumers of `dependencyGraph.nodes`) → **24/24 suites passing, 2290/2290 tests passing** — no regression in either downstream consumer from the node-retention decision
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7238/7308 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline after Refinement #3 was 110/115 suites, 7226/7296 tests — net +12 tests, no new suites, from the new documentation-exclusion test block)
+- `buildImportDependencyGraph.js` coverage: 96.17% statements / 89.36% branches / 100% functions / 97.64% lines (uncovered lines are pre-existing defensive branches unrelated to this change)
+
+#### Capability Maturity Change
+
+Architecture Intelligence (`buildImportDependencyGraph.js`): data-quality defect resolved — documentation content no longer contributes false dependency-graph edges, false unresolved-import findings, or false high-fan-out signals to any downstream architecture snapshot, portfolio aggregation, or dashboard view that consumes `dependencyGraph.edges` / `.unresolvedImports` / `.couplingMetrics.highFanOutFiles`. No capability newly delivered; existing Architecture Intelligence maturity (Integrated / Tested) is unchanged, with one known accuracy gap closed.
+
+---
+
+### 2026-07-11 — Coupling Refinement #3: Split portfolioRoutes.js by Domain
+
+**Capability:** Architecture coupling reduction (third of the three lowest-risk refactoring opportunities identified in the 2026-07-10 Architecture Coupling Review of repo_id=80, after [[Coupling Refinement #1]] and [[Coupling Refinement #2]] — this one targeting the 1462-line monolithic `backend/routes/portfolioRoutes.js`, which had a 25-direct-import fan-out, the highest of any single route file in the repo)
+**Deliverable status:** Structural refactor only — no behavior, contract, auth, DB, scoring, caching, ordering, or dedup/fallback logic change; all public URLs remain under `/api/portfolio`
+
+#### Actual Route Inventory (verified before moving anything)
+
+Before writing any new file, every `router.get(...)` in the original `portfolioRoutes.js` was inventoried directly from source (not assumed from the task brief): **12 endpoints, all `GET`, all static paths (no `:id`/params), no wildcards, no duplicate path+method pairs** — `/forecast`, `/executive-summary`, `/history`, `/changes`, `/anomalies`, `/anomaly-clusters`, `/telemetry-coverage`, `/behavioral-stability`, `/maturity`, `/architecture`, `/governance`, `/watchlists`. This matched the task brief's suggested 6-and-6 grouping exactly by endpoint name — no renamed or missing endpoints — so the suggested classification was adopted as the actual mapping.
+
+#### What Changed
+
+- **New file `backend/routes/portfolioArchitectureRoutes.js`** (684 lines, 14 direct requires) — architecture/structural-intelligence endpoints, handler bodies moved verbatim: `GET /forecast`, `/anomalies`, `/anomaly-clusters`, `/telemetry-coverage`, `/architecture`, `/watchlists`. Handler-local helpers `_unknownArchRepo` (inside `/architecture`) and `_GOV_LEVEL_MAP` (inside `/watchlists`) were already function-scoped in the original file and moved as-is — no extraction needed.
+- **New file `backend/routes/portfolioGovernanceRoutes.js`** (812 lines, 18 direct requires) — governance/portfolio-operating endpoints, handler bodies moved verbatim: `GET /executive-summary`, `/history`, `/changes`, `/behavioral-stability`, `/maturity`, `/governance`. Two module-scope helper groups moved here as private locals, each verified (via grep) to have exactly one consumer in the original file: `_mapRepoRow` (used only by `/executive-summary`) and `_REGR_RANK`/`_COUP_RANK`/`_worstLevel`/`_aggregateRegressions`/`_aggregateCouplingAlerts` (used only by `/governance`).
+- **`backend/routes/portfolioRoutes.js`** (1462 → 31 lines) — reduced to a composition router: applies `authenticate` once (exactly as the original applied it once, immediately after the removed helper block), then mounts the two domain routers directly (`router.use(portfolioArchitectureRoutes)`, `router.use(portfolioGovernanceRoutes)` — no path prefix argument, matching the task's explicit "must NOT become `/api/portfolio/architecture/architecture`" requirement). `backend/server.js` required zero changes — `app.use('/api/portfolio', portfolioRoutes)` still resolves to one router.
+- No shared-helper module was created (no `portfolioUtils.js`/`common.js`/`helpers.js`): every private helper had exactly one real consumer, so per requirement 5 each stayed local to the router that uses it.
+
+#### Cross-Router Import Overlap (expected, not a violation)
+
+`GET /governance` (governance router) independently re-runs the same per-repo architecture forecast pipeline that `GET /forecast` and `GET /watchlists` (architecture router) use, so `portfolioGovernanceRoutes.js` also imports `buildArchitectureTrendTimeline`, `detectArchitectureRegressions`, `detectCouplingGrowthAlerts`, `forecastStructuralDegradation`, `buildPortfolioForecastingIntelligence`, `detectArchitectureAnomalies`, and `buildPortfolioArchitectureIntelligence` from `execution/architecture/*` — the same modules the architecture router imports. This is independent execution-module reuse across two routers (each doing its own aggregation), not a duplicated local helper function, and is explicitly allowed by requirement 6 ("move each execution import to the router that actually uses it" — both routers actually use these).
+
+#### Route-Order Findings
+
+No route-order collision exists. All 12 original routes are `GET`-only, static (zero `:id`/wildcard segments), and path-distinct across both new files, so no ordering choice between `portfolioArchitectureRoutes` and `portfolioGovernanceRoutes` in the composition router can change which handler serves a given request — mount order (architecture, then governance) simply mirrors the original file's top-to-bottom grouping as a defensive convention, not a functional requirement.
+
+#### Not Changed
+
+- Route paths, HTTP methods, SQL (including all `JSON_AGG`/`LEFT JOIN LATERAL` queries), execution-module call arguments, `Promise.all`-adjacent sequential-query ordering (the two-query `/governance` and `/anomalies`/`/anomaly-clusters` handlers still issue their queries in the exact original order), response payload shapes, status codes, `next(err)` error propagation, cache `_meta`/`_cache` metadata blocks, the < 2-snapshot "unknown forecast" fallback branches, `deduplicateTopFindings`/`deduplicateRecommendations` dedup calls in `/architecture`, and the `.slice(0, 50)`/`.slice(0, 20)`/`.slice(0, 10)` result-limiting behavior in `/anomalies`, `/anomaly-clusters`, and the governance aggregation helpers — all preserved exactly across all 12 moved handlers
+- `authenticate` middleware — applied exactly once, only in the composition router; neither domain router re-applies or weakens it (verified structurally: every layer on each domain router's own `.stack` is a route layer, not a `router.use` layer)
+- `backend/routes/repoRoutes.js`, `repoCoreRoutes.js`, `repoRiskRoutes.js`, `repoArchitectureRoutes.js` — out of scope, not touched
+
+#### Validation
+
+- **New test file `tests/unit/backend/routes/portfolioRoutes.composition.test.js`** (16 tests, 5 `describe` blocks), modeled on the established `repoRoutes.composition.test.js` pattern: composition structure (router export shape, both domain routers are independent Express Routers, `portfolioRoutes.stack` is exactly `[authenticate, architectureRouter, governanceRouter]`, neither domain router registers its own auth-style `router.use`, `authenticate` fires exactly once per request and runs before the matched handler); representative end-to-end HTTP requests (`GET /architecture` and `/watchlists` → architecture router; `GET /governance`, `/maturity`, `/executive-summary` → governance router); public-path stability (all 12 original paths remain reachable, none 404); no accidental double-prefixing (`/api/portfolio/architecture/architecture` and `/api/portfolio/governance/governance` both 404); unknown portfolio path retains its pre-existing 404 (no catch-all handler existed before or after); backward-compatibility (`require('../routes/portfolioRoutes')` still mounts without throwing).
+- **`tests/unit/backend/routes/portfolioRoutes.test.js`** — `extractHandler` helper made recursive (checks `layer.handle.stack` and descends into nested routers), the same fix applied to `repoRoutes.test.js` in Coupling Refinement #2, so all 233 pre-existing handler-extraction tests keep resolving to the same handler functions across the new nested-router structure without rewriting any test body or assertion.
+- `npx jest tests/unit/backend/routes/portfolioRoutes --runInBand` → **2/2 suites passing, 233/233 tests passing** (217 pre-existing + 16 new composition tests)
+- `npx jest tests/unit/backend/routes --runInBand` → **8/8 suites passing, 692/692 tests passing**
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7226/7296 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline after Refinement #2 was 109/114 suites, 7210/7280 tests — net +1 suite / +16 tests from the new composition test file); `portfolioRoutes.js` itself: **100% statements/branches/functions/lines**; the two new domain routers: 94.3–95.13% statements (uncovered lines are pre-existing defensive branches inherited unchanged from the original monolithic file, not new code)
+
+#### Coupling Validation
+
+| Metric | Value |
+|---|---|
+| Old `portfolioRoutes.js` line count | 1462 |
+| New `portfolioRoutes.js` line count | 31 |
+| Composition router (`portfolioRoutes.js`) direct requires | 4 (`express`, `authenticate`, `portfolioArchitectureRoutes`, `portfolioGovernanceRoutes`) |
+| `portfolioArchitectureRoutes.js` direct requires | 14 (`express` + 13 execution modules) |
+| `portfolioGovernanceRoutes.js` direct requires | 18 (`express` + 17 execution modules) |
+| Original `portfolioRoutes.js` direct requires (baseline) | 25 |
+
+Per requirement 8, this does **not** claim the portfolio-domain dependency-graph edge count decreased — the same 24 execution-module edges that existed before (minus duplication, since 7 modules are now imported by both new files rather than once each) still exist, just redistributed across two bounded files instead of concentrated in one. The objective met is fan-out-per-file and blast-radius reduction: a change to a governance-only execution module (e.g. `scoreEngineeringGovernance`) now only requires reasoning about a 812-line file with a single governance-shaped responsibility, not a 1462-line file mixing governance and architecture-forecast concerns.
+
+#### Capability Maturity Change
+
+Architecture coupling (repo_id=80 self-analysis): `backend/routes/portfolioRoutes.js` reduced from 1462 lines / one file / 25-import fan-out to a 31-line composition router + 2 focused domain routers (684 + 812 lines). The "highest-fan-out single route file" issue flagged in the 2026-07-10 coupling review is resolved for this file — all three flagged refactoring opportunities from that review are now complete. No public API, auth, or scoring surface changed — this is a pure structural maturity improvement (Integrated / Tested), not a new capability.
+
+---
+
+### 2026-07-11 — Coupling Refinement #2: Split repoRoutes.js by Domain
+
+**Capability:** Architecture coupling reduction (follow-up to the 2026-07-10 Architecture Coupling Review of repo_id=80, which flagged the 1526-line monolithic `backend/routes/repoRoutes.js` as a single-file out-degree/mixed-responsibility risk — the second of the three lowest-risk refactoring opportunities identified, after [[Coupling Refinement #1]])
+**Deliverable status:** Structural refactor only — no behavior, contract, auth, DB, scoring, caching, or route-order change; all public URLs remain under `/api/repos`
+
+#### What Changed
+
+- **New file `backend/routes/repoCoreRoutes.js`** (501 lines) — core collection endpoints, handler bodies moved verbatim: `GET /`, `GET /:id/metrics`, `GET /attention`, `GET /summary`, `POST /register`, `POST /:id/change-risk`, `POST /sync`.
+- **New file `backend/routes/repoRiskRoutes.js`** (629 lines) — per-repo operational risk endpoints, handler bodies moved verbatim: `GET /:id/risk`, `/:id/events`, `/:id/escalation`, `/:id/forecast`, `/:id/confidence`, `/:id/pr-health`, `/:id/engineering-volatility`, `/:id/maturity`, `/:id/maturity-trend`.
+- **New file `backend/routes/repoArchitectureRoutes.js`** (428 lines) — per-repo architecture intelligence endpoints, handler bodies (and the module-scope `_withDedupedFindings` helper, `ARCH_HEALTH_TO_GOV_LEVEL` map, and `ARCH_CACHE_TTL_MS` constant — each used only by handlers within this file) moved verbatim: `GET /:id/architecture/forecast`, `/:id/remediation`, `/:id/architecture`.
+- **`backend/routes/repoRoutes.js`** (1526 → 36 lines) — reduced to a composition router: applies `authenticate` once (exactly as the original applied it once at the top of the monolithic file), then mounts the three domain routers at `/` in core → risk → architecture order (matching the original file's top-to-bottom static-route order; documented in-file as defensive convention since no domain router in this endpoint set contains a bare `/:id` route, so no literal shadowing is structurally possible regardless of mount order).
+- Endpoint-to-router mapping deliberately follows the task's *actual current* route paths rather than the task brief's suggested `:id`-prefixed shapes for `/summary`, `/attention`, and `/sync` — the pre-existing repository confirms these three are collection-level (not per-repo) endpoints (`router.get('/attention', ...)`, `router.get('/summary', ...)`, `router.post('/sync', ...)` in the original file, predating this refactor), so they were moved into `repoCoreRoutes.js` at their real paths, not renamed to match the brief.
+- No shared-helper module was introduced: every constant/helper used by more than one handler is used only within a single new domain router file, so per requirement 5 nothing was extracted to a shared module.
+
+#### Not Changed
+
+- Route paths, HTTP methods, SQL, response shapes, status codes, and error-propagation (`next(err)` → the same `app.use(errorHandler)` in `backend/server.js`) — preserved exactly in all 20 moved handlers
+- `authenticate` middleware — applied exactly once, only in the composition router; no domain router re-applies or weakens it (verified structurally: every layer on each domain router's own `.stack` is a route layer, not a `router.use` layer)
+- `authorize('repositories:configure')` on `POST /register` and `POST /sync` — preserved exactly, at the handler level, in `repoCoreRoutes.js`
+- Lazy `require` behavior — none existed in the original `repoRoutes.js` handlers (unlike `legacySummaryRoutes.js` from Coupling Refinement #1); all requires here were already module-scope and remain module-scope in their new files
+- Caching behavior (`GET /:id/architecture`'s 6-hour `ARCH_CACHE_TTL_MS` stale-cache/live-refresh logic) and request-sequence behavior (`Promise.all` parallel query pairs/triples in the risk and architecture handlers) — moved verbatim, untouched
+- `backend/server.js` — no mounting change needed; `app.use('/api/repos', repoRoutes)` continues to resolve to a single mountable Express Router, so no import-site changes were required anywhere
+- `backend/routes/portfolioRoutes.js` — out of scope, not touched
+
+#### Validation
+
+- **New test file `tests/unit/backend/routes/repoRoutes.composition.test.js`** (12 tests, 4 `describe` blocks): composition structure (router export shape, each domain router is an independent Express Router, `repoRoutes.stack` is exactly `[authenticate, coreRouter, riskRouter, architectureRouter]`, no domain router registers its own auth-style `router.use`, `authenticate` fires exactly once per request end-to-end); route-order safety (`POST /register` resolves to the register handler and not a `:id`-shaped 400, `GET /summary` and `GET /attention` resolve to their static handlers, not captured as `:id`); one representative end-to-end HTTP request per domain router (`GET /api/repos` → core, `GET /api/repos/:id/risk` → risk, `GET /api/repos/:id/architecture` → architecture); backward-compatibility (`require('../routes/repoRoutes')` still mounts without throwing).
+- **`tests/unit/backend/routes/repoRoutes.test.js`** — `extractHandler` helper made recursive (checks `layer.handle.stack` and descends into nested routers) so all 307 existing handler-extraction tests keep resolving to the same handler functions across the new nested-router structure, without rewriting any test body or assertion.
+- `npx jest tests/unit/backend/routes --runInBand` → **7/7 suites passing, 676/676 tests passing** (includes `repoRoutes.test.js`, `repoRoutes.http.test.js`, `repoRoutes.composition.test.js`, `portfolioRoutes.test.js`, `notificationRoutes.test.js`, `legacySummaryRoutes.test.js`, `authRoutes.test.js`)
+- `npm test -- --runInBand` (full suite) → **109/114 suites passing, 7210/7280 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated); `repoRoutes.js` itself: **100% statements/branches/functions/lines**; the three new domain routers: 94.28–94.53% statements (uncovered lines are pre-existing defensive branches inherited unchanged from the original monolithic file, not new code)
+- Manual verification: no duplicate route definitions across the three new routers (each handler moved to exactly one file); no bare `/:id` route exists anywhere in this endpoint set, so static-vs-parameterized shadowing was structurally impossible even before the explicit route-order tests were added
+
+#### Capability Maturity Change
+
+Architecture coupling (repo_id=80 self-analysis): `backend/routes/repoRoutes.js` reduced from 1526 lines / one file to a 36-line composition router + 3 focused domain routers (501 + 629 + 428 lines). The "single large mixed-responsibility route file" issue flagged in the 2026-07-10 coupling review is resolved for this file. No public API, auth, or scoring surface changed — this is a pure structural maturity improvement (Integrated / Tested), not a new capability.
+
+---
+
+### 2026-07-10 — Coupling Refinement #1: Extract Legacy Summary Routes
+
+**Capability:** Architecture coupling reduction (follow-up to the 2026-07-10 Architecture Coupling Review of repo_id=80, which identified `backend/server.js` mixing bootstrap concerns with inline route/orchestration logic as one of the three lowest-risk refactoring opportunities)
+**Deliverable status:** Structural refactor only — no behavior, contract, auth, DB, or scoring change
+
+#### What Changed
+
+- **New file `backend/routes/legacySummaryRoutes.js`** — an `express.Router()` hosting the five legacy/demo endpoints previously defined inline in `backend/server.js`:
+  - `GET /projects`, `GET /summary`, `GET /history`, `POST /history/snapshot`, `GET /alerts`
+  - Handler bodies moved verbatim, including the lazy `require('../../execution/projects')`, `require('../../execution/getProjectSummary')`, and `require('../../execution/appendSummarySnapshot')` calls inside each handler (unchanged caching semantics — first request per process loads the module, Node's require cache serves the rest)
+  - `execution/summaryHistory` moved to a module-scope `require` in the new router file (was module-scope in `server.js`)
+- **`backend/server.js`** — the module-level `let _syncedProjects = null` closure variable (read by 3 of the 5 handlers, written once by the async GitHub-sync startup block) was replaced with `app.locals.syncedProjects`, mirroring the existing `app.locals.db` / `app.locals.config` pattern already used in this file. This is the only behavioral wiring change: the new router reads `req.app.locals.syncedProjects` at request time instead of closing over a local variable — functionally identical, since `req.app` is the same mounted `app` instance either way. New router mounted via `app.use('/', legacySummaryRoutes)` — no path prefix added, so all five public URLs are byte-for-byte unchanged. `server.js` now contains only: app/middleware setup, 4 pre-existing route-file mounts + the new legacy router mount, 4 small always-legitimate inline handlers not in scope for this task (`/`, `/dashboard`, `/manage/repos`, `/health`), error handler, and startup/listen block.
+- **New test file `tests/unit/backend/routes/legacySummaryRoutes.test.js`** (8 tests) — isolated supertest coverage against the router directly (mocked `execution/summaryHistory`, `execution/projects`, `execution/getProjectSummary`, `execution/appendSummarySnapshot`), added because `tests/unit/backend/server.test.js`'s existing "legacy dashboard routes" describe block never exercises the `app.locals.syncedProjects !== null` branch (the wired-in test never runs the GitHub-sync startup path) or `POST /history/snapshot` at all — coverage was 82.6%/50%/80%/86.36% (stmts/branch/func/line) on the new file before this addition, now 100%/100%/100%/100%.
+
+#### Not Changed
+
+- Route paths, HTTP methods, response body shapes, status codes, and error-propagation behavior (synchronous throws inside handlers still bubble to the same `app.use(errorHandler)`, registered after the new router exactly as it was after the old inline handlers) — all preserved exactly
+- `execution/projects.js`, `execution/getProjectSummary.js`, `execution/appendSummarySnapshot.js`, `execution/summaryHistory.js`, `execution/repoHistory.js` — zero changes to any execution module
+- Authentication behavior, database access, scoring/risk logic — untouched (these endpoints never touched auth/DB/scoring to begin with)
+- `/`, `/dashboard`, `/manage/repos`, `/health` inline handlers in `server.js` — out of scope, left exactly as-is
+- `tests/routes.test.js`, `tests/backend.test.js`, `tests/projects_file.*.test.js` (root-level, **not** matched by `jest.config.js`'s `testMatch` and therefore not part of `npm test`) — re-run directly for verification; baseline preserved exactly: 8/9 suites passing both before and after, same 9 pre-existing failing tests in `tests/routes.test.js` (`/health` shape assertion + `/repo-history/:id` + `POST /test-alert` — none of these three routes exist in `server.js` today and none are part of the 5 endpoints moved by this task, confirmed via a baseline run before touching any file)
+
+#### Validation
+
+- `npm test -- --runInBand` → **108/113 suites passing, 7198/7268 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline was 107/112 suites, 7190/7260 tests — net +1 suite / +8 tests from the new focused router test)
+- `backend/routes/legacySummaryRoutes.js` coverage: **100% statements / 100% branches / 100% functions / 100% lines**
+- Direct re-run of `tests/unit/backend/server.test.js` (the actually-wired-in coverage for these endpoints, under "server — legacy dashboard routes") → **37/37 passing**, including `GET /projects`, `GET /summary`, `GET /history`, `GET /alerts` through the fully mounted app
+- Direct re-run of the non-wired root-level `tests/routes.test.js` + `tests/backend.test.js` + `tests/projects_file.*.test.js` (9 files) → **8/9 suites passing, 36/45 tests passing** — identical to the pre-refactor baseline captured before any file was touched
+- Manual sanity load: `require('./backend/server')` resolves cleanly; `app.locals` contains `db`, `config`, `syncedProjects` (initial value `null`)
+
+#### Capability Maturity Change
+
+Architecture coupling (repo_id=80 self-analysis): `backend/server.js` out-degree reduced from 15 to 11 direct requires (`legacySummaryRoutes.js` replaces 4 direct execution requires — `execution/projects.js`, `execution/getProjectSummary.js`, `execution/summaryHistory.js`, `execution/appendSummarySnapshot.js` — with 1 router require); the "inline orchestration logic in the bootstrap file" issue flagged in the 2026-07-10 coupling review (category D) is resolved — `server.js` now contains only bootstrap/mounting concerns for these five endpoints. Total dependency-graph edge count is expected to remain ~139 (edges relocated to the new router file, not removed) — to be confirmed against the next architecture snapshot for repo_id=80.
+
+---
+
+### 2026-07-10 — Dashboard Executive Refinement #1: Remove Portfolio Assessment Section
+
+**Capability:** FR-003 Project Dashboard — UI surface area reduction  
+**Deliverable status:** UI-only cleanup — backend routes, scoring logic, and other dashboard sections untouched
+
+#### What Changed
+
+- **`frontend/dashboard.html`** — removed the "Portfolio Assessment" briefing card (internally named `Executive Briefing`), which duplicated the Summary cards and Portfolio Architecture/Governance panels:
+  1. **HTML**: `<!-- Portfolio Assessment -->` comment + `<div class="section"><div id="executive-summary">...</div></div>` wrapper removed (no placeholder spacing left behind — Summary section now sits directly above Notifications)
+  2. **CSS**: entire `/* ── Executive Summary briefing card ── */` block removed (`.exec-brief`, `.exec-brief.sev-*`, `.exec-brief-header`, `.exec-brief-badge`, `.exec-brief-label`, `.exec-brief-headline`, `.exec-brief-summary`, `.exec-brief-body`, `.exec-brief-col`, `.exec-brief-col-label`, `.exec-brief-list`, `.exec-brief-item`, `.exec-brief-rec-item` and their `::before` rules) — confirmed unused elsewhere (only consumer was the removed briefing function)
+  3. **JS functions removed**: `buildExecutiveBriefing()`, `renderExecutiveBriefing()`, `loadExecutiveSummary()`
+  4. **JS call sites removed**: `renderExecutiveBriefing()` call sites in `loadPortfolioArchitecture()` and `loadPortfolioGovernance()`; `loadExecutiveSummary()` call removed from `refresh()`
+  5. `_execKpi` state object and `buildExecutiveKpiCards()` / `renderExecutiveKpis()` (Summary cards: Architecture Health, Governance, Critical Repos, Snapshot Coverage) are shared state consumers — left fully intact per scope
+- **`tests/unit/frontend/dashboardExecutiveBriefing.test.js`** — deleted; its only purpose was verifying `buildExecutiveBriefing()` (copied verbatim into the test), which no longer exists in `dashboard.html`
+
+#### Not Changed
+
+- Summary cards (Architecture Health, Governance, Critical Repositories, Snapshot Coverage), Portfolio Architecture panel, Engineering Governance panel, Recommended Actions — all untouched
+- `tests/unit/frontend/dashboardPortfolioBriefing.test.js` — retained; unrelated self-contained test for a different, already-removed function (`buildPortfolioBriefingHtml`, removed in the 2026-06-25 Dashboard Refinement #1 entry below), kept per the established pattern of self-contained verbatim-copy tests
+- No backend routes, scoring/analysis logic (`execution/architecture/*`), or APIs modified
+
+#### Dead Code Left Intentionally
+
+None. All removed functions, call sites, and CSS classes were confirmed to have no other consumers via full-file grep before deletion.
+
+#### Validation
+
+- `npx jest tests/unit/frontend --silent` → **23/23 suites, 1491/1491 tests passing**
+- `npx jest --silent` (full suite) → **107/112 suites passing, 7190/7260 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated to this change)
+- Verified via grep: no remaining references to `Portfolio Assessment`, `exec-brief`, `executive-summary`, `buildExecutiveBriefing`, `renderExecutiveBriefing`, `loadExecutiveSummary`, or `exec-summary-conf` in `dashboard.html`
+
+#### Capability Maturity Change
+
+FR-003 Dashboard: **Integrated / Tested** — Portfolio Assessment surface removed as a duplicate of existing Summary/Architecture/Governance views; no regression to remaining dashboard capabilities.
+
+---
+
+### 2026-07-09 — Analyzer Improvement Step #8: Monorepo Next.js App Router Detection
+
+**Capability:** Architecture Intelligence — backend route discovery (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer accuracy improvement — extraction only; scoring/linking/UI/frontend-call-extraction untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. `_nextUrlFromPath`'s `appMatch` regex extended from `^(?:src\/)?app\/api\/(.+)\/route\.[jt]sx?$` to `^(?:(?:apps|packages|services|libs)\/[^/]+\/)?(?:src\/)?app\/api\/(.+)\/route\.[jt]sx?$` — an optional leading `{apps|packages|services|libs}/<single-segment-package-name>/` group, still followed by the existing optional `src/` and the unchanged `app/api/.../route.*` tail. `[^/]+` matches exactly one path segment (the workspace/package name — `web`, `admin`, `frontend`, `demo`, etc.), so a repo with deeper nesting under the package name still requires that `app/api/` immediately follow (optionally via `src/`), matching the exact shapes named in the requirements.
+  2. `pagesMatch` (the separate `pages/api/...` regex) was **not** touched — it remains root-anchored only, exactly as before. Workspace-nested `pages/api` (e.g. `apps/web/pages/api/users.js`) is out of scope per the requirements (only the four `app/api` workspace roots were listed) and is confirmed still undetected by a dedicated regression test.
+  3. Everything downstream of `_nextUrlFromPath` — the dynamic-segment normalization (`.replace(/\[([^\]]+)\]/g, ':$1')`), the exported-HTTP-method detection (`NEXT_EXPORT_FUNCTION_RE`/`NEXT_EXPORT_CONST_RE`/`NEXT_EXPORT_LIST_RE`, requirement 4's "no route without an export" rule), and the Step #5 merge of `type: 'app'` `nextRoutes` entries into `backendRoutes` (requirement 5) — is completely unchanged. A workspace-detected route flows through the exact same pipeline as a root-detected one from this point forward, so no additional wiring was needed to satisfy requirements 4, 5, or 7.
+  4. Catch-all segment normalization (`[...slug]` → `:...slug`, `[[...slug]]` → `:[...slug]` — the latter's slightly unusual leftover-bracket output is pre-existing, unmodified behavior, not something this step changes or "fixes") was verified byte-for-byte identical between a root `app/api/docs/[...slug]/route.ts` and a workspace `apps/web/src/app/api/docs/[...slug]/route.ts`, via a direct cross-check test, before any test asserting a specific catch-all output string was written — the actual current output was captured via a standalone script first rather than assumed, per requirement 2's "continue using the current normalization rules."
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — 21 new tests across 6 `describe` blocks inserted directly after the existing "Next.js App Router (src/app/api and dynamic segments)" block: all 6 named workspace layouts from the requirements (`apps/web/src/app/api`, `apps/admin/app/api`, `packages/web/src/app/api`, `packages/frontend/src/app/api`, `services/frontend/src/app/api`, `libs/demo/src/app/api`) plus a Step #5 backendRoutes-merge confirmation; dynamic/catch-all preservation (4 — nested dynamic segment, catch-all, optional catch-all, and a root-vs-workspace catch-all identical-output cross-check); route.\* extension/export-requirement preservation (3 — non-route.\* file ignored, `.jsx`/`.tsx` extensions recognized, methodless route.ts still produces nothing); existing-behavior regressions (4 — root `app/api`, root `src/app/api`, workspace-nested `pages/api` confirmed still NOT detected, root `pages/api` regression); and full `linkFrontendBackendApis` linkage verification (3 — static route links, dynamic `[id]` route links via template-literal call, and two separate workspace apps in the same repo both linking independently).
+
+#### Workspace Layouts Supported
+
+| Prefix | Example |
+|---|---|
+| `app/api/` (root, unchanged) | `app/api/users/route.ts` → `/api/users` |
+| `src/app/api/` (root, unchanged) | `src/app/api/users/route.ts` → `/api/users` |
+| `apps/*/app/api/` | `apps/admin/app/api/users/route.ts` → `/api/users` |
+| `apps/*/src/app/api/` | `apps/web/src/app/api/users/route.ts` → `/api/users` |
+| `packages/*/app/api/` | `packages/web/app/api/users/route.ts` → `/api/users` |
+| `packages/*/src/app/api/` | `packages/frontend/src/app/api/users/route.ts` → `/api/users` |
+| `services/*/app/api/` | `services/web/app/api/users/route.ts` → `/api/users` |
+| `services/*/src/app/api/` | `services/frontend/src/app/api/users/route.ts` → `/api/users` |
+| `libs/*/app/api/` | `libs/demo/app/api/users/route.ts` → `/api/users` |
+| `libs/*/src/app/api/` | `libs/demo/src/app/api/users/route.ts` → `/api/users` |
+
+`pages/api/...` remains root-anchored only — no workspace variant was added, per scope.
+
+#### Example Extracted Routes
+
+`apps/web/src/app/api/users/route.ts` + `export async function GET` → `GET /api/users`, merged into `backendRoutes` with `framework: 'nextjs-app-router'` exactly as a root-level App Router route would be (Step #5 behavior, unchanged).
+`apps/web/src/app/api/users/[id]/edit/route.ts` → `/api/users/:id/edit` (nested dynamic segment, unchanged normalization).
+Two independent workspace apps in the same monorepo (`apps/web` and `apps/admin`) both extract and link correctly in the same pass — verified end-to-end through `linkFrontendBackendApis`.
+
+#### Not Changed
+
+- Linkage scoring (`linkFrontendBackendApis.js`), architecture scoring (`buildRepositoryArchitectureSnapshot.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`) — no lines touched
+- `frontend/dashboard.html` — untouched
+- Frontend call extraction (`fetch`/`axios`/`apiClient`/`client.request`/serverFetch-family regexes) — untouched, per explicit scope; only the *backend* App Router path matcher changed
+- `pages/api` detection, Express/Fastify extraction, NestJS extraction (Steps #1/#6/#7, including global-prefix detection) — unaffected, verified by full regression run
+- Dynamic-segment and catch-all normalization logic itself — not modified; only the *file-path matcher feeding into it* was extended
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **233/233 passing** (21 new + all 212 pre-existing tests, including Steps #1/#2/#3/#5/#6/#7, unchanged and passing)
+- `npx jest tests/unit/execution/architecture` (24 files) → **2,257/2,257 passing** — confirms zero regressions in linking/scoring/snapshot modules
+- `npm test --runInBand` → **7,240 / 7,310 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +21 tests vs. prior 7,219/7,289)
+- Manually verified via a standalone script before formalizing as tests: all 6 named workspace layouts, root regressions, nested dynamic segments, catch-all/optional-catch-all (captured real current output first, not assumed), non-route.\* file rejection, methodless-route skip, workspace-nested `pages/api` non-detection, and full linkage through `linkFrontendBackendApis`
+
+#### Next Actions
+
+- None identified specific to workspace App Router detection. Combined with Steps #5–#8, RepoPulse now recognizes NestJS routes (incl. object-form controllers and global prefixes) and Next.js App Router BFF routes (incl. common monorepo layouts) as first-class `backendRoutes` participating in real linkage — the repo_id=98 investigation's two root causes (NestJS object-form decorators, and App Router routes not feeding linkage at all) are both now addressed in code; a fresh snapshot of that repository was not re-fetched as part of this step.
+
+---
+
+### 2026-07-09 — Analyzer Improvement Step #7: NestJS Global Prefix Detection
+
+**Capability:** Architecture Intelligence — backend route discovery (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer accuracy improvement — extraction only; scoring/linking/UI untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. **Closes the last remaining gap explicitly flagged in Step #6's own PROGRESS.md entry:** RepoPulse could resolve `@Controller({ version: '1', path: 'auth' })` to `/v1/auth/...` but had no visibility into `app.setGlobalPrefix('api', ...)` in `main.ts`/bootstrap files — so the extractor's `/v1/auth/login` never matched the real runtime path `/api/v1/auth/login`, which is exactly what repo_id=98's frontend calls. This step adds that missing piece.
+  2. Added `NEST_GLOBAL_PREFIX_RE` and `_detectNestGlobalPrefix(normalizedFiles)`. The regex matches `app.setGlobalPrefix(` followed immediately by a quoted (single/double/backtick) argument; a variable, function call, or any other non-literal argument simply never matches the regex at all — there is no special-case branch needed to "ignore" a dynamic argument, it is structurally invisible to the pattern, exactly satisfying requirement 4 with no extra logic.
+  3. `_detectNestGlobalPrefix` scans every fetched file (no filename restriction, consistent with this module's existing scan-everything approach — e.g. Step #4's framework hints), and for each file scans every `setGlobalPrefix(...)` occurrence left to right. The first occurrence that resolves to a **non-empty literal** (after slash-trimming) is returned immediately; an occurrence with an interpolated template literal (`` `${env}/api` ``) is skipped and scanning continues — this is what makes "use the first static literal prefix" (requirement 3) hold even when a dynamic or empty-string call appears earlier in scan order.
+  4. In `extractRouteApiStructure`, a new pass runs after the existing Express `app.use()` mount-prefix resolution and before the Step #5 Next.js App Router merge: if `_detectNestGlobalPrefix` returns a prefix, every `backendRoutes[i]` with `framework === 'nestjs'` gets its `path` rewritten via the existing `_joinNestPath(globalPrefix, route.path)` helper (reused as-is — no new join/normalization logic needed). The filter on `framework === 'nestjs'` is what satisfies requirement 6: Express routes (already handled by the separate mount-prefix pass above), Fastify routes, Next.js routes (merged afterward, untouched), and frontend calls (never touched by any backend-route pass) are structurally excluded from this rewrite.
+  5. `setGlobalPrefix`'s optional second argument (e.g. NestJS's `{ exclude: [...] }` option, present verbatim in repo_id=98's real `main.ts`) does not interfere — the regex only captures the first quoted argument and stops, exactly like every other multi-argument call pattern already handled elsewhere in this file (e.g. `CLIENT_REQ_RE`).
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — 16 new tests across 6 `describe` blocks inserted after the Step #6 "real-world repo_id=98 shapes" block: supported literal forms (4 — single-quote, double-quote + leading slash, template literal, and the exact `POST /api/v1/auth/login` example from the requirements), dynamic/unsupported forms ignored (4 — variable, function call, interpolated template, plus a no-throw check), multiple-declarations-use-the-first-literal (3 — dynamic-then-literal, two-literals-first-wins, two-literals-across-separate-files), applies-only-to-NestJS (2 — Express/Fastify/Next.js untouched, frontend calls untouched), no-prefix-present regression (1), and a repo_id=98 end-to-end closure block (2 — the exact `main.ts` + `AuthController` + BFF-proxy-call reproduced from the live GitHub investigation now fully links via `linkFrontendBackendApis`, plus a dedicated check that the `{ exclude: [...] }` second argument doesn't interfere). Also corrected a comment in one pre-existing Step #6 test (`EmployeeController` test) that had described the global-prefix gap as "out-of-scope" — now accurate, since this step closes it (the test's own assertions were unaffected, since its fixture has no `setGlobalPrefix` call).
+
+#### Global Prefix Patterns Supported
+
+| Pattern | Behavior |
+|---|---|
+| `app.setGlobalPrefix('api')` | prefix `api` |
+| `app.setGlobalPrefix("/api")` | prefix `api` (leading slash stripped) |
+| `` app.setGlobalPrefix(`api`) `` (no `${...}`) | prefix `api` |
+| `app.setGlobalPrefix('api', { exclude: [...] })` | prefix `api` (second argument ignored, doesn't interfere) |
+| `app.setGlobalPrefix(PREFIX_VAR)` | **ignored** — variable unsupported |
+| `app.setGlobalPrefix(getPrefix())` | **ignored** — function call unsupported |
+| `` app.setGlobalPrefix(`${env}/api`) `` | **ignored** — interpolated template unsupported |
+| Multiple `setGlobalPrefix(...)` calls | first **literal** one (in file-then-position scan order) wins; dynamic/empty ones are transparently skipped |
+| No `setGlobalPrefix(...)` call anywhere | unchanged — NestJS routes resolve exactly as Step #6 left them |
+
+#### Example Extracted Routes
+
+`app.setGlobalPrefix('api')` + `@Controller({ version: '1', path: 'auth' })` + `@Post('login')` → **`POST /api/v1/auth/login`** (the exact requirements example; previously `/v1/auth/login`).
+`app.setGlobalPrefix('/api')` + `@Controller('health')` + `@Get()` → **`GET /api/health`** (the exact requirements example; previously `/health`).
+
+**repo_id=98 closure:** with the real `main.ts` (`app.setGlobalPrefix('api', { exclude: [...] })`) and the real `AuthController` (`@Controller({ version: '1', path: 'auth' })` + `@Post('login')`) both included, the extracted route is now `POST /api/v1/auth/login` — which is exactly what the real frontend BFF proxy calls. Running the result through `linkFrontendBackendApis` in the new test confirms it links with zero `unresolvedFrontendCalls`, closing the loop opened by the 2026-07-08 investigation.
+
+#### Not Changed
+
+- Scoring formulas (`architectureHealthScore`, `linkageScore`, `boundaryHealthScore`, `completenessScore`) — no lines touched outside `extractRouteApiStructure.js`
+- `frontend/dashboard.html` — untouched
+- Express `app.use()` mount-prefix resolution, Fastify extraction, Next.js pages/app-router extraction (incl. Step #5's backendRoutes merge), BFF fetch-wrapper extraction (Step #3), NestJS object-form controller parsing (Step #6) — all unaffected, verified by full regression run; the global-prefix pass is a separate, additive rewrite step scoped strictly to `framework === 'nestjs'` entries
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **212/212 passing** (16 new + all 196 pre-existing tests, including Steps #1/#2/#3/#5/#6, unchanged and passing)
+- `npx jest tests/unit/execution/architecture` (24 files) → **2,241/2,241 passing** — confirms zero regressions in linking/scoring/snapshot modules
+- `npm test --runInBand` → **7,219 / 7,289 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +16 tests vs. prior 7,203/7,273)
+- Manually verified via a standalone script before formalizing as tests, including the exact repo_id=98 `main.ts` content (with the `{ exclude: [...] }` option object) fetched during the prior investigation, confirming all three of its real controllers now resolve to their true runtime paths (`/api/health`, `/api/v1/auth/login`, `/api/v1/auth/logout`)
+
+#### Next Actions
+
+- None identified specific to global prefix detection. Combined with Steps #6 and #5, RepoPulse's NestJS + Next.js App Router coverage for repo_id=98's actual architecture is now materially more complete than at the time of the original investigation; a fresh snapshot of that repository would be needed to confirm the real-world `backendRouteCount`/`linkageScore` improvement (not performed here — no live re-fetch was requested and none was undertaken as part of this code-only step).
+
+---
+
+### 2026-07-09 — Analyzer Improvement Step #6: NestJS Object-Form Controller Support
+
+**Capability:** Architecture Intelligence — backend route discovery (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer accuracy improvement — extraction only; scoring/linking/UI untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. **Directly closes the root cause proven in the 2026-07-08 repo_id=98 investigation:** 14 of 15 NestJS controllers in that real repository use the object-form `@Controller({ version: '1' [, path: '...'] })` decorator (NestJS URI versioning), which `_parseNestPathArg` (Step #1) could not parse — an object literal fails its bare-string/empty-parens match, so it returned `null` and the entire controller was skipped. Only the one controller using a plain string (`@Controller('health')`) survived.
+  2. Added `_parseNestControllerPrefix(inner)` — the new entry point for controller-prefix resolution (method decorators `@Get`/`@Post`/`@Put`/`@Patch`/`@Delete` are untouched and continue to use `_parseNestPathArg` directly, since NestJS never uses object-form arguments for method decorators). It dispatches on the trimmed argument's first/last character: `{...}` → `_parseNestControllerObject`; anything else → the existing `_parseNestPathArg` (bare string/template-literal/empty, unchanged).
+  3. Added `_parseNestControllerObject(objText)`, `_extractNestObjectPropRaw(objInner, key)`, and `_resolveNestLiteralValue(raw)`:
+     - `_extractNestObjectPropRaw` finds a `key: <value>` clause inside the object body and extracts its raw (unparsed) value text, using a bracket/brace/paren depth counter so an array or nested-call value isn't truncated at an internal comma. Looks up `path` and `version` independently by key — **not by position** — so `{ path: 'auth', version: '1' }` and `{ version: '1', path: 'auth' }` resolve identically.
+     - `_resolveNestLiteralValue` accepts a bare string/template literal (non-interpolated) or a bare numeric literal (for `version: 1`); anything else (array `[...]`, identifier, call expression, imported constant) resolves to `null`.
+     - `_parseNestControllerObject` combines the results: if a key is *present* but its value doesn't resolve to a literal, the **whole controller prefix returns `null`** (safe skip, same "dynamic → skip entire controller" behavior established in Step #1) — this is the mechanism behind requirement 3's array-path/imported-constant/complex-expression rejection. When `version` resolves, it becomes route segment `v{version}`; when `path` resolves, it's appended (leading/trailing slashes stripped, consistent with the pre-existing `_joinNestPath` normalization). Segment order is always `v{version}` then `path`, regardless of which order the two keys appeared in the source, per requirement 2's examples.
+  4. Only the controller-prefix call site in `_extractNestRoutes` was changed (`_parseNestPathArg(cm[1])` → `_parseNestControllerPrefix(cm[1])`); everything else in the module (Express/Fastify extraction, Next.js pages/app-router extraction incl. Step #5's merge-into-backendRoutes, BFF wrapper extraction, class-body brace matching, method-decorator parsing) is untouched.
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — 20 new tests across 7 `describe` blocks inserted after the existing "NestJS dynamic decorator paths are skipped safely" block: object path only (3 tests — single/double-quote/template-literal), object version only (2 — with and without a method path), object path + version in both key orders (3, including a byte-identical-output cross-check), leading slash normalization (1), dynamic/unsupported values skipped (6 — array path, imported-constant path, computed-expression path, imported-constant version, interpolated template-literal path, plus a no-throw/other-files-still-process check), existing string-literal/no-arg/dynamic-identifier support preserved (3 regression checks), and 2 tests reproducing the exact real-world repo_id=98 controller shapes (`EmployeeController`'s `{ version: '1' }` + method-level path, and `AuthController`'s `{ version: '1', path: 'auth' }` with two methods), including one that runs the result through `linkFrontendBackendApis` to confirm the resolved route actually links.
+
+#### Object-Form Patterns Supported
+
+| Pattern | Resolves to |
+|---|---|
+| `@Controller({ path: 'users' })` | prefix `users` |
+| `@Controller({ path: "/users" })` | prefix `users` (leading slash stripped) |
+| `` @Controller({ path: `users` }) `` (no `${...}`) | prefix `users` |
+| `@Controller({ version: '1' })` | prefix `v1` |
+| `@Controller({ path: 'auth', version: '1' })` | prefix `v1/auth` |
+| `@Controller({ version: '1', path: 'auth' })` (reversed key order) | prefix `v1/auth` (identical result) |
+| `@Controller({ path: ['users', 'members'], version: '1' })` | **skipped** — array path unsupported |
+| `@Controller({ path: ROUTE_PREFIX })` | **skipped** — imported constant unsupported |
+| `@Controller({ path: getPrefix() })` | **skipped** — computed expression unsupported |
+| `` @Controller({ path: `${prefix}/users` }) `` | **skipped** — interpolated template literal unsupported |
+| `@Controller('health')`, `@Controller()` | unchanged — still resolve exactly as before Step #1 |
+
+#### Example Extracted Routes
+
+`@Controller({ version: '1' })` + `@Post('employees')` → `POST /v1/employees` (repo_id=98's `EmployeeController`, previously produced **zero** routes).
+`@Controller({ version: '1', path: 'auth' })` + `@Post('login')` / `@Post('logout')` → `POST /v1/auth/login`, `POST /v1/auth/logout` (repo_id=98's `AuthController`, previously produced **zero** routes).
+
+#### Not Changed
+
+- Scoring formulas (`architectureHealthScore`, `linkageScore`, `boundaryHealthScore`, `completenessScore`) — no lines touched in `linkFrontendBackendApis.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`, or `buildRepositoryArchitectureSnapshot.js`
+- `frontend/dashboard.html` — untouched
+- Method-decorator parsing (`@Get`/`@Post`/`@Put`/`@Patch`/`@Delete`) — still exclusively `_parseNestPathArg`, unchanged
+- Express, Fastify, Next.js pages/app-router (Step #2/#5), BFF fetch wrappers (Step #3) — unaffected, verified by full regression run
+
+#### Known Remaining Gap (explicitly out of scope, confirmed again by this step's own tests)
+
+RepoPulse still has **no visibility into `main.ts`'s `app.setGlobalPrefix('api', ...)`**. For repo_id=98, the real runtime path for `EmployeeController`'s create-employee endpoint is `/api/v1/employees`; this extractor resolves it to `/v1/employees` (correct given only the `@Controller()`/`@Get()`/etc. decorators are readable — the global prefix is applied imperatively in `main.ts`, invisible to a decorator-only static scan). The new repo_id=98-shaped regression test in this step deliberately targets `/v1/employees` (not `/api/v1/employees`) to isolate verification of the version+path parsing added here from that separate, still-open gap.
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **196/196 passing** (20 new + all 176 pre-existing tests, including Steps #1/#2/#3/#5, unchanged and passing)
+- `npx jest tests/unit/execution/architecture` (24 files) → **2,221/2,221 passing** — confirms zero regressions in linking/scoring/snapshot modules
+- `npm test --runInBand` → **7,203 / 7,273 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +20 tests vs. prior 7,183/7,253)
+- Manually verified via a standalone script before formalizing as tests, including the two exact repo_id=98 controller bodies (`EmployeeController`, `AuthController`) reproduced from the live GitHub content fetched during the prior investigation — both now resolve to the expected `/v1/...` paths
+
+#### Next Actions
+
+- `app.setGlobalPrefix()` awareness (reading `main.ts`/bootstrap files for a global prefix string) would be a natural, separately-scoped follow-up now that version+path object-form parsing is in place — not undertaken here per this step's explicit scope
+- No other gaps identified specific to object-form controller parsing
+
+---
+
+### 2026-07-08 — Analyzer Improvement Step #5: Feed Next.js App Router Routes Into API Linkage
+
+**Capability:** Architecture Intelligence — API linkage accuracy (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer pipeline fix — linkage/scoring formulas untouched, backend APIs and frontend UI untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. **Root cause confirmed by inspection (requirement 1):** `linkFrontendBackendApis()` has only ever received `routeApiStructure.backendRoutes` (Express/Fastify/NestJS) — `nextRoutes` (Next.js pages/app-router) was computed but never passed into linkage at all, in either `extractRouteApiStructure.js` or `buildRepositoryArchitectureSnapshot.js`. This is exactly the gap Step #4's analyzerCoverage warnings 1 and 2 were surfacing (visible, but until now unfixed).
+  2. Added a merge step, placed after mount-prefix resolution and before the deterministic sort: for every `nextRoutes` entry with `type === 'app'`, one flattened `{ method, path, file, framework: 'nextjs-app-router', handlerType: 'unknown', handlerName: null }` object is pushed into `backendRoutes` per exported method (Option A from the brief — normalize into `backendRoutes` before `linkFrontendBackendApis()` is ever called, which happens later in `buildRepositoryArchitectureSnapshot.js`'s Stage 4). No changes were needed to `buildRepositoryArchitectureSnapshot.js` at all — it already passes `routeApiStructure.backendRoutes` straight through, so the merged routes flow into `linkFrontendBackendApis`, `verifyArchitectureBoundaries`, `assessImplementationCompleteness`, and `metrics.backendRouteCount` automatically, with zero code changes to any of those four consumers.
+  3. Only `type: 'app'` entries are merged. `type: 'pages'` entries are deliberately left out of `backendRoutes`, exactly preserving pre-existing `pages/api` behavior (requirement 4) — a `pages/api` route still does not participate in linkage, same as before this step.
+  4. Requirement 3 ("do not include methodless App Router files") required no new guard: Step #2's extraction already guarantees a `route.ts` file with no recognized exported HTTP method produces zero `nextRoutes` entries in the first place, so there is nothing methodless for this merge step to ever pick up.
+  5. `nextRoutes` itself is returned completely unchanged (still contains both `'pages'` and `'app'` type entries, verbatim, for backward compatibility with every existing Step #2 test that inspects it directly). To prevent each App Router route from being double-represented once it also exists in `backendRoutes`, a new `pageRoutesOnly = nextRoutes.filter(nr => nr.type !== 'app')` array was introduced and substituted in place of the raw `nextRoutes` argument for exactly three downstream computations that would otherwise have double-counted: the second `unusedBackendRoutes` loop (previously iterated all of `nextRoutes`; now only `pageRoutesOnly`, since `'app'` routes are now covered by the first loop over `backendRoutes`), `_buildEndpointInventory(backendRoutes, pageRoutesOnly, frontendCalls)` (previously would have pushed two `sources` entries — one `'backend'`, one `'next'` — for the same App Router route), and `_buildSummary(backendRoutes, pageRoutesOnly, ...)` (previously would have double-counted App Router routes in the "N backend routes detected" sentence's `backendRoutes.length + nextRoutes.length` total). `_buildRouteKeySet` was left receiving `pageRoutesOnly` too for the same single-representation reasoning, though it would have been harmless either way (Set-based, duplicate key adds are no-ops). `_buildAnalyzerCoverage` continues to receive the full, unfiltered `nextRoutes` (it specifically needs to see `type === 'app'` entries to compute `nextAppRoutesExtracted`, independent of the backendRoutes merge).
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`**:
+  - Updated one existing Step #4 test ("backendRoutes/frontendApiCalls/nextRoutes are unaffected by analyzerCoverage computation") whose fixture happened to include both an Express route and an App Router route — its assertion `expect(r.backendRoutes).toHaveLength(1)` was asserting the *old, buggy* behavior (App Router route excluded); updated to `toHaveLength(2)` with explicit checks that both the `express` and `nextjs-app-router` framework entries are present. This is a correctness fix to the test's expectation, not a weakening — the test's actual intent (analyzerCoverage doesn't itself alter extraction results) is unchanged and still verified.
+  - 14 new tests across two `describe` blocks: "App Router routes are merged into backendRoutes" (7 tests — merged entry shape/framework tag, `nextRoutes` still populated unchanged, multi-method expansion produces one entry per method, `pages/api` confirmed NOT merged, methodless `route.ts` contributes nothing, no duplication in `unusedBackendRoutes` or `endpointInventory`) and "App Router linkage via linkFrontendBackendApis" (7 tests — the exact scenarios requirement 6 lists: `/api/example` frontend call links to `app/api/example/route.ts` GET; dynamic `app/api/users/[id]/route.ts` links to a template-literal `` fetch(`/api/users/${id}`) `` call; method mismatch (GET-only route + POST call) still produces a `methodMismatches` entry and leaves the call unresolved/route orphaned; a methodless `route.ts` still does not link; existing Express linkage unaffected; existing NestJS linkage unaffected; and a combined scenario with Express + NestJS + App Router all linking simultaneously in one repo)
+
+#### How nextRoutes Are Fed Into Linkage
+
+```
+extractRouteApiStructure()
+  1. _extractNextRoutes() populates nextRoutes[] (type: 'pages' | 'app'), as in Step #2 — unchanged
+  2. NEW: for each nextRoutes entry where type === 'app':
+       for each method in entry.methods:
+         backendRoutes.push({ method, path: entry.urlPattern, file: entry.file,
+                               framework: 'nextjs-app-router', handlerType: 'unknown', handlerName: null })
+  3. backendRoutes.sort(...) — App Router entries sort in deterministically with Express/Fastify/NestJS
+  4. pageRoutesOnly = nextRoutes.filter(type !== 'app')  — used for unusedBackendRoutes/endpointInventory/summary
+       to avoid double-representation; nextRoutes itself returned unfiltered
+
+buildRepositoryArchitectureSnapshot() — UNCHANGED
+  linkFrontendBackendApis({ backendRoutes: routeApiStructure.backendRoutes, ... })
+    → App Router routes now compete for matches exactly like Express/Fastify/NestJS routes
+```
+
+#### Example Before/After Linkage Result
+
+Input: `app/api/example/route.ts` with `export async function GET(req) {}`, plus a frontend `fetch('/api/example')`.
+
+**Before this step:**
+```js
+apiLinkage.linkedEndpoints          // []
+apiLinkage.unresolvedFrontendCalls  // [{ from: 'frontend/app.js', method: 'GET', path: '/api/example' }]
+apiLinkage.coverage.backendRouteCount  // 0   ← App Router route invisible to linkage
+apiLinkage.linkageScore              // 0
+```
+
+**After this step:**
+```js
+apiLinkage.linkedEndpoints          // [{ method: 'GET', path: '/api/example', ... }]
+apiLinkage.unresolvedFrontendCalls  // []
+apiLinkage.coverage.backendRouteCount  // 1
+apiLinkage.linkageScore              // 90
+```
+
+Dynamic-route example: `app/api/users/[id]/route.ts` (→ backend path `/api/users/:id`) now correctly links to `` fetch(`/api/users/${id}`) `` (→ frontend path `/api/users/:param`, param-masked to `/api/users/:_p` by `linkFrontendBackendApis`, matching the backend's `:id`→`:_p` mask) — `linkedEndpoints` contains the match, `unresolvedFrontendCalls` is empty.
+
+#### Not Changed
+
+- `linkFrontendBackendApis.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`, `buildRepositoryArchitectureSnapshot.js` — zero lines touched; they already operate generically on whatever `routeApiStructure.backendRoutes` contains
+- `linkFrontendBackendApis`'s scoring formula (`_score`), `architectureHealthScore`'s weighted-sum formula — unchanged; only the *inputs* (backendRouteCount, linkageScore) now reflect reality more accurately for App Router repos, exactly as intended
+- `frontend/dashboard.html` — untouched; the existing "Backend Routes"/"Linked Endpoints"/"API Linkage Score" metric-grid tiles now simply display more accurate numbers for App Router repos as a byproduct, with no UI code changes
+- `pages/api` handling — still excluded from `backendRoutes`/linkage, unchanged
+- Express, Fastify, NestJS (Step #1) extraction and linkage — unchanged, verified by dedicated regression tests
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **176/176 passing** (14 new tests + 1 corrected pre-existing assertion + all other pre-existing tests unchanged and passing)
+- `npx jest tests/unit/execution/architecture` (full architecture suite, 24 files) → **2,207/2,207 passing** — confirms `linkFrontendBackendApis.test.js`, `verifyArchitectureBoundaries.test.js`, `assessImplementationCompleteness.test.js`, and `buildRepositoryArchitectureSnapshot.test.js` all pass unmodified
+- `npx jest tests/unit/frontend` (24 files) → **1,541/1,541 passing** — confirms zero UI regressions despite metric values changing for App Router repos
+- `npm test --runInBand` → **7,183 / 7,253 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +14 tests vs. prior 7,169/7,239)
+- Manually verified via a standalone script before formalizing as tests: static route + matching fetch (linked, score 90), dynamic `[id]` route + template-literal fetch (linked via param masking), method mismatch (POST call against GET-only route → methodMismatches + orphaned + unresolved), methodless `route.ts` (zero routes, call stays unresolved), Express/NestJS linkage (unaffected), `pages/api` (still not merged into backendRoutes)
+
+#### Risks / Limitations
+
+- The param-masking discrepancy between `extractRouteApiStructure`'s own module-local `unusedBackendRoutes`/`unresolvedApiCalls` (exact-string matching, no `:param`-vs-`:id` normalization) and `linkFrontendBackendApis`'s param-aware matching is pre-existing behavior (already present for Express dynamic routes before this step) and applies identically to the newly-merged App Router routes — a dynamic App Router route that *does* link correctly via `linkFrontendBackendApis` can still appear in the module-local `unusedBackendRoutes` list due to the literal `:id` vs `:param` string mismatch at that layer. Not a regression introduced by this step; not in scope to fix here.
+- `framework: 'nextjs-app-router'` is a new, distinct string from the pre-existing `'next'` framework tag used for `pages/api` entries and for `nextRoutes` objects generally — intentional, per requirement 2's explicit guidance to preserve this metadata distinctly.
+
+#### Next Actions
+
+- None identified specific to this step; Step #4's analyzerCoverage warnings 1 and 2 should now fire less often for working App Router repos as a natural consequence — no further action needed for that interaction.
+
+---
+
+### 2026-07-08 — Analyzer Improvement Step #4: Framework Support Confidence Warning
+
+**Capability:** Architecture Intelligence — analyzer measurement-confidence metadata (`execution/architecture/extractRouteApiStructure.js`, `execution/architecture/buildRepositoryArchitectureSnapshot.js`, `frontend/dashboard.html`)
+**Deliverable status:** Metadata/warnings only, as scoped — architecture scoring thresholds and linkage scoring formulas untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. Added `_buildAnalyzerCoverage(normalized, backendRoutes, nextRoutes, frontendCalls)` plus three new regex/constant hint-detectors: `NEST_HINT_RE` (`@Controller|@Get|@Post|@Put|@Patch|@Delete|@Module|@Injectable`), `BFF_HINT_RE` (`serverFetch(`/`apiFetch(`/`internalFetch(`/`backendFetch(`), and `NEXT_APP_ROUTER_FILE_RE` (`(src/)?app/api/**/route.*` — path existence only, independent of whether an HTTP handler was actually recognized)
+  2. These hints are raw signals scanned once per file (comment-stripped) alongside a second, independent read of already-computed `backendRoutes`/`nextRoutes`/`frontendApiCalls` to determine what was *actually extracted* (`nestRoutesExtracted`, `nextAppRoutesExtracted`, `bffCallsExtracted`) — hints and extraction results are deliberately kept separate so the warnings can compare "looks like this framework" against "did extraction succeed"
+  3. Four warning conditions implemented exactly as specified (see below), collected into a `warnings` array; `unsupportedRisk` derived as `warnings.length === 0 ? 'low' : warnings.length === 1 ? 'medium' : 'high'` (no formula was mandated — this is a simple, deterministic, monotonic mapping); `supportedPatterns` lists which of `express`/`fastify`/`nestjs-decorators`/`nextjs-pages`/`nextjs-app-router`/`bff-fetch-wrappers` were actually found working in this repo
+  4. Returned as a new `analyzerCoverage` key on `extractRouteApiStructure`'s output, alongside the pre-existing `frameworkHints` object (left untouched — `analyzerCoverage.frameworkHints` is a distinct, differently-named nested object: `{ nestjs, nextAppRouter, bffFetchWrappers }` vs. the existing `{ hasExpressRoutes, hasFastifyRoutes, hasNextApiRoutes, hasFrontendApiCalls, likelyFullStackApiIntegration }`)
+  5. **Notable existing-architecture finding surfaced by this work:** `nextRoutes` (Next.js pages/app-router routes) have never been passed into `linkFrontendBackendApis` — only `routeApiStructure.backendRoutes` (Express/Fastify/NestJS) feeds the actual linkage/scoring engine (confirmed by re-reading `buildRepositoryArchitectureSnapshot.js` stage 4). This means a Next.js App Router repo whose own frontend calls its own App Router API will *always* show `backendRoutes === 0` to the linkage engine even when Step #2's extraction is working correctly and `nextRoutes` is populated. This is precisely the scenario warning 1 and warning 2 are designed to catch — the warnings correctly fire in that case, surfacing the known gap as a measurement-confidence note rather than silently mis-scoring the repo. Fixing that gap (wiring `nextRoutes` into `backendRoutes`/linkage) would be a linking/scoring change and is out of scope for this step.
+- **`execution/architecture/buildRepositoryArchitectureSnapshot.js`**: added one line — `analyzerCoverage: routeApiStructure.analyzerCoverage` — to the top-level snapshot return object, sibling to `apiLinkage`/`routeApiStructure`/`metrics`. No other line in this file was touched; `_calcHealthScore`, `_metrics()`, and every other scoring/aggregation function are unchanged and verified via a test asserting `architectureHealthScore` still equals the documented `boundary*0.40 + completeness*0.40 + linkage*0.20` formula regardless of whether `analyzerCoverage` has warnings
+- **`frontend/dashboard.html`**: added `buildAnalyzerCoverageHtml(coverage)` (pure renderer, returns `''` when there are no warnings) and one call site — `html += buildAnalyzerCoverageHtml(data.analyzerCoverage);` — inserted into `buildRepositoryArchitectureHtml` immediately after the existing API Linkage panel closes and before the Circular Dependencies panel. Styled with a neutral `aq-badge severity-neutral` badge (never `severity-critical`/`severity-high`) and an explicit muted-text framing sentence ("These notes describe scanner measurement confidence, not application architecture risk.") per the UI guidance
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — 16 new tests across 6 `describe` blocks: `analyzerCoverage` shape/defaults, NestJS hint-vs-extraction warning (including the "supported routes extracted avoids the warning" case and an `@Injectable`/`@Module`-only-hints-elsewhere-with-a-working-controller non-warning case), Next.js App Router hint-vs-extraction warning (including `src/app/api`), frontend/BFF-without-backend warning (including that plain `fetch()` alone does *not* set the `bffFetchWrappers` hint — only the four named wrappers do), `unsupportedRisk` scaling (0/1/2+ warnings → low/medium/high), and a regression check that `backendRoutes`/`frontendApiCalls`/`nextRoutes` are byte-identical whether or not `analyzerCoverage` runs
+- **`tests/unit/execution/architecture/buildRepositoryArchitectureSnapshot.test.js`** — 5 new tests: `analyzerCoverage` present at the top level with the expected keys, same object reference as `routeApiStructure.analyzerCoverage`, a NestJS-hints-no-routes repo surfaces a warning at the top level, a fully working full-stack repo has zero warnings, and `architectureHealthScore` matches the documented weighted-sum formula identically whether or not warnings are present
+- **`tests/unit/frontend/dashboardArchitectureTab.test.js`** — verbatim copy of `buildAnalyzerCoverageHtml` added and wired into the verbatim copy of `buildRepositoryArchitectureHtml` at the same call site as production; 15 new tests: 11 direct unit tests on `buildAnalyzerCoverageHtml` (null/undefined/empty/missing/non-array warnings all render `''`; label renders; every warning becomes an `<li>`; `unsupportedRisk` renders in the confidence badge and defaults to `'low'`; explicitly asserts `severity-critical`/`severity-high` classes are never used; asserts the measurement-confidence framing sentence is present) + 4 integration tests through `buildRepositoryArchitectureHtml` (renders when warnings exist, renders nothing when warnings are empty, renders nothing when `analyzerCoverage` is absent entirely for older cached snapshots, and the "supported NestJS routes avoid the warning" case end-to-end)
+
+#### Analyzer Coverage Object Shape
+
+```js
+analyzerCoverage: {
+  frameworkHints: {
+    nestjs: boolean,            // @Controller/@Get/@Post/@Put/@Patch/@Delete/@Module/@Injectable found anywhere
+    nextAppRouter: boolean,     // (src/)?app/api/**/route.* file path found anywhere
+    bffFetchWrappers: boolean,  // serverFetch(/apiFetch(/internalFetch(/backendFetch( found anywhere
+  },
+  supportedPatterns: string[],  // subset of: express, fastify, nestjs-decorators, nextjs-pages, nextjs-app-router, bff-fetch-wrappers
+  unsupportedRisk: 'low' | 'medium' | 'high',  // by warnings.length: 0 / 1 / 2+
+  warnings: string[],           // 0–4 of the exact strings below
+}
+```
+
+#### Warning Conditions Implemented (verbatim strings, exactly as specified)
+
+1. `(nestjs || nextAppRouter || bffFetchWrappers hint) && backendRoutes.length === 0` → "Framework patterns detected but no backend routes were extracted; architecture linkage may be underreported."
+2. `frontendApiCalls.length > 0 && backendRoutes.length === 0` → "Frontend/BFF API calls were detected without matching backend route extraction; verify framework support before treating unresolved calls as architecture debt."
+3. `nextAppRouter hint && !nextAppRoutesExtracted` (no `nextRoutes` entry of `type: 'app'`) → "Next.js App Router files were detected but no exported HTTP handlers were recognized."
+4. `nestjs hint && !nestRoutesExtracted` (no `backendRoutes` entry with `framework: 'nestjs'`) → "NestJS decorators were detected but no routes were extracted."
+
+#### UI Rendering Behavior
+
+An "Analyzer Coverage" sub-panel appears in the Architecture tab, directly below API Linkage, **only when `analyzerCoverage.warnings.length > 0`** — otherwise `buildAnalyzerCoverageHtml` returns `''` and nothing is added to the panel (verified for both an empty-warnings `analyzerCoverage` object and a snapshot with no `analyzerCoverage` field at all, for backward compatibility with older cached snapshots). When present, it shows: a muted framing sentence explicitly disclaiming application-risk framing, a `severity-neutral` "Coverage confidence: {low|medium|high}" badge, and each warning as a plain `<li>` in muted secondary text — no red/orange/critical styling anywhere.
+
+#### Not Changed
+
+- `linkFrontendBackendApis.js` linkage/scoring formulas — untouched (verified: `architectureHealthScore` still equals the documented weighted-sum formula in every test, with or without `analyzerCoverage` warnings present)
+- `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js` scoring — untouched
+- Route/API extraction behavior from Steps #1–#3 (NestJS, Next.js App Router, serverFetch/BFF) — untouched; regression test confirms `backendRoutes`/`frontendApiCalls`/`nextRoutes` are identical with or without the new hint-scanning pass
+- Existing `frameworkHints` object on `routeApiStructure` — untouched; the new hint data lives in a separately-named nested object under `analyzerCoverage` to avoid any collision
+- Existing recommendations (`_recommendations` in `linkFrontendBackendApis.js`, `assessImplementationCompleteness.js`, `verifyArchitectureBoundaries.js`) — untouched; `analyzerCoverage.warnings` are a separate list, never merged into `recommendations`
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js tests/unit/execution/architecture/buildRepositoryArchitectureSnapshot.test.js tests/unit/frontend/dashboardArchitectureTab.test.js` → **162 + (existing suite, +5 new) + 32 passing**, all new and pre-existing tests green
+- `npm test --runInBand` → **7,169 / 7,239 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +36 tests vs. prior 7,133/7,203)
+- Manually verified every warning-condition combination via a standalone script before formalizing as tests (dynamic-prefix NestJS controller, method-less Next.js route.ts, frontend-calls-only repo, working NestJS controller with `@Module`/`@Injectable` hints elsewhere, plain repo with no hints, fully working Express+fetch repo)
+
+#### Risks / Limitations
+
+- Hint detection is repo-wide (any file), while extraction-success checks are also repo-wide — a large monorepo with one broken NestJS module and one working one would not warn (correctly, since *some* NestJS routes were extracted), which is the intended coarse-grained behavior; per-file/per-module granularity was not requested and would be a larger change
+- `unsupportedRisk`'s warnings-count-based mapping is a simple heuristic, not a calibrated formula — acceptable since requirement 2 only "suggested" a shape and did not mandate an exact calculation
+- The Next.js `nextRoutes`-not-fed-into-`backendRoutes` architectural gap identified above is now *visible* via warnings but still *unfixed* — intentionally, per scope ("do not change... linkage scoring in this step")
+
+#### Next Actions
+
+- Consider (in a future, separately-scoped step) whether `nextRoutes` should be wired into the actual `linkFrontendBackendApis` linkage engine, now that its absence is a known, warned-about gap rather than a silent one
+- Consider surfacing `analyzerCoverage.supportedPatterns` in the UI as a positive/informational complement to the warnings, if user feedback indicates it would help interpret the confidence badge
+
+---
+
+### 2026-07-08 — Analyzer Improvement Step #3: serverFetch / BFF API Call Detection
+
+**Capability:** FR-004/Architecture Intelligence — frontend/BFF API call discovery (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer accuracy improvement — call extraction only; scoring/linking/route extraction/UI untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. Added four new regex constants mirroring the existing `FETCH_*` set exactly, but matching `serverFetch`, `apiFetch`, `internalFetch`, or `backendFetch` in place of `fetch`, with the wrapper name captured in group 1: `BFF_SQ_RE` (single-quoted), `BFF_DQ_RE` (double-quoted), `BFF_TMPL_RE` (template literal, with or without `${...}` interpolation via the existing `_normTemplateParams`), and `BFF_CONCAT_RE` (two-segment string concatenation, e.g. `serverFetch('/api/repos/' + id + '/metrics')`)
+  2. Added a matching extraction block inside `_extractFrontendCalls`, placed after the existing `client.request()` block — same processing order/logic as the `fetch()` block: concatenation form runs first (tracked via its own `bffConcatPositions` Set, mirroring `concatPositions`, so `BFF_SQ_RE` doesn't also emit the truncated prefix), then single-quoted, then double-quoted, then template-literal forms
+  3. Default method is `GET` when no options object is present; `FETCH_OPTS_RE` (already generic, not fetch-specific despite its name) is reused unchanged to detect `{ method: 'POST' }`-style options following any of the four wrapper calls
+  4. Every extracted call carries `client: <wrapperName>` (`'serverFetch'`, `'apiFetch'`, `'internalFetch'`, or `'backendFetch'`) — reusing the existing `frontendApiCalls[].client` field that already served this exact source/type role for `fetch`/`axios`/`apiClient`/`client` calls, per requirement 6; no new field was introduced
+  5. Only paths starting with `/` are captured (`if (!rawPath.startsWith('/')) continue;`, identical guard to every other call-extraction pattern in this file) — absolute external URLs (`serverFetch('https://example.com/...')`) and calls to any identifier other than the four named wrappers are structurally invisible to these regexes and require no separate exclusion logic
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — new `describe` block "serverFetch/apiFetch/internalFetch/backendFetch" inserted directly after the existing `client.request` block (11 new tests): each of the four wrapper names, all four path forms (single-quote, template literal with interpolation, string concatenation, method-option object with both single- and double-quoted method values), external-URL rejection, unsupported-wrapper-name rejection, a same-file regression check that `fetch()`/`axios.*` extraction is unaffected when `serverFetch` calls are also present, and a full-pipeline check that a `serverFetch` call links to a matching backend route via `linkFrontendBackendApis`
+
+#### Wrapper Names Supported
+
+`serverFetch`, `apiFetch`, `internalFetch`, `backendFetch` — matched as literal identifiers immediately followed by `(`; a differently-named custom helper (e.g. `randomHelper('/api/x')`) is not recognized, per requirement 5.
+
+#### Example Extracted Calls
+
+| Input | Extracted call |
+|---|---|
+| `serverFetch('/api/repos')` | `{ method: 'GET', path: '/api/repos', client: 'serverFetch' }` |
+| `` serverFetch(`/api/repos/${id}`) `` | `{ method: 'GET', path: '/api/repos/:param', client: 'serverFetch' }` |
+| `serverFetch('/api/repos/' + id + '/metrics')` | `{ method: 'GET', path: '/api/repos/:_p/metrics', client: 'serverFetch' }` |
+| `serverFetch('/api/repos', { method: 'POST' })` | `{ method: 'POST', path: '/api/repos', client: 'serverFetch' }` |
+| `apiFetch('/api/x', { method: "PATCH" })` | `{ method: 'PATCH', path: '/api/x', client: 'apiFetch' }` |
+| `internalFetch('/api/y')` | `{ method: 'GET', path: '/api/y', client: 'internalFetch' }` |
+| `backendFetch('/api/z')` | `{ method: 'GET', path: '/api/z', client: 'backendFetch' }` |
+| `serverFetch('https://example.com/api/x')` | *not captured — absolute URL* |
+| `randomHelper('/api/x')` | *not captured — unsupported wrapper name* |
+
+#### Not Changed
+
+- Backend route extraction (Express/Fastify/NestJS/Next.js pages+app router, Steps #1 and #2) — untouched; all pre-existing tests for these re-run and passing unmodified
+- `linkFrontendBackendApis.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`, `buildRepositoryArchitectureSnapshot.js`, `frontend/dashboard.html` — no changes; BFF calls flow through the existing `frontendApiCalls` contract (same `{ method, path, file, client }` shape already produced by `fetch`/`axios`/`apiClient`/`client.request`), so linking, scoring, and UI display all work on these calls automatically with zero additional wiring
+- `fetch()`, `axios.*`, `apiClient.*`, `client.request()` extraction — unchanged; explicit same-file regression test added confirming all four continue to coexist correctly
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **146/146 passing** (11 new serverFetch/BFF tests + all 135 pre-existing tests, including Steps #1 and #2, unchanged and passing)
+- `npm test --runInBand` → **7,133 / 7,203 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +11 tests vs. prior 7,122/7,192)
+- Manually verified every pattern from the requirements via a standalone script before formalizing as tests, including the external-URL and non-wrapper rejection cases
+
+#### Risks / Limitations
+
+- `BFF_CONCAT_RE` inherits the same "exactly two string segments joined by exactly one non-string expression" shape as `FETCH_CONCAT_RE` — a three-segment concatenation (`serverFetch('/api/' + a + '/' + b)`) is not handled, consistent with the existing fetch-concatenation limitation noted in the prior architecture-linkage investigation
+- Wrapper detection is name-based, not import-aware — a local variable or unrelated function coincidentally named `serverFetch`/`apiFetch`/`internalFetch`/`backendFetch` that isn't actually an HTTP call wrapper would be misclassified as an API call; considered an acceptable false-positive risk given the specificity of these names, consistent with this module's existing approach of trusting conventional naming (e.g. `axios`, `apiClient`, `client`) rather than verifying imports
+
+#### Next Actions
+
+- Consider adding further wrapper name aliases if repos are found using other common naming conventions (e.g. `serverApi`, `bffFetch`) once observed in practice, rather than speculatively
+
+---
+
+### 2026-07-08 — Analyzer Improvement Step #2: Next.js App Router Route Handler Detection
+
+**Capability:** FR-004/Architecture Intelligence — backend route discovery (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer accuracy improvement — extraction only; scoring/linking/UI untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. `_nextUrlFromPath`'s `appMatch` regex extended from `^app\/api\/(.+)\/route\.[jt]sx?$` to `^(?:src\/)?app\/api\/(.+)\/route\.[jt]sx?$` — now recognizes `src/app/api/**/route.{js,ts,jsx,tsx}` in addition to `app/api/**/route.{js,ts,jsx,tsx}` (the `.jsx`/`.tsx` extensions were already covered by the existing `[jt]sx?` character class, only the `src/` prefix was missing)
+  2. Added two new export-detection regexes alongside the existing `export (async)? function GET(...)` pattern (renamed `NEXT_EXPORT_METHOD_RE` → `NEXT_EXPORT_FUNCTION_RE` for clarity, no behavior change to that pattern itself):
+     - `NEXT_EXPORT_CONST_RE` — `export const PATCH = async (...) => {}` / `export const DELETE = function (...) {}` (matches the `const NAME =` assignment form regardless of whether the right-hand side is an arrow function, a function expression, async or not — the method name is all that's captured)
+     - `NEXT_EXPORT_LIST_RE` + `_parseNextExportListMethods` — `export { GET, POST }` and the aliased form `export { someHandler as GET }`; splits the brace contents on commas and resolves `name as ALIAS` pairs to the alias, since that's the externally-visible name Next.js's route-handler convention actually dispatches on
+  3. All three regexes' matches are unioned into the same `methods` array before deduplication (`[...new Set(methods)].sort()`), so a file mixing patterns (e.g. one method as a function export, another as a `const` arrow export) is fully detected
+  4. **Behavior change, in scope per requirement 5:** for `type === 'app'` files, if none of the three regexes find any exported HTTP method, `_extractNextRoutes` now returns `[]` (no route emitted) instead of the previous fallback of `methods: ['*']`. This prevents inventing all-methods coverage for a `route.ts` file that doesn't actually export a recognized HTTP handler (e.g. a file only exporting `revalidate`/`dynamic` config constants). The `pages/api` wildcard-fallback branch (`methods.push('*')`) is untouched — this change only affects the `app` Router type branch
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — new `describe` block "Next.js App Router (src/app/api and dynamic segments)" inserted directly after the existing "Next.js app/api" block (12 new tests): `src/app/api` prefix detection, dynamic segment `[id]` → `:id` combined with a nested static segment (`/edit`), `export const PATCH = async`, `export const DELETE = function`, `export const PUT` mixed with a function-form `GET` in the same file, `export { GET, POST }` both aliased and bare-identifier forms, a `route.ts` with no exported HTTP method producing zero routes (and confirmed absent from `unusedBackendRoutes`/`endpointInventory` too), and an explicit regression check that the `pages/api` wildcard-fallback (`methods: ['*']`) is unchanged
+
+#### Next.js App Router Patterns Supported
+
+| Input | Resolved route(s) |
+|---|---|
+| `app/api/auth/login/route.ts` + `export async function GET(req) {}` | `GET /api/auth/login` |
+| `src/app/api/candidates/[id]/edit/route.ts` + `export async function GET/POST` | `GET, POST /api/candidates/:id/edit` |
+| `app/api/health/route.js` + `export function GET() {}` | `GET /api/health` |
+| `export const PATCH = async (req) => {...}` | `PATCH` on that file's route |
+| `export const DELETE = function (req) {...}` | `DELETE` on that file's route |
+| `export { GET, POST }` (bare identifiers) | `GET, POST` on that file's route |
+| `export { handleGet as GET, handlePost as POST }` (aliased) | `GET, POST` on that file's route |
+| `route.ts` exporting only `CONFIG`/`revalidate` (no HTTP method) | *no route emitted — was previously `methods: ['*']`* |
+
+#### Not Changed
+
+- `linkFrontendBackendApis.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`, `buildRepositoryArchitectureSnapshot.js`, `frontend/dashboard.html` — no changes; Next.js App Router routes flow through the existing `nextRoutes` → route-key-set → `backendRoutes`-equivalent matching contract unmodified
+- `pages/api` detection — regex, behavior, and wildcard-fallback (`methods: ['*']`) all unchanged; explicit regression test added
+- Express, Fastify, and NestJS (Step #1) detection — unchanged; full pre-existing test suite for all three re-run and passing unmodified
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **135/135 passing** (12 new App Router tests + all 123 pre-existing tests, including the 16 NestJS tests from Step #1, unchanged and passing)
+- `npm test --runInBand` → **7,122 / 7,192 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +12 tests vs. prior 7,110/7,180)
+- Manually verified both literal examples from the requirements via a standalone script before formalizing as tests: `app/api/auth/login/route.ts` → `/api/auth/login`; `src/app/api/candidates/[id]/edit/route.ts` → `/api/candidates/:id/edit`; `app/api/health/route.js` → `/api/health`
+
+#### Risks / Limitations
+
+- `NEXT_EXPORT_LIST_RE`'s `[^}]*` capture does not handle a nested object literal inside the export list (not a valid JS export-list shape in practice, so not a real-world gap)
+- `export const GET: RouteHandler = async (...) => {}` (explicit TypeScript type annotation between the name and `=`) is **not** matched — `NEXT_EXPORT_CONST_RE` requires `=` to immediately follow the method name (optional whitespace only); a type-annotated const export would be skipped, understating coverage for repos using that style. Not covered by this step; flagged for a possible future refinement
+- The requirement-5 skip behavior for method-less `route.ts` files means a route handler file whose only exports are non-standard (e.g., a custom-named handler never wired to `GET`/`POST`/etc.) is invisible to the analyzer — same "prefer silence over a wrong guess" tradeoff already accepted for NestJS dynamic paths in Step #1
+
+#### Next Actions
+
+- Consider TypeScript type-annotated `const` export support (`export const GET: RouteHandler = ...`) if encountered in real repos
+- Consider catch-all segment (`[...slug]`) normalization if portfolio analysis surfaces App Router repos using it
+
+---
+
+### 2026-07-08 — Analyzer Improvement Step #1: NestJS Route Detection
+
+**Capability:** FR-004/Architecture Intelligence — backend route discovery (`execution/architecture/extractRouteApiStructure.js`)
+**Deliverable status:** Analyzer accuracy improvement — extraction only; scoring/linking/UI untouched
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. Added `_extractNestRoutes(filePath, src)` and supporting helpers (`_parseNestPathArg`, `_matchingBraceIndex`, `_joinNestPath`) — regex-based detection of NestJS decorator-based controllers, matching the existing text-scanning approach used for Express/Fastify (no AST parser introduced)
+  2. Recognizes `@Controller()` (with optional string-literal prefix) and the five method decorators named in scope: `@Get()`, `@Post()`, `@Put()`, `@Patch()`, `@Delete()` (`@Head`/`@Options`/`@All`/custom decorators intentionally out of scope)
+  3. Controller prefix + method path are resolved independently (single-quote, double-quote, and non-interpolated template-literal arguments all supported; empty arguments resolve to `''`), then combined via `_joinNestPath` with leading/trailing slash normalization
+  4. Class body boundary is found via a plain brace-depth counter (`_matchingBraceIndex`) over comment-stripped source, starting from the first `{` after the `class` keyword following each `@Controller` match — supports multiple independent controllers per file
+  5. Dynamic arguments (bare identifiers, expressions, or template literals containing `${...}`) resolve to `null` from `_parseNestPathArg` and are skipped safely: a dynamic **method** path skips only that one route; a dynamic **controller** prefix skips the entire controller (since no safe path can be derived for any of its routes)
+  6. Wired into the main extraction loop (line ~615) alongside `_extractExpressRoutes`, under the same `!f.path.endsWith('.md')` guard; extracted routes are pushed directly into the existing `backendRoutes` array with `framework: 'nestjs'` — no changes needed to `linkFrontendBackendApis.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`, `buildRepositoryArchitectureSnapshot.js`, or `frontend/dashboard.html`, since all of them already operate generically on `routeApiStructure.backendRoutes` by method+path
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`** — 6 new `describe` blocks added after the existing Next.js `app/api` section (16 new tests): controller-prefix + method-path resolution (incl. both quote styles and non-interpolated template literals), empty decorator paths, root controller path, multiple methods/multiple controllers in one file, dynamic-path skip behavior (method-level and controller-level), and NestJS routes correctly participating in `endpointInventory`/`unusedBackendRoutes`/`linkFrontendBackendApis` linkage
+
+#### NestJS Patterns Supported
+
+| Input | Resolved route |
+|---|---|
+| `@Controller('api/auth')` + `@Get('login')` | `GET /api/auth/login` |
+| `@Controller('/api/users')` + `@Post()` | `POST /api/users` |
+| `@Controller()` + `@Get('/health')` | `GET /health` |
+| `@Controller()` + `@Get()` | `GET /` |
+| `` @Controller(`api/items`) `` + `` @Put(`:id`) `` (template literal, no interpolation) | `PUT /api/items/:id` |
+| `@Controller('api/dyn')` + `@Get(someVar)` (dynamic identifier) | *skipped — no route emitted* |
+| `` @Get(`${prefix}/x`) `` (template literal with interpolation) | *skipped — no route emitted* |
+| `@Controller(basePath)` (dynamic controller prefix) | *entire controller skipped — no routes emitted* |
+
+#### Not Changed
+
+- `linkFrontendBackendApis.js`, `verifyArchitectureBoundaries.js`, `assessImplementationCompleteness.js`, `buildRepositoryArchitectureSnapshot.js` — no changes; NestJS routes flow through the existing `backendRoutes` contract unmodified
+- `frontend/dashboard.html` — no changes; Backend Routes / Linked Endpoints / API Linkage Score displays now populate correctly for NestJS repos purely as a byproduct of `backendRoutes` no longer being empty
+- `routeApiStructure.frameworkHints` — left as-is (`hasExpressRoutes`/`hasFastifyRoutes`/`hasNextApiRoutes` unchanged); no `hasNestRoutes` hint added — out of scope for this step
+- `@Head`, `@Options`, `@All`, and custom NestJS route decorators — not recognized, per explicit scope
+
+#### Validation
+
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js` → **123/123 passing** (16 new NestJS tests + all 107 pre-existing Express/Fastify/Next.js/fetch/axios/linkage tests unchanged and passing)
+- `npm test --runInBand` → **7,110 / 7,180 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net +16 tests vs. prior 7,094/7,164)
+- Manually verified both literal examples from the requirements (`@Controller('api/auth')` + `@Get('login')` → `GET /api/auth/login`; `@Controller('/api/users')` + `@Post()` → `POST /api/users`) via a standalone script before formalizing as tests
+- Verified existing Express (`app.get`), Fastify, and Next.js (`app/api`) extraction is byte-for-byte unaffected by re-running the full `extractRouteApiStructure.test.js` suite (all pre-existing assertions still pass unmodified)
+
+#### Risks / Limitations
+
+- Class-body boundary detection uses a naive brace-depth counter with no string/template-literal awareness — a `{`/`}` character inside a string literal within the controller class body could in principle throw off the boundary (same class of limitation as the rest of this module's text-based parsing, e.g. mount-prefix resolution's naive path splitting); not observed in the test cases but not structurally impossible for pathological input
+- Only one level of decorator argument parsing — a computed prefix built from multiple concatenated literals (e.g. `@Controller('api/' + 'users')`) is treated as dynamic and skipped, even though it's technically static
+- Router variable naming is irrelevant for NestJS (class-decorator-based, not variable-based), so this closes the specific false-negative class identified in the prior architecture-linkage investigation for NestJS repos specifically — Koa/Hapi/tRPC/GraphQL/non-Node backends remain undetected (unchanged, out of scope for this step)
+
+#### Next Actions
+
+- Consider a future step adding `@Head`/`@Options`/`@All` if NestJS repos are found using them
+- Consider surfacing a `hasNestRoutes` framework hint if portfolio-level framework visibility becomes valuable
+
+---
+
+### 2026-07-07 — Repository Overview Refinement #10: Simplify Operational Status Sections
+
+**Capability:** FR-003 Project Dashboard — Overview tab simplification (removal of low-value operational sections)
+**Deliverable status:** UI refinement — backend APIs and risk-engine modules untouched
+
+#### What Changed
+
+- **`frontend/dashboard.html`**:
+  1. `buildRepoMetricsHtml(data)` simplified — now renders only **Commits (7d)**; `openPrs`, `stalePrs`, `openIssues` fields and the 2-column CSS grid layout removed (single-line output)
+  2. `buildRepoRiskHtml()`, `buildRepoPrHealthHtml()`, `buildRepoEventsHtml()` — **deleted entirely** (Risk Score, PR Health, Recent Events build functions no longer exist)
+  3. `loadRepoRisk()`, `loadRepoPrHealth()`, `loadRepoEvents()` — **deleted entirely** (their fetch calls to `/api/repos/:id/risk`, `/pr-health`, `/events` from the Overview tab no longer fire); `loadRepoMetrics()` retained unchanged
+  4. Overview tab panel HTML — `Risk Score`, `PR Health`, `Recent Events` section headers and their `#repo-ops-risk-content`, `#repo-ops-pr-health-content`, `#repo-ops-events-content` containers removed from the panel template; `Operational Metrics` header + `#repo-ops-metrics-content` container retained
+  5. `selectRepo()` — call sites for `loadRepoRisk(repo.id)`, `loadRepoPrHealth(repo.id)`, `loadRepoEvents(repo.id)` removed; `loadRepoMetrics(repo.id)` call retained
+  6. `buildAttentionDriversHtml(aq)` (Operational Risk Drivers) — **no code change**; already returns `''` when `aq.drivers` is empty, which satisfies "only render when a meaningful change or active operational risk needs attention" (drivers are only appended by `getAttentionQueue.js` when a real threshold condition fires — see `execution/risk/getAttentionQueue.js` weight table)
+- **`tests/unit/frontend/dashboardOperationalStatus.test.js`** — rewritten to cover only the simplified `buildRepoMetricsHtml`; all `buildRepoRiskHtml`/`buildRepoPrHealthHtml`/`buildRepoEventsHtml` describe blocks removed; `buildRepoMetricsHtml` value tests updated to assert `openPrs`/`stalePrs`/`openIssues` are absent from output
+
+#### Not Changed
+
+- `backend/routes/repoRoutes.js` — `GET /api/repos/:id/metrics`, `/risk`, `/pr-health`, `/events` endpoints untouched (all four Backend APIs preserved per scope)
+- Architecture Health, Forecast, Governance, Snapshot Coverage, and Architecture Confidence overview cards — untouched
+- Architecture Assessment and Architecture Recommendations sections — untouched
+- `tests/unit/frontend/dashboardRepoPriority.test.js` — `buildAttentionDriversHtml` tests (guard conditions, render, sort, cap-at-5) untouched; function behavior unchanged
+
+#### Dead Code Left Intentionally
+
+None. `buildRepoRiskHtml`, `buildRepoPrHealthHtml`, `buildRepoEventsHtml`, `loadRepoRisk`, `loadRepoPrHealth`, `loadRepoEvents` had no remaining consumers after the Overview containers were removed (each `loadRepoX` guards on `document.getElementById(...)` and would have silently no-op'd forever) — cleanly deleted rather than left as dead code, per CLAUDE.md's guidance against half-finished/unused code paths.
+
+#### Validation
+
+- `npm test --runInBand` → **7,094 / 7,164 passing** (70 skipped — 63 integration DB + 7 SMTP opt-in; 0 failing; net −51 tests vs. prior 7,145/7,215, all from deleted dead-function test coverage)
+- Verified: no remaining references to `buildRepoRiskHtml`, `buildRepoPrHealthHtml`, `buildRepoEventsHtml`, `loadRepoRisk`, `loadRepoPrHealth`, `loadRepoEvents`, `repo-ops-risk-content`, `repo-ops-pr-health-content`, `repo-ops-events-content` anywhere in `frontend/dashboard.html` or `tests/`
+- Verified: empty-state strings "No pull request activity detected.", "No recent operational events detected.", and risk-delta "unchanged" text no longer render anywhere (their owning sections are gone)
+- Not verified: no browser/Playwright pass performed for this refinement (unit tests only, per CLAUDE.md E2E tooling being Playwright-driven and out of scope for this text-only structural change)
+
+#### Capability Maturity Change
+
+FR-003 Project Dashboard — Overview tab: no change to overall Integrated/Tested status; scope reduced (fewer, higher-signal sections) rather than functionality added. `execution/risk/getAttentionQueue.js` (Operational Risk Drivers source) unaffected.
+
+---
 
 ### 2026-06-25 — Dashboard Refinement #1: Remove Portfolio Briefing + Portfolio Forecast Tab
 
