@@ -15,6 +15,13 @@ const SUPPORTED_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.js
 
 const HIGH_FAN_THRESHOLD = 5;
 
+// Documentation content (README/CHANGELOG/ADR prose, code samples inside
+// PROGRESS.md/CLAUDE.md, etc.) is not executable source. Code fences inside
+// Markdown routinely contain require()/import snippets as *examples*, which
+// this extractor would otherwise parse as real edges/unresolved imports.
+const DOC_EXTENSIONS  = new Set(['.md', '.mdx']);
+const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
+
 // ── Path utilities ────────────────────────────────────────────────────────────
 
 function _norm(p) {
@@ -156,6 +163,26 @@ function _category(path) {
   if (/\.(css|scss|sass)$/.test(path) || /^styles\//.test(path)) return 'styles';
   if (/\.(png|jpg|jpeg|svg|ico|gif)$/.test(path) || /^images\//.test(path) || /^assets\//.test(path)) return 'assets';
   return 'unknown';
+}
+
+// ── Documentation exclusion ───────────────────────────────────────────────────
+// A file is treated as documentation — excluded from import extraction — when
+// it has a Markdown extension (.md/.mdx), or when the repository's own
+// category classification already labels it 'docs' (e.g. any non-code file
+// under a docs/ folder) per the existing `_category` conventions above. Real
+// source-code extensions (CODE_EXTENSIONS) are never excluded this way, even
+// if such a file happens to live under a docs/ folder, so import extraction
+// for actual .js/.jsx/.ts/.tsx/.mjs/.cjs files is always preserved.
+
+function _extname(path) {
+  const idx = path.lastIndexOf('.');
+  return idx === -1 ? '' : path.slice(idx).toLowerCase();
+}
+
+function _isDocumentationFile(path, category) {
+  const ext = _extname(path);
+  if (DOC_EXTENSIONS.has(ext)) return true;
+  return category === 'docs' && !CODE_EXTENSIONS.has(ext);
 }
 
 // ── Circular dependency detection (DFS) ───────────────────────────────────────
@@ -339,6 +366,14 @@ function buildImportDependencyGraph(params) {
   const externalPkgs = new Set();
 
   for (const f of normalized) {
+    // Documentation files are excluded from import extraction — code samples
+    // inside Markdown prose are not real dependency edges. The file still
+    // gets a graph node (see -- Build nodes -- below) with outboundCount 0
+    // and contributes no unresolved imports; this preserves the existing
+    // `dependencyGraph.nodes.length > 0` structural-presence signal consumed
+    // by assessImplementationCompleteness.js and verifyArchitectureBoundaries.js.
+    if (_isDocumentationFile(f.path, catMap.get(f.path))) continue;
+
     const imports = _extractImports(f.content);
 
     for (const { importPath, importType } of imports) {

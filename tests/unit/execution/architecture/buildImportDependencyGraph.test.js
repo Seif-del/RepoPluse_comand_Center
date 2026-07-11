@@ -744,3 +744,147 @@ describe('buildImportDependencyGraph — output shape', () => {
     expect(m).toHaveProperty('highFanInFiles');
   });
 });
+
+// ── Documentation exclusion (Coupling Refinement #4) ─────────────────────────
+// Markdown/MDX content is prose, not executable source. Code fences inside
+// docs (README examples, PROGRESS.md/CLAUDE.md snippets) routinely contain
+// require()/import syntax as *illustrations*, which must not be parsed as
+// real dependency edges, unresolved imports, or high-fan-out signals.
+
+describe('buildImportDependencyGraph — documentation exclusion', () => {
+  test('Markdown file containing require(...) produces no edge', () => {
+    const files = [
+      makeFile('README.md', "Example:\n\n```js\nconst db = require('./execution/db');\n```\n"),
+      makeFile('execution/db.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toEqual([]);
+  });
+
+  test('Markdown file containing ES import syntax produces no edge', () => {
+    const files = [
+      makeFile('README.md', "```js\nimport db from './execution/db';\n```\n"),
+      makeFile('execution/db.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toEqual([]);
+  });
+
+  test('MDX file containing import/require snippets produces no edge', () => {
+    const files = [
+      makeFile('docs/guide.mdx', "import Foo from './components/Foo';\n\nconst bar = require('./bar');\n"),
+      makeFile('components/Foo.js', ''),
+      makeFile('bar.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toEqual([]);
+  });
+
+  test('documentation files produce no unresolved imports', () => {
+    const files = [
+      makeFile('README.md', "require('left-pad');\nimport x from 'some-external-package';\nconst y = require('./totally/missing/file');\n"),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.unresolvedImports).toEqual([]);
+    expect(r.couplingMetrics.unresolvedCount).toBe(0);
+    expect(r.couplingMetrics.externalDependencyCount).toBe(0);
+  });
+
+  test('JavaScript file with the same require/import text still produces the expected edge', () => {
+    const files = [
+      makeFile('app.js', "const db = require('./execution/db');\nconst logger = require('./execution/logger');\n"),
+      makeFile('execution/db.js', ''),
+      makeFile('execution/logger.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toContainEqual(edge('app.js', 'execution/db.js', './execution/db', 'require'));
+    expect(r.edges).toContainEqual(edge('app.js', 'execution/logger.js', './execution/logger', 'require'));
+    expect(r.edges.length).toBe(2);
+  });
+
+  test('TypeScript import extraction remains unchanged', () => {
+    const files = [
+      makeFile('app.ts', "import { db } from './execution/db';", 'TypeScript'),
+      makeFile('execution/db.ts', '', 'TypeScript'),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toContainEqual(edge('app.ts', 'execution/db.ts', './execution/db', 'static'));
+  });
+
+  test('highFanOutFiles does not include documentation files, even when a doc references 5+ paths', () => {
+    const docContent = [1, 2, 3, 4, 5, 6]
+      .map(function(n) { return "require('./execution/mod" + n + "');"; })
+      .join('\n');
+    const files = [makeFile('PROGRESS.md', docContent)].concat(
+      [1, 2, 3, 4, 5, 6].map(function(n) { return makeFile('execution/mod' + n + '.js', ''); })
+    );
+    const r = buildImportDependencyGraph({ files });
+    expect(r.couplingMetrics.highFanOutFiles).not.toContain('PROGRESS.md');
+    expect(r.couplingMetrics.highFanOutFiles).toEqual([]);
+  });
+
+  test('graph edge count excludes documentation-derived edges', () => {
+    const files = [
+      makeFile('README.md', "require('./a');\nrequire('./b');\nrequire('./c');"),
+      makeFile('app.js', "require('./a');"),
+      makeFile('a.js', ''),
+      makeFile('b.js', ''),
+      makeFile('c.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    // Only app.js's single resolved require('./a') should produce an edge;
+    // README.md's three identical-looking requires must not.
+    expect(r.couplingMetrics.totalEdges).toBe(1);
+    expect(r.edges).toEqual([edge('app.js', 'a.js', './a', 'require')]);
+  });
+
+  test('regression: realistic documentation snippet with two require() calls contributes zero edges', () => {
+    const docContent = [
+      'Example:',
+      '',
+      "const db = require('./execution/db');",
+      "const logger = require('./execution/logger');",
+      '',
+      'Call `db.query(...)` after requiring the module above.',
+    ].join('\n');
+    const files = [
+      makeFile('PROGRESS.md', docContent),
+      makeFile('execution/db.js', ''),
+      makeFile('execution/logger.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toEqual([]);
+    expect(r.unresolvedImports).toEqual([]);
+    expect(r.couplingMetrics.totalEdges).toBe(0);
+  });
+
+  test('documentation files still appear as graph nodes with zero outboundCount (structural-presence contract preserved)', () => {
+    const files = [
+      makeFile('README.md', "require('./execution/db');"),
+      makeFile('execution/db.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    const readmeNode = r.nodes.find(function(n) { return n.path === 'README.md'; });
+    expect(readmeNode).toBeDefined();
+    expect(readmeNode.category).toBe('docs');
+    expect(readmeNode.outboundCount).toBe(0);
+  });
+
+  test('a real source file importing a documentation file still resolves (doc-as-target resolution untouched)', () => {
+    const files = [
+      makeFile('loadReadme.js', "const text = require('./README.md');"),
+      makeFile('README.md', '# Notes'),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toContainEqual(edge('loadReadme.js', 'README.md', './README.md', 'require'));
+  });
+
+  test('a .js file physically located under a docs/ folder still has its imports extracted (code extension always wins)', () => {
+    const files = [
+      makeFile('docs/example.js', "const helper = require('./helper');"),
+      makeFile('docs/helper.js', ''),
+    ];
+    const r = buildImportDependencyGraph({ files });
+    expect(r.edges).toContainEqual(edge('docs/example.js', 'docs/helper.js', './helper', 'require'));
+  });
+});
