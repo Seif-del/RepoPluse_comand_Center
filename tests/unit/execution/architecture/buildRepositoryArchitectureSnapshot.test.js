@@ -903,3 +903,66 @@ describe('buildRepositoryArchitectureSnapshot — classification-aware orphan me
       .toBe(withoutHistory.metrics.orphanedBackendRouteCount);
   });
 });
+
+// ── analyzerCoverage — surfaced at the top-level snapshot ────────────────────
+
+describe('buildRepositoryArchitectureSnapshot — analyzerCoverage', () => {
+  test('analyzerCoverage is present at the top level of the snapshot', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: backendOnlyFiles() });
+    expect(r).toHaveProperty('analyzerCoverage');
+    expect(r.analyzerCoverage).toHaveProperty('frameworkHints');
+    expect(r.analyzerCoverage).toHaveProperty('supportedPatterns');
+    expect(r.analyzerCoverage).toHaveProperty('unsupportedRisk');
+    expect(r.analyzerCoverage).toHaveProperty('warnings');
+  });
+
+  test('analyzerCoverage equals routeApiStructure.analyzerCoverage (same object threaded through)', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: backendOnlyFiles() });
+    expect(r.analyzerCoverage).toBe(r.routeApiStructure.analyzerCoverage);
+  });
+
+  test('a repo with NestJS hints but zero extracted routes surfaces a warning at the top level', () => {
+    const files = [makeFile(
+      'auth.controller.ts',
+      "@Controller(basePath)\nexport class AuthController {\n  @Get('x')\n  a() {}\n}",
+      'TypeScript',
+    )];
+    const r = buildRepositoryArchitectureSnapshot({ files });
+    expect(r.analyzerCoverage.frameworkHints.nestjs).toBe(true);
+    expect(r.analyzerCoverage.warnings.length).toBeGreaterThan(0);
+  });
+
+  test('a fully working full-stack repo has no analyzerCoverage warnings', () => {
+    const r = buildRepositoryArchitectureSnapshot({ files: fullStackFiles() });
+    expect(r.analyzerCoverage.warnings).toEqual([]);
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('low');
+  });
+
+  test('architectureHealthScore is identical whether or not analyzerCoverage warnings are present (no scoring impact)', () => {
+    const nestFiles = [makeFile(
+      'auth.controller.ts',
+      "@Controller('api/auth')\nexport class AuthController {\n  @Get('login')\n  login() {}\n}",
+      'TypeScript',
+    )];
+    const withWorkingRoutes = buildRepositoryArchitectureSnapshot({ files: nestFiles });
+
+    const dynamicNestFiles = [makeFile(
+      'auth.controller.ts',
+      "@Controller(basePath)\nexport class AuthController {\n  @Get('login')\n  login() {}\n}",
+      'TypeScript',
+    )];
+    const withWarning = buildRepositoryArchitectureSnapshot({ files: dynamicNestFiles });
+
+    // Both produce zero backendRoutes-derived structure differently, but the point of
+    // this test is that analyzerCoverage itself never participates in _calcHealthScore —
+    // verified by confirming the score formula still equals the documented weighted sum.
+    [withWorkingRoutes, withWarning].forEach(function(r) {
+      const expected = Math.round(
+        r.boundaryVerification.boundaryHealthScore * 0.40 +
+        r.implementationCompleteness.completenessScore * 0.40 +
+        r.apiLinkage.linkageScore * 0.20,
+      );
+      expect(r.architectureHealthScore).toBe(expected);
+    });
+  });
+});

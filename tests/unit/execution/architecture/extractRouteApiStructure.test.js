@@ -276,6 +276,1006 @@ describe('extractRouteApiStructure — Next.js app/api', () => {
   });
 });
 
+describe('extractRouteApiStructure — Next.js App Router (src/app/api and dynamic segments)', () => {
+  test('app/api/auth/login/route.ts GET function export maps to /api/auth/login', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/auth/login/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/auth/login');
+    expect(route).toBeDefined();
+    expect(route.methods).toEqual(['GET']);
+  });
+
+  test('app/api/health/route.js with no dynamic segments maps to /api/health', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/health/route.js', 'export function GET() {}')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/health');
+    expect(route).toBeDefined();
+  });
+
+  test('src/app/api/candidates/[id]/edit/route.ts maps to /api/candidates/:id/edit', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile(
+        'src/app/api/candidates/[id]/edit/route.ts',
+        'export async function GET(req) {}\nexport async function POST(req) {}',
+        'TypeScript',
+      )],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/candidates/:id/edit');
+    expect(route).toBeDefined();
+    expect(route.methods).toContain('GET');
+    expect(route.methods).toContain('POST');
+  });
+
+  test('src/app/api/users/route.ts (no dynamic segment) is detected under the src/ prefix', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+    expect(route.type).toBe('app');
+  });
+
+  test('export const PATCH = async (...) => {} is detected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/items/route.ts', "export const PATCH = async (req) => { return Response.json({}); };", 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/items');
+    expect(route).toBeDefined();
+    expect(route.methods).toEqual(['PATCH']);
+  });
+
+  test('export const DELETE = function (...) {} is detected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/items/route.ts', "export const DELETE = function (req) { return Response.json({}); };", 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/items');
+    expect(route).toBeDefined();
+    expect(route.methods).toEqual(['DELETE']);
+  });
+
+  test('export const PUT = async is detected alongside a function-form GET export', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile(
+        'app/api/items/route.ts',
+        "export async function GET(req) {}\nexport const PUT = async (req) => { return Response.json({}); };",
+        'TypeScript',
+      )],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/items');
+    expect(route.methods).toContain('GET');
+    expect(route.methods).toContain('PUT');
+  });
+
+  test('export { GET, POST } list form is detected', () => {
+    const src = [
+      'async function handleGet(req) {}',
+      'async function handlePost(req) {}',
+      'export { handleGet as GET, handlePost as POST };',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('app/api/items/route.ts', src, 'TypeScript')] });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/items');
+    expect(route).toBeDefined();
+    expect(route.methods).toContain('GET');
+    expect(route.methods).toContain('POST');
+  });
+
+  test('export { GET, POST } with bare identifiers (no aliasing) is detected', () => {
+    const src = [
+      'async function GET(req) {}',
+      'async function POST(req) {}',
+      'export { GET, POST };',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('app/api/items/route.ts', src, 'TypeScript')] });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/items');
+    expect(route.methods).toContain('GET');
+    expect(route.methods).toContain('POST');
+  });
+
+  test('route.ts file with no exported HTTP method produces no route (does not invent methods)', () => {
+    const src = [
+      'function helper() { return 42; }',
+      'export const CONFIG = { revalidate: 60 };',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('app/api/items/route.ts', src, 'TypeScript')] });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/items');
+    expect(route).toBeUndefined();
+    expect(r.nextRoutes).toHaveLength(0);
+  });
+
+  test('route.ts with no exported HTTP method does not appear in unusedBackendRoutes or endpointInventory', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/items/route.ts', 'export const CONFIG = { revalidate: 60 };', 'TypeScript')],
+    });
+    expect(r.unusedBackendRoutes.find(rt => rt.path === '/api/items')).toBeUndefined();
+    expect(r.endpointInventory.find(e => e.path === '/api/items')).toBeUndefined();
+  });
+
+  test('existing pages/api wildcard fallback behavior is unchanged', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('pages/api/users.js', 'export default function handler(req, res) {}')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+    expect(route.methods).toEqual(['*']);
+    expect(route.type).toBe('pages');
+  });
+});
+
+// ── Step #8: monorepo/workspace App Router detection ──────────────────────────
+
+describe('extractRouteApiStructure — Next.js App Router workspace layouts', () => {
+  test('apps/web/src/app/api/users/route.ts is detected (apps/*/src/app/api)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+    expect(route.type).toBe('app');
+    expect(route.methods).toEqual(['GET']);
+  });
+
+  test('apps/admin/app/api/users/route.ts is detected (apps/*/app/api, no src/)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/admin/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+  });
+
+  test('packages/web/src/app/api/users/route.ts is detected (packages/*/src/app/api)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('packages/web/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+  });
+
+  test('packages/frontend/src/app/api/users/route.ts is detected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('packages/frontend/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+  });
+
+  test('services/frontend/src/app/api/users/route.ts is detected (services/*/src/app/api)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('services/frontend/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+  });
+
+  test('libs/demo/src/app/api/users/route.ts is detected (libs/*/src/app/api)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('libs/demo/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+  });
+
+  test('workspace-detected App Router routes are merged into backendRoutes exactly as Step #5', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nextjs-app-router');
+    expect(route).toMatchObject({ method: 'GET', path: '/api/users' });
+  });
+});
+
+describe('extractRouteApiStructure — Next.js App Router workspace layouts — dynamic and catch-all segments preserved', () => {
+  test('nested dynamic segment inside a workspace layout: apps/web/src/app/api/users/[id]/edit/route.ts → /api/users/:id/edit', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/users/[id]/edit/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users/:id/edit');
+    expect(route).toBeDefined();
+  });
+
+  test('catch-all segment inside a workspace layout: apps/web/src/app/api/docs/[...slug]/route.ts uses the existing normalization unchanged', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/docs/[...slug]/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    // Documents current normalization behavior verbatim (requirement 2: preserve as-is, not "fix").
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/docs/:...slug');
+    expect(route).toBeDefined();
+  });
+
+  test('optional catch-all segment inside a workspace layout: apps/web/src/app/api/docs/[[...slug]]/route.ts uses the existing normalization unchanged', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/docs/[[...slug]]/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    // Same pre-existing (unmodified) [[...slug]] normalization as the root app/api case.
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/docs/:[...slug]');
+    expect(route).toBeDefined();
+  });
+
+  test('root app/api catch-all and workspace app/api catch-all normalize identically', () => {
+    const root = extractRouteApiStructure({
+      files: [makeFile('app/api/docs/[...slug]/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const workspace = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/docs/[...slug]/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    expect(root.nextRoutes[0].urlPattern).toBe(workspace.nextRoutes[0].urlPattern);
+  });
+});
+
+describe('extractRouteApiStructure — Next.js App Router workspace layouts — route.* extension and export requirements preserved', () => {
+  test('a non-route.* file at a workspace App Router path is still ignored', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/users/handler.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    expect(r.nextRoutes).toHaveLength(0);
+  });
+
+  test('route.jsx and route.tsx extensions are still recognized inside a workspace layout', () => {
+    const jsx = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/users/route.jsx', 'export async function GET(req) {}')],
+    });
+    const tsx = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/users/route.tsx', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    expect(jsx.nextRoutes.find(rt => rt.urlPattern === '/api/users')).toBeDefined();
+    expect(tsx.nextRoutes.find(rt => rt.urlPattern === '/api/users')).toBeDefined();
+  });
+
+  test('a methodless route.ts inside a workspace layout produces no route (Step #2 skip behavior preserved)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/src/app/api/config/route.ts', 'export const CONFIG = {};', 'TypeScript')],
+    });
+    expect(r.nextRoutes).toHaveLength(0);
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nextjs-app-router')).toHaveLength(0);
+  });
+});
+
+describe('extractRouteApiStructure — Next.js App Router workspace layouts — existing behavior regressions', () => {
+  test('root app/api/... (no workspace prefix) still resolves exactly as before', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+    expect(route.type).toBe('app');
+  });
+
+  test('root src/app/api/... (no workspace prefix) still resolves exactly as before', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+    expect(route.type).toBe('app');
+  });
+
+  test('pages/api/... stays root-anchored only — a workspace-nested pages/api file is NOT detected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('apps/web/pages/api/users.js', 'export default function handler(req, res) {}')],
+    });
+    expect(r.nextRoutes).toHaveLength(0);
+  });
+
+  test('root pages/api/... regression: still resolves exactly as before', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('pages/api/users.js', 'export default function handler(req, res) {}')],
+    });
+    const route = r.nextRoutes.find(rt => rt.urlPattern === '/api/users');
+    expect(route).toBeDefined();
+    expect(route.type).toBe('pages');
+    expect(route.methods).toEqual(['*']);
+  });
+});
+
+describe('extractRouteApiStructure — Next.js App Router workspace layouts — linkage via linkFrontendBackendApis', () => {
+  const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+
+  test('a workspace-detected App Router route links to a matching frontend fetch call', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('apps/web/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('apps/web/src/components/user-list.tsx', "fetch('/api/users')"),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/users')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+    expect(linkage.orphanedBackendRoutes).toHaveLength(0);
+  });
+
+  test('a dynamic workspace App Router route links to a matching template-literal frontend call', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('apps/web/src/app/api/users/[id]/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('apps/web/src/components/user-detail.tsx', 'fetch(`/api/users/${id}`)'),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/users/:id')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  test('multiple workspace apps (web + admin) both link correctly in the same repo', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('apps/web/src/app/api/users/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('apps/admin/app/api/reports/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('apps/web/src/components/list.tsx', "fetch('/api/users')"),
+        makeFile('apps/admin/src/components/reports.tsx', "fetch('/api/reports')"),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints).toHaveLength(2);
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+});
+
+// ── NestJS decorator-based controllers ────────────────────────────────────────
+
+describe('extractRouteApiStructure — NestJS controller prefix + method path', () => {
+  test('@Controller(\'api/auth\') + @Get(\'login\') resolves to GET /api/auth/login', () => {
+    const src = [
+      "@Controller('api/auth')",
+      'export class AuthController {',
+      "  @Get('login')",
+      '  login() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('src/auth/auth.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/auth/login' && rt.method === 'GET');
+    expect(route).toBeDefined();
+    expect(route.framework).toBe('nestjs');
+  });
+
+  test("@Controller('/api/users') + @Post() resolves to POST /api/users", () => {
+    const src = [
+      "@Controller('/api/users')",
+      'export class UsersController {',
+      '  @Post()',
+      '  create() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('src/users/users.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/users' && rt.method === 'POST');
+    expect(route).toBeDefined();
+  });
+
+  test('double-quoted controller prefix and method path both resolve', () => {
+    const src = [
+      '@Controller("api/items")',
+      'export class ItemsController {',
+      '  @Get("list")',
+      '  list() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('items.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/items/list' && rt.method === 'GET');
+    expect(route).toBeDefined();
+  });
+
+  test('template literal path without interpolation resolves like a plain string', () => {
+    const src = [
+      '@Controller(`api/items`)',
+      'export class ItemsController {',
+      '  @Put(`:id`)',
+      '  update() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('items.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/items/:id' && rt.method === 'PUT');
+    expect(route).toBeDefined();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS empty decorator paths', () => {
+  test('empty @Controller() combined with a method path uses only the method path', () => {
+    const src = [
+      '@Controller()',
+      'export class RootController {',
+      "  @Get('/health')",
+      '  health() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('root.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/health' && rt.method === 'GET');
+    expect(route).toBeDefined();
+  });
+
+  test('empty @Controller() and empty method path resolves to bare /', () => {
+    const src = [
+      '@Controller()',
+      'export class RootController {',
+      '  @Get()',
+      '  index() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('root.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/' && rt.method === 'GET');
+    expect(route).toBeDefined();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS root controller path', () => {
+  test('non-empty controller prefix with no leading slash still normalizes to a leading slash', () => {
+    const src = [
+      "@Controller('api/health')",
+      'export class HealthController {',
+      "  @Get('')",
+      '  check() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('health.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.path === '/api/health' && rt.method === 'GET');
+    expect(route).toBeDefined();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS multiple methods in one controller', () => {
+  test('all five supported method decorators are extracted under the same controller prefix', () => {
+    const src = [
+      "@Controller('api/items')",
+      'export class ItemsController {',
+      '  @Get()',
+      '  list() {}',
+      '',
+      "  @Get(':id')",
+      '  getOne() {}',
+      '',
+      "  @Post()",
+      '  create() {}',
+      '',
+      "  @Put(':id')",
+      '  update() {}',
+      '',
+      "  @Patch(':id')",
+      '  patch() {}',
+      '',
+      "  @Delete(':id')",
+      '  remove() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('items.controller.ts', src, 'TypeScript')] });
+    const nestRoutes = r.backendRoutes.filter(rt => rt.framework === 'nestjs');
+    expect(nestRoutes).toHaveLength(6);
+    expect(nestRoutes.find(rt => rt.method === 'GET'    && rt.path === '/api/items')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.method === 'GET'    && rt.path === '/api/items/:id')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.method === 'POST'   && rt.path === '/api/items')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.method === 'PUT'    && rt.path === '/api/items/:id')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.method === 'PATCH'  && rt.path === '/api/items/:id')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.method === 'DELETE' && rt.path === '/api/items/:id')).toBeDefined();
+  });
+
+  test('multiple controllers in the same file are each resolved independently', () => {
+    const src = [
+      "@Controller('api/auth')",
+      'export class AuthController {',
+      "  @Post('login')",
+      '  login() {}',
+      '}',
+      '',
+      "@Controller('api/users')",
+      'export class UsersController {',
+      '  @Get()',
+      '  list() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('multi.controller.ts', src, 'TypeScript')] });
+    const nestRoutes = r.backendRoutes.filter(rt => rt.framework === 'nestjs');
+    expect(nestRoutes.find(rt => rt.method === 'POST' && rt.path === '/api/auth/login')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.method === 'GET'  && rt.path === '/api/users')).toBeDefined();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS dynamic decorator paths are skipped safely', () => {
+  test('method decorator with an identifier argument (not a string literal) is skipped', () => {
+    const src = [
+      "@Controller('api/dyn')",
+      'export class DynController {',
+      '  @Get(someVar)',
+      '  a() {}',
+      '',
+      "  @Post('ok')",
+      '  c() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('dyn.controller.ts', src, 'TypeScript')] });
+    const nestRoutes = r.backendRoutes.filter(rt => rt.framework === 'nestjs');
+    expect(nestRoutes).toHaveLength(1);
+    expect(nestRoutes[0]).toMatchObject({ method: 'POST', path: '/api/dyn/ok' });
+  });
+
+  test('method decorator with a template literal containing ${...} interpolation is skipped', () => {
+    const src = [
+      "@Controller('api/dyn')",
+      'export class DynController {',
+      '  @Get(`${prefix}/x`)',
+      '  b() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('dyn.controller.ts', src, 'TypeScript')] });
+    const nestRoutes = r.backendRoutes.filter(rt => rt.framework === 'nestjs');
+    expect(nestRoutes).toHaveLength(0);
+  });
+
+  test('dynamic controller prefix (identifier, not a string literal) skips the entire controller safely', () => {
+    const src = [
+      '@Controller(basePath)',
+      'export class DynCtrl {',
+      "  @Get('x')",
+      '  a() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('dyn.controller.ts', src, 'TypeScript')] });
+    const nestRoutes = r.backendRoutes.filter(rt => rt.framework === 'nestjs');
+    expect(nestRoutes).toHaveLength(0);
+  });
+
+  test('dynamic controller prefix does not throw and other files are still processed', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('dyn.controller.ts', "@Controller(basePath)\nexport class DynCtrl {\n  @Get('x')\n  a() {}\n}"),
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+      ],
+    });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+    expect(r.backendRoutes.find(rt => rt.framework === 'express' && rt.path === '/api/users')).toBeDefined();
+  });
+});
+
+// ── Step #6: object-form @Controller({ ... }) support ─────────────────────────
+
+describe('extractRouteApiStructure — NestJS object-form @Controller — path only', () => {
+  test("@Controller({ path: 'users' }) resolves the path", () => {
+    const src = "@Controller({ path: 'users' })\nexport class UsersController {\n  @Get()\n  list() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/users' });
+  });
+
+  test('double-quoted object path is resolved', () => {
+    const src = '@Controller({ path: "users" })\nexport class UsersController {\n  @Get()\n  list() {}\n}';
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/users' });
+  });
+
+  test('template-literal object path with no interpolation is resolved', () => {
+    const src = '@Controller({ path: `users` })\nexport class UsersController {\n  @Get()\n  list() {}\n}';
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/users' });
+  });
+});
+
+describe('extractRouteApiStructure — NestJS object-form @Controller — version only', () => {
+  test("@Controller({ version: '1' }) resolves to a /v1 prefix", () => {
+    const src = "@Controller({ version: '1' })\nexport class HealthController {\n  @Get('health')\n  check() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('health.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/v1/health' });
+  });
+
+  test("@Controller({ version: '1' }) with an empty method path resolves to bare /v1", () => {
+    const src = "@Controller({ version: '1' })\nexport class RootController {\n  @Get()\n  index() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('root.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/v1' });
+  });
+});
+
+describe('extractRouteApiStructure — NestJS object-form @Controller — path + version (both key orders)', () => {
+  test("{ path: 'auth', version: '1' } resolves to /v1/auth", () => {
+    const src = "@Controller({ path: 'auth', version: '1' })\nexport class AuthController {\n  @Post('login')\n  login() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'POST', path: '/v1/auth/login' });
+  });
+
+  test("{ version: '1', path: 'auth' } (reversed key order) resolves identically to /v1/auth", () => {
+    const src = "@Controller({ version: '1', path: 'auth' })\nexport class AuthController {\n  @Post('login')\n  login() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'POST', path: '/v1/auth/login' });
+  });
+
+  test('both key orders produce byte-identical route paths', () => {
+    const srcA = "@Controller({ path: 'auth', version: '1' })\nexport class A {\n  @Post('login')\n  login() {}\n}";
+    const srcB = "@Controller({ version: '1', path: 'auth' })\nexport class B {\n  @Post('login')\n  login() {}\n}";
+    const rA = extractRouteApiStructure({ files: [makeFile('a.controller.ts', srcA, 'TypeScript')] });
+    const rB = extractRouteApiStructure({ files: [makeFile('b.controller.ts', srcB, 'TypeScript')] });
+    expect(rA.backendRoutes[0].path).toBe(rB.backendRoutes[0].path);
+    expect(rA.backendRoutes[0].path).toBe('/v1/auth/login');
+  });
+});
+
+describe('extractRouteApiStructure — NestJS object-form @Controller — leading slash normalization', () => {
+  test("{ path: '/auth' } (leading slash) resolves the same as { path: 'auth' }", () => {
+    const withSlash = extractRouteApiStructure({
+      files: [makeFile('a.controller.ts', "@Controller({ path: '/auth' })\nexport class A {\n  @Post('login')\n  login() {}\n}", 'TypeScript')],
+    });
+    const withoutSlash = extractRouteApiStructure({
+      files: [makeFile('b.controller.ts', "@Controller({ path: 'auth' })\nexport class B {\n  @Post('login')\n  login() {}\n}", 'TypeScript')],
+    });
+    expect(withSlash.backendRoutes[0].path).toBe('/auth/login');
+    expect(withSlash.backendRoutes[0].path).toBe(withoutSlash.backendRoutes[0].path);
+  });
+});
+
+describe('extractRouteApiStructure — NestJS object-form @Controller — dynamic/unsupported values skipped', () => {
+  test('array path is unsupported — the whole controller is skipped safely', () => {
+    const src = "@Controller({ path: ['users', 'members'], version: '1' })\nexport class UsersController {\n  @Get()\n  list() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+
+  test('an imported constant used as path is unsupported — the whole controller is skipped safely', () => {
+    const src = "@Controller({ path: ROUTE_PREFIX })\nexport class UsersController {\n  @Get()\n  list() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+
+  test('a computed expression used as path is unsupported — the whole controller is skipped safely', () => {
+    const src = "@Controller({ path: getPrefix() })\nexport class UsersController {\n  @Get()\n  list() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+
+  test('an imported constant used as version is unsupported — the whole controller is skipped safely', () => {
+    const src = "@Controller({ path: 'auth', version: API_VERSION })\nexport class AuthController {\n  @Post('login')\n  login() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+
+  test('a template literal path with ${...} interpolation is unsupported — the whole controller is skipped safely', () => {
+    const src = "@Controller({ path: `${prefix}/users` })\nexport class UsersController {\n  @Get()\n  list() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('users.controller.ts', src, 'TypeScript')] });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+
+  test('skipping a dynamic object-form controller does not throw and other files still process', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('users.controller.ts', "@Controller({ path: ROUTE_PREFIX })\nexport class UsersController {\n  @Get()\n  list() {}\n}", 'TypeScript'),
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+      ],
+    });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+    expect(r.backendRoutes.find(rt => rt.framework === 'express' && rt.path === '/api/users')).toBeDefined();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS existing string-literal @Controller support is preserved', () => {
+  test("@Controller('health') (bare string) still resolves as before", () => {
+    const src = "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('health.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/health' });
+  });
+
+  test('@Controller() with no argument still resolves as before', () => {
+    const src = "@Controller()\nexport class RootController {\n  @Get('ping')\n  ping() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('root.controller.ts', src, 'TypeScript')] });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/ping' });
+  });
+
+  test('a bare identifier controller prefix is still treated as dynamic and skipped', () => {
+    const src = "@Controller(basePath)\nexport class DynController {\n  @Get('x')\n  a() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('dyn.controller.ts', src, 'TypeScript')] });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+});
+
+describe('extractRouteApiStructure — NestJS object-form @Controller — real-world repo_id=98 shapes', () => {
+  test('EmployeeController ({ version: \'1\' } + method-level resource path) resolves and links', () => {
+    // No app.setGlobalPrefix(...) file is included in this fixture, so this test
+    // isolates verification of Step #6's version+path object-form support alone,
+    // targeting the un-prefixed /v1/employees path. Step #7 (global prefix
+    // detection) covers the /api/v1/employees case end-to-end separately below.
+    const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('employee.controller.ts', "@ApiTags('workforce')\n@Controller({ version: '1' })\n@UseGuards(JwtAuthGuard, RolesGuard)\nexport class EmployeeController {\n  @Post('employees')\n  create() {}\n}", 'TypeScript'),
+        makeFile('frontend/create-employee-form.tsx', "fetch('/v1/employees', { method: 'POST' })"),
+      ],
+    });
+    expect(r.backendRoutes.find(rt => rt.framework === 'nestjs')).toMatchObject({ method: 'POST', path: '/v1/employees' });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  test("AuthController ({ version: '1', path: 'auth' } + two methods) resolves both routes", () => {
+    const src = "@ApiTags('auth')\n@Controller({ version: '1', path: 'auth' })\nexport class AuthController {\n  @Post('login')\n  login() {}\n\n  @Post('logout')\n  logout() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    const nestRoutes = r.backendRoutes.filter(rt => rt.framework === 'nestjs');
+    expect(nestRoutes).toHaveLength(2);
+    expect(nestRoutes.find(rt => rt.path === '/v1/auth/login')).toBeDefined();
+    expect(nestRoutes.find(rt => rt.path === '/v1/auth/logout')).toBeDefined();
+  });
+});
+
+// ── Step #7: app.setGlobalPrefix() detection ──────────────────────────────────
+
+describe('extractRouteApiStructure — NestJS global prefix — supported literal forms', () => {
+  test("app.setGlobalPrefix('api') (single-quote) is applied to a NestJS route", () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/api/health' });
+  });
+
+  test('app.setGlobalPrefix("/api") (double-quote, leading slash) normalizes correctly', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', 'app.setGlobalPrefix("/api");'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/api/health' });
+  });
+
+  test('app.setGlobalPrefix(`api`) (template literal, no interpolation) is applied', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', 'app.setGlobalPrefix(`api`);'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/api/health' });
+  });
+
+  test('the full example from the requirements resolves to POST /api/v1/auth/login', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('auth.controller.ts', "@Controller({ version: '1', path: 'auth' })\nexport class AuthController {\n  @Post('login')\n  login() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'POST', path: '/api/v1/auth/login' });
+  });
+});
+
+describe('extractRouteApiStructure — NestJS global prefix — dynamic/unsupported forms ignored', () => {
+  test('a variable argument is ignored safely — route stays unprefixed', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', 'app.setGlobalPrefix(PREFIX_VAR);', 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/health' });
+  });
+
+  test('a function-call argument is ignored safely — route stays unprefixed', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', 'app.setGlobalPrefix(getPrefix());', 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/health' });
+  });
+
+  test('an interpolated template literal argument is ignored safely — route stays unprefixed', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', 'app.setGlobalPrefix(`${env}/api`);', 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/health' });
+  });
+
+  test('an unsupported prefix call does not throw and other files still process', () => {
+    expect(() => extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', 'app.setGlobalPrefix(getPrefix());', 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+        makeFile('server.js', "app.get('/legacy', handler);"),
+      ],
+    })).not.toThrow();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS global prefix — multiple declarations use the first literal', () => {
+  test('a dynamic call followed by a literal call — the literal one is used', () => {
+    // Documents the behavior: the dynamic call at line 1 is invisible to the regex
+    // (it never matches), so the literal call at line 2 is the first one *found*.
+    const withRoute = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix(PREFIX_VAR);\napp.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = withRoute.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ path: '/api/health' });
+  });
+
+  test('two literal calls — the first one (in file scan order) wins, not the last', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('v2');\napp.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ path: '/v2/health' });
+  });
+
+  test('two literal calls in separate files — the file listed first wins', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('other-bootstrap.ts', "app.setGlobalPrefix('v2');", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ path: '/api/health' });
+  });
+});
+
+describe('extractRouteApiStructure — NestJS global prefix — applies only to NestJS routes', () => {
+  test('Express, Fastify, and Next.js App Router routes are not prefixed', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+        makeFile('server.js', "app.get('/legacy', handler);"),
+        makeFile('app/api/items/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+      ],
+    });
+    const nest    = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    const express = r.backendRoutes.find(rt => rt.framework === 'express');
+    const nextApp = r.backendRoutes.find(rt => rt.framework === 'nextjs-app-router');
+    expect(nest).toMatchObject({ path: '/api/health' });
+    expect(express).toMatchObject({ path: '/legacy' });
+    expect(nextApp).toMatchObject({ path: '/api/items' }); // unchanged — already had its own /api/ segment from its file path, not from setGlobalPrefix
+  });
+
+  test('frontend calls are never touched by the global prefix pass', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('api');", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+        makeFile('frontend/app.js', "fetch('/health')"),
+      ],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/health');
+    expect(call).toBeDefined();
+  });
+});
+
+describe('extractRouteApiStructure — NestJS global prefix — no prefix present preserves existing behavior', () => {
+  test('no setGlobalPrefix call anywhere leaves NestJS routes exactly as Step #6 produced them', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript')],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'GET', path: '/health' });
+  });
+});
+
+describe('extractRouteApiStructure — NestJS global prefix — repo_id=98 end-to-end closure', () => {
+  test('the exact repo_id=98 main.ts + AuthController + BFF call now links (Step #6 + Step #7 combined)', () => {
+    const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+    const mainTs = [
+      "app.setGlobalPrefix('api', {",
+      "  exclude: [{ path: 'health', method: RequestMethod.GET }],",
+      '});',
+    ].join('\n');
+    const authController = [
+      "@ApiTags('auth')",
+      "@Controller({ version: '1', path: 'auth' })",
+      'export class AuthController {',
+      "  @Post('login')",
+      '  login() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('apps/api/src/main.ts', mainTs, 'TypeScript'),
+        makeFile('apps/api/src/identity/auth.controller.ts', authController, 'TypeScript'),
+        makeFile('apps/web/src/features/auth/login-form.tsx', "fetch('/api/v1/auth/login', { method: 'POST' })"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ method: 'POST', path: '/api/v1/auth/login' });
+
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/v1/auth/login')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  test('setGlobalPrefix\'s second (options) argument does not interfere with prefix extraction', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('main.ts', "app.setGlobalPrefix('api', { exclude: [{ path: 'health', method: RequestMethod.GET }] });", 'TypeScript'),
+        makeFile('health.controller.ts', "@Controller('health')\nexport class HealthController {\n  @Get()\n  check() {}\n}", 'TypeScript'),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.framework === 'nestjs');
+    expect(route).toMatchObject({ path: '/api/health' });
+  });
+});
+
+describe('extractRouteApiStructure — NestJS routes participate in existing pipeline output', () => {
+  test('NestJS routes appear in endpointInventory with hasBackend true', () => {
+    const src = [
+      "@Controller('api/auth')",
+      'export class AuthController {',
+      "  @Get('login')",
+      '  login() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    const entry = r.endpointInventory.find(e => e.path === '/api/auth/login' && e.method === 'GET');
+    expect(entry).toBeDefined();
+    expect(entry.hasBackend).toBe(true);
+  });
+
+  test('a NestJS route with no matching frontend call appears in unusedBackendRoutes', () => {
+    const src = [
+      "@Controller('api/auth')",
+      'export class AuthController {',
+      "  @Get('login')",
+      '  login() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    const unused = r.unusedBackendRoutes.find(rt => rt.path === '/api/auth/login' && rt.method === 'GET');
+    expect(unused).toBeDefined();
+  });
+
+  test('a NestJS route links to a matching frontend fetch call via linkFrontendBackendApis', () => {
+    const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('auth.controller.ts', "@Controller('api/auth')\nexport class AuthController {\n  @Post('login')\n  login() {}\n}"),
+        makeFile('frontend/app.js', "fetch('/api/auth/login', { method: 'POST' })"),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/auth/login' && e.method === 'POST')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+});
+
 // ── fetch calls ───────────────────────────────────────────────────────────────
 
 describe('extractRouteApiStructure — fetch calls', () => {
@@ -534,6 +1534,119 @@ describe('extractRouteApiStructure — client.request', () => {
       files: [makeFile('src/api.js', "client.request({ method: 'POST', url: '/api/users' })")],
     });
     expect(r.frontendApiCalls.find(c => c.method === 'POST')).toBeDefined();
+  });
+});
+
+// ── serverFetch / BFF internal fetch wrappers ─────────────────────────────────
+
+describe('extractRouteApiStructure — serverFetch/apiFetch/internalFetch/backendFetch', () => {
+  test("serverFetch('/api/repos') captured as GET with client 'serverFetch'", () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "serverFetch('/api/repos')", 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('GET');
+    expect(call.client).toBe('serverFetch');
+  });
+
+  test('serverFetch with template literal interpolation normalizes to :param', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', 'serverFetch(`/api/repos/${id}`)', 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/:param');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('GET');
+  });
+
+  test("serverFetch with string concatenation resolves the full parameterised path", () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "serverFetch('/api/repos/' + id + '/metrics')", 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos/:_p/metrics');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('GET');
+  });
+
+  test("serverFetch('/api/repos', { method: 'POST' }) detects POST from options object", () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "serverFetch('/api/repos', { method: 'POST' })", 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/repos');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('POST');
+  });
+
+  test('apiFetch variant is detected with double-quoted method option', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', 'apiFetch(\'/api/x\', { method: "PATCH" })', 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/x');
+    expect(call).toBeDefined();
+    expect(call.method).toBe('PATCH');
+    expect(call.client).toBe('apiFetch');
+  });
+
+  test('internalFetch variant is detected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "internalFetch('/api/y')", 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/y');
+    expect(call).toBeDefined();
+    expect(call.client).toBe('internalFetch');
+  });
+
+  test('backendFetch variant is detected', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "backendFetch('/api/z')", 'TypeScript')],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/z');
+    expect(call).toBeDefined();
+    expect(call.client).toBe('backendFetch');
+  });
+
+  test('external absolute URL is ignored (does not start with /)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "serverFetch('https://example.com/api/x')", 'TypeScript')],
+    });
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  test('non-API helper call with an unsupported wrapper name is ignored', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "randomHelper('/api/x')", 'TypeScript')],
+    });
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  test('existing fetch() and axios extraction still work alongside serverFetch in the same file', () => {
+    const src = [
+      "fetch('/api/users')",
+      "axios.post('/api/things')",
+      "serverFetch('/api/internal')",
+    ].join('\n');
+    const r = extractRouteApiStructure({ files: [makeFile('src/lib/data.ts', src, 'TypeScript')] });
+    expect(r.frontendApiCalls.find(c => c.path === '/api/users' && c.client === 'fetch')).toBeDefined();
+    expect(r.frontendApiCalls.find(c => c.path === '/api/things' && c.client === 'axios' && c.method === 'POST')).toBeDefined();
+    expect(r.frontendApiCalls.find(c => c.path === '/api/internal' && c.client === 'serverFetch')).toBeDefined();
+    expect(r.frontendApiCalls).toHaveLength(3);
+  });
+
+  test('serverFetch call links to a matching backend route via linkFrontendBackendApis', () => {
+    const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('src/lib/data.ts', "serverFetch('/api/repos/metrics')", 'TypeScript'),
+        makeFile('server.js', "app.get('/api/repos/metrics', getMetrics);"),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/repos/metrics')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
   });
 });
 
@@ -1229,5 +2342,364 @@ describe('extractRouteApiStructure — concatenated fetch calls resolve to param
     const call = r.frontendApiCalls.find(c => c.path === '/api/users');
     expect(call).toBeDefined();
     expect(call.method).toBe('GET');
+  });
+});
+
+// ── analyzerCoverage — framework-support confidence warnings ─────────────────
+
+describe('extractRouteApiStructure — analyzerCoverage shape', () => {
+  test('analyzerCoverage object is present with expected keys for empty input', () => {
+    const r = extractRouteApiStructure({ files: [] });
+    expect(r.analyzerCoverage).toBeDefined();
+    expect(r.analyzerCoverage.frameworkHints).toEqual({
+      nestjs: false, nextAppRouter: false, bffFetchWrappers: false,
+    });
+    expect(r.analyzerCoverage.supportedPatterns).toEqual([]);
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('low');
+    expect(r.analyzerCoverage.warnings).toEqual([]);
+  });
+
+  test('a fully working Express + fetch repo has no warnings and low risk', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+        makeFile('frontend/app.js', "fetch('/api/users')"),
+      ],
+    });
+    expect(r.analyzerCoverage.warnings).toEqual([]);
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('low');
+    expect(r.analyzerCoverage.supportedPatterns).toContain('express');
+  });
+});
+
+describe('extractRouteApiStructure — analyzerCoverage NestJS hint warnings', () => {
+  test('NestJS decorator hints with zero routes extracted produces a warning', () => {
+    const src = "@Controller(basePath)\nexport class AuthController {\n  @Get('x')\n  a() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    expect(r.analyzerCoverage.frameworkHints.nestjs).toBe(true);
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.analyzerCoverage.warnings).toContain('NestJS decorators were detected but no routes were extracted.');
+  });
+
+  test('supported NestJS routes extracted avoids the NestJS warning entirely', () => {
+    const src = "@Controller('api/auth')\nexport class AuthController {\n  @Get('login')\n  login() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    expect(r.analyzerCoverage.frameworkHints.nestjs).toBe(true);
+    expect(r.backendRoutes.length).toBeGreaterThan(0);
+    expect(r.analyzerCoverage.warnings).not.toContain('NestJS decorators were detected but no routes were extracted.');
+    expect(r.analyzerCoverage.supportedPatterns).toContain('nestjs-decorators');
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('low');
+  });
+
+  test('@Injectable/@Module hints alone (service/module files) with a working controller elsewhere do not warn', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('auth.controller.ts', "@Controller('api/auth')\nexport class AuthController {\n  @Get('login')\n  login() {}\n}", 'TypeScript'),
+        makeFile('app.module.ts', "@Module({})\nexport class AppModule {}", 'TypeScript'),
+        makeFile('auth.service.ts', "@Injectable()\nexport class AuthService {}", 'TypeScript'),
+      ],
+    });
+    expect(r.analyzerCoverage.warnings).toHaveLength(0);
+  });
+});
+
+describe('extractRouteApiStructure — analyzerCoverage Next.js App Router hint warnings', () => {
+  test('App Router file present but no exported HTTP handler produces a warning', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/items/route.ts', 'export const CONFIG = { revalidate: 60 };', 'TypeScript')],
+    });
+    expect(r.analyzerCoverage.frameworkHints.nextAppRouter).toBe(true);
+    expect(r.nextRoutes).toHaveLength(0);
+    expect(r.analyzerCoverage.warnings).toContain(
+      'Next.js App Router files were detected but no exported HTTP handlers were recognized.',
+    );
+  });
+
+  test('App Router file with a recognized exported handler avoids the warning', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/items/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    expect(r.analyzerCoverage.frameworkHints.nextAppRouter).toBe(true);
+    expect(r.analyzerCoverage.warnings).not.toContain(
+      'Next.js App Router files were detected but no exported HTTP handlers were recognized.',
+    );
+    expect(r.analyzerCoverage.supportedPatterns).toContain('nextjs-app-router');
+  });
+
+  test('src/app/api path form is also recognized as a hint', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/app/api/items/route.ts', 'export const CONFIG = {};', 'TypeScript')],
+    });
+    expect(r.analyzerCoverage.frameworkHints.nextAppRouter).toBe(true);
+  });
+});
+
+describe('extractRouteApiStructure — analyzerCoverage frontend/BFF-without-backend warnings', () => {
+  test('frontend calls with zero backend routes produces the frontend-without-backend warning', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "fetch('/api/repos')\nserverFetch('/api/things')", 'TypeScript')],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.frontendApiCalls.length).toBeGreaterThan(0);
+    expect(r.analyzerCoverage.warnings).toContain(
+      'Frontend/BFF API calls were detected without matching backend route extraction; verify framework support before treating unresolved calls as architecture debt.',
+    );
+  });
+
+  test('serverFetch usage alone sets the bffFetchWrappers hint and contributes the generic framework-hint warning', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "serverFetch('/api/things')", 'TypeScript')],
+    });
+    expect(r.analyzerCoverage.frameworkHints.bffFetchWrappers).toBe(true);
+    expect(r.analyzerCoverage.supportedPatterns).toContain('bff-fetch-wrappers');
+    expect(r.analyzerCoverage.warnings).toContain(
+      'Framework patterns detected but no backend routes were extracted; architecture linkage may be underreported.',
+    );
+  });
+
+  test('frontend calls with a matching backend route produce no frontend-without-backend warning', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+        makeFile('frontend/app.js', "fetch('/api/users')"),
+      ],
+    });
+    expect(r.analyzerCoverage.warnings).not.toContain(
+      'Frontend/BFF API calls were detected without matching backend route extraction; verify framework support before treating unresolved calls as architecture debt.',
+    );
+  });
+
+  test('plain fetch() alone does not set the bffFetchWrappers hint (only named wrappers count)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('src/lib/data.ts', "fetch('/api/things')")],
+    });
+    expect(r.analyzerCoverage.frameworkHints.bffFetchWrappers).toBe(false);
+  });
+});
+
+describe('extractRouteApiStructure — analyzerCoverage unsupportedRisk scaling', () => {
+  test('zero warnings yields low risk', () => {
+    const r = extractRouteApiStructure({ files: [] });
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('low');
+  });
+
+  test('exactly one warning yields medium risk', () => {
+    // Plain fetch() (no framework hints — not serverFetch/apiFetch/App Router/NestJS)
+    // with zero backend routes fires only the generic "frontend calls without
+    // matching backend routes" warning, not the framework-hint warning.
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/app.js', "fetch('/api/things')")],
+    });
+    expect(r.analyzerCoverage.frameworkHints).toEqual({
+      nestjs: false, nextAppRouter: false, bffFetchWrappers: false,
+    });
+    expect(r.analyzerCoverage.warnings).toHaveLength(1);
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('medium');
+  });
+
+  test('two or more warnings yields high risk', () => {
+    const src = "@Controller(basePath)\nexport class AuthController {\n  @Get('x')\n  a() {}\n}";
+    const r = extractRouteApiStructure({ files: [makeFile('auth.controller.ts', src, 'TypeScript')] });
+    expect(r.analyzerCoverage.warnings.length).toBeGreaterThanOrEqual(2);
+    expect(r.analyzerCoverage.unsupportedRisk).toBe('high');
+  });
+});
+
+describe('extractRouteApiStructure — analyzerCoverage preserves existing extraction behavior', () => {
+  test('backendRoutes/frontendApiCalls/nextRoutes are unaffected by analyzerCoverage computation', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+        makeFile('frontend/app.js', "fetch('/api/users')"),
+        makeFile('app/api/items/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+      ],
+    });
+    // backendRoutes now includes both the Express route and the App Router route
+    // merged in by Step #5 (Feed Next.js App Router Routes Into API Linkage);
+    // analyzerCoverage itself does not add to or alter this count further.
+    expect(r.backendRoutes).toHaveLength(2);
+    expect(r.backendRoutes.find(rt => rt.framework === 'express')).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.framework === 'nextjs-app-router')).toBeDefined();
+    expect(r.frontendApiCalls).toHaveLength(1);
+    expect(r.nextRoutes).toHaveLength(1);
+  });
+});
+
+// ── Step #5: Next.js App Router routes participate in API linkage ────────────
+
+describe('extractRouteApiStructure — App Router routes are merged into backendRoutes', () => {
+  test('an App Router route appears in backendRoutes with framework nextjs-app-router', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/example/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const rt = r.backendRoutes.find(x => x.path === '/api/example' && x.method === 'GET');
+    expect(rt).toBeDefined();
+    expect(rt.framework).toBe('nextjs-app-router');
+    expect(rt.file).toBe('app/api/example/route.ts');
+  });
+
+  test('the route also still appears in nextRoutes unchanged (backward compatible with Step #2)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/example/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const nr = r.nextRoutes.find(x => x.urlPattern === '/api/example');
+    expect(nr).toBeDefined();
+    expect(nr.type).toBe('app');
+    expect(nr.methods).toEqual(['GET']);
+  });
+
+  test('a multi-method App Router route produces one backendRoutes entry per method', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile(
+        'app/api/items/route.ts',
+        'export async function GET(req) {}\nexport async function POST(req) {}',
+        'TypeScript',
+      )],
+    });
+    const forPath = r.backendRoutes.filter(x => x.path === '/api/items');
+    expect(forPath).toHaveLength(2);
+    expect(forPath.map(x => x.method).sort()).toEqual(['GET', 'POST']);
+  });
+
+  test('pages/api routes are NOT merged into backendRoutes (existing pages/api behavior preserved)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('pages/api/users.js', 'export default function handler(req, res) {}')],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.nextRoutes).toHaveLength(1);
+    expect(r.nextRoutes[0].type).toBe('pages');
+  });
+
+  test('a methodless route.ts contributes nothing to backendRoutes (Step #2 skip behavior preserved)', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/items/route.ts', 'export const CONFIG = { revalidate: 60 };', 'TypeScript')],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.nextRoutes).toHaveLength(0);
+  });
+
+  test('merging App Router routes does not duplicate them in unusedBackendRoutes', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/example/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const matches = r.unusedBackendRoutes.filter(x => x.path === '/api/example');
+    expect(matches).toHaveLength(1);
+  });
+
+  test('merging App Router routes does not duplicate their endpointInventory entry', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('app/api/example/route.ts', 'export async function GET(req) {}', 'TypeScript')],
+    });
+    const matches = r.endpointInventory.filter(e => e.path === '/api/example' && e.method === 'GET');
+    expect(matches).toHaveLength(1);
+  });
+});
+
+describe('extractRouteApiStructure — App Router linkage via linkFrontendBackendApis', () => {
+  const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+
+  function link(r) {
+    return linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+  }
+
+  test('frontend call to /api/example links to app/api/example/route.ts GET', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('app/api/example/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('frontend/app.js', "fetch('/api/example')"),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/example' && e.method === 'GET')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+    expect(linkage.orphanedBackendRoutes).toHaveLength(0);
+  });
+
+  test('dynamic route app/api/users/[id]/route.ts links to a template-literal frontend call for /api/users/${id}', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('app/api/users/[id]/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('frontend/app.js', 'fetch(`/api/users/${id}`)'),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/users/:id' && e.method === 'GET')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  test('method mismatch is still detected for an App Router route', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('app/api/example/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('frontend/app.js', "fetch('/api/example', { method: 'POST' })"),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints).toHaveLength(0);
+    expect(linkage.methodMismatches).toEqual([
+      { path: '/api/example', frontendMethod: 'POST', availableMethods: ['GET'] },
+    ]);
+    expect(linkage.orphanedBackendRoutes.find(rt => rt.path === '/api/example')).toBeDefined();
+  });
+
+  test('a methodless route.ts does not link — the frontend call stays unresolved', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('app/api/example/route.ts', 'export const CONFIG = {};', 'TypeScript'),
+        makeFile('frontend/app.js', "fetch('/api/example')"),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints).toHaveLength(0);
+    expect(linkage.unresolvedFrontendCalls).toEqual([
+      { from: 'frontend/app.js', method: 'GET', path: '/api/example' },
+    ]);
+  });
+
+  test('existing Express linkage still works unaffected by the App Router merge', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+        makeFile('frontend/app.js', "fetch('/api/users')"),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/users' && e.method === 'GET')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  test('existing NestJS linkage still works unaffected by the App Router merge', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('auth.controller.ts', "@Controller('api/auth')\nexport class AuthController {\n  @Get('login')\n  login() {}\n}", 'TypeScript'),
+        makeFile('frontend/app.js', "fetch('/api/auth/login')"),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/auth/login' && e.method === 'GET')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  test('Express, NestJS, and App Router routes can all link simultaneously in one repo', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', "app.get('/api/users', getUsers);"),
+        makeFile('auth.controller.ts', "@Controller('api/auth')\nexport class AuthController {\n  @Get('login')\n  login() {}\n}", 'TypeScript'),
+        makeFile('app/api/items/route.ts', 'export async function GET(req) {}', 'TypeScript'),
+        makeFile('frontend/app.js', [
+          "fetch('/api/users')",
+          "fetch('/api/auth/login')",
+          "fetch('/api/items')",
+        ].join('\n')),
+      ],
+    });
+    const linkage = link(r);
+    expect(linkage.linkedEndpoints).toHaveLength(3);
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+    expect(linkage.orphanedBackendRoutes).toHaveLength(0);
   });
 });

@@ -313,6 +313,7 @@ function buildRepositoryArchitectureSnapshot(params) {
     inventory,
     dependencyGraph,
     routeApiStructure,
+    analyzerCoverage: routeApiStructure.analyzerCoverage,
     apiLinkage,
     boundaryVerification,
     implementationCompleteness,

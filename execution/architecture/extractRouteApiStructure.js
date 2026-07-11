@@ -228,10 +228,227 @@ function _joinRoutePaths(prefix, routerPath) {
   return prefix + routerPath;
 }
 
+// ── NestJS decorator route discovery ──────────────────────────────────────────
+// Regex-based (not AST) — mirrors the rest of this module's approach. Recognizes
+// only the five HTTP method decorators named in scope; @Head/@Options/@All and
+// custom route decorators are intentionally not supported.
+
+const NEST_CONTROLLER_RE = /@Controller\s*\(([^)]*)\)/g;
+const NEST_METHOD_RE     = /@(Get|Post|Put|Patch|Delete)\s*\(([^)]*)\)/g;
+const NEST_CLASS_RE      = /class\s+[A-Za-z_$][\w$]*/;
+
+// Resolves a decorator's raw argument text to a literal path string, or null when
+// the argument is dynamic/unsupported (identifier reference, expression, options
+// object, or a template literal containing ${...} interpolation). An empty
+// argument (bare @Controller() / @Get()) resolves to '' — a valid root path.
+function _parseNestPathArg(inner) {
+  const trimmed = (inner || '').trim();
+  if (trimmed === '') return '';
+  const m = trimmed.match(/^(['"`])((?:\\.|[^\\])*)\1$/);
+  if (!m) return null;
+  const quote = m[1];
+  const value = m[2];
+  if (quote === '`' && value.indexOf('${') !== -1) return null;
+  return value;
+}
+
+// ── NestJS object-form @Controller() support ──────────────────────────────────
+// @Controller({ path: 'users' })
+// @Controller({ version: '1' })
+// @Controller({ path: 'auth', version: '1' })   (either key order)
+// Only string/template-literal (non-interpolated) `path` and string/numeric
+// `version` values are resolved. Array paths, imported constants, and any other
+// computed expression cause the whole controller prefix to resolve to null
+// (dynamic/unsupported — the caller skips the entire controller safely, same as
+// the existing bare-string dynamic-prefix behavior).
+
+// Resolves a single string/template-literal or bare-numeric value expression to
+// its literal text, or null when the expression itself is present but not a
+// literal RepoPulse can safely resolve (array, identifier, call expression, ...).
+function _resolveNestLiteralValue(raw) {
+  const strMatch = raw.match(/^(['"`])((?:\\.|[^\\])*)\1$/);
+  if (strMatch) {
+    if (strMatch[1] === '`' && strMatch[2].indexOf('${') !== -1) return null;
+    return strMatch[2];
+  }
+  if (/^\d+$/.test(raw)) return raw;
+  return null; // array literal, identifier, imported constant, expression, etc.
+}
+
+// Extracts the raw (unparsed) value text following `key:` inside a single-level
+// object literal body, respecting [ ], { }, ( ) nesting so an array/object value
+// isn't truncated at an internal comma. Returns null when the key is absent.
+function _extractNestObjectPropRaw(objInner, key) {
+  const keyRe = new RegExp('(?:^|[{,])\\s*' + key + '\\s*:\\s*');
+  const km = keyRe.exec(objInner);
+  if (!km) return null;
+  const start = km.index + km[0].length;
+  let depth = 0;
+  let end = objInner.length;
+  for (let i = start; i < objInner.length; i++) {
+    const ch = objInner[i];
+    if (ch === '[' || ch === '{' || ch === '(') depth++;
+    else if (ch === ']' || ch === '}' || ch === ')') depth--;
+    else if (ch === ',' && depth === 0) { end = i; break; }
+  }
+  return objInner.slice(start, end).trim();
+}
+
+// Resolves an object-literal @Controller({ ... }) argument (braces included) to
+// a combined prefix string, or null when unsupported. `path` and `version` are
+// looked up independently so either key order produces the same result.
+function _parseNestControllerObject(objText) {
+  const inner = objText.slice(1, -1);
+  const pathRaw    = _extractNestObjectPropRaw(inner, 'path');
+  const versionRaw = _extractNestObjectPropRaw(inner, 'version');
+
+  const pathValue    = pathRaw    !== null ? _resolveNestLiteralValue(pathRaw)    : null;
+  const versionValue = versionRaw !== null ? _resolveNestLiteralValue(versionRaw) : null;
+
+  // Key present but not resolvable to a literal (array path, imported constant,
+  // expression, ...) — unsupported per scope; skip the whole controller safely.
+  if (pathRaw !== null && pathValue === null) return null;
+  if (versionRaw !== null && versionValue === null) return null;
+
+  const segments = [];
+  if (versionRaw !== null) segments.push('v' + versionValue);
+  if (pathRaw !== null)    segments.push(pathValue.replace(/^\/+|\/+$/g, ''));
+
+  return segments.join('/'); // '' when neither key was present/resolvable
+}
+
+// Resolves an @Controller(...) decorator's raw argument — bare string/template
+// literal (existing behavior) or an object literal (path/version) — to a
+// combined prefix, or null when the whole controller should be skipped safely.
+function _parseNestControllerPrefix(inner) {
+  const trimmed = (inner || '').trim();
+  if (trimmed.charAt(0) === '{' && trimmed.charAt(trimmed.length - 1) === '}') {
+    return _parseNestControllerObject(trimmed);
+  }
+  return _parseNestPathArg(trimmed);
+}
+
+// Finds the index of the closing brace matching the '{' at openIndex using a
+// plain depth counter over the (comment-stripped) source. Same level of rigor
+// as the rest of this module's naive text-based structural parsing.
+function _matchingBraceIndex(str, openIndex) {
+  let depth = 0;
+  for (let i = openIndex; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+// Combines a resolved controller prefix with a resolved method path, trimming
+// redundant slashes on both sides before joining (e.g. '/api/users' + '' → '/api/users';
+// 'api/auth' + 'login' → '/api/auth/login').
+function _joinNestPath(prefix, methodPath) {
+  const p = (prefix || '').replace(/^\/+|\/+$/g, '');
+  const m = (methodPath || '').replace(/^\/+|\/+$/g, '');
+  const combined = [p, m].filter(function(s) { return s.length > 0; }).join('/');
+  return _normRoutePath('/' + combined);
+}
+
+// ── NestJS global prefix detection (app.setGlobalPrefix(...)) ─────────────────
+// app.setGlobalPrefix('api')  app.setGlobalPrefix("/api")  app.setGlobalPrefix(`api`)
+// Typically declared in main.ts/bootstrap files, scanned across every fetched file
+// like the rest of this module's pattern detection (no filename restriction).
+// Only a bare string/template-literal (non-interpolated) argument is recognized —
+// the regex simply does not match a variable or function-call argument, so those
+// occurrences are inherently skipped ("ignored safely") without special-casing.
+const NEST_GLOBAL_PREFIX_RE = /\bapp\s*\.\s*setGlobalPrefix\s*\(\s*(['"`])((?:\\.|[^\\])*?)\1/g;
+
+// Scans files (in the order given) for the first app.setGlobalPrefix(...) call
+// that resolves to a non-empty static literal, returning its normalized (slash-
+// trimmed) value, or null when no such call exists anywhere. When multiple calls
+// are present — dynamic or literal, in any file — this returns the first literal
+// one encountered while scanning in file order; dynamic-argument calls simply
+// never match the regex and are passed over automatically.
+function _detectNestGlobalPrefix(normalizedFiles) {
+  for (const f of normalizedFiles) {
+    const stripped = _stripComments(f.content);
+    if (!/setGlobalPrefix\s*\(/.test(stripped)) continue;
+    NEST_GLOBAL_PREFIX_RE.lastIndex = 0;
+    let m;
+    while ((m = NEST_GLOBAL_PREFIX_RE.exec(stripped)) !== null) {
+      const quote = m[1];
+      const value = m[2];
+      if (quote === '`' && value.indexOf('${') !== -1) continue; // interpolated — ignore, keep scanning
+      const trimmed = value.replace(/^\/+|\/+$/g, '');
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
+}
+
+function _extractNestRoutes(filePath, src) {
+  const stripped = _stripComments(src);
+  const routes = [];
+
+  if (!/@Controller\b/.test(stripped)) return routes;
+
+  NEST_CONTROLLER_RE.lastIndex = 0;
+  let cm;
+  while ((cm = NEST_CONTROLLER_RE.exec(stripped)) !== null) {
+    const prefix = _parseNestControllerPrefix(cm[1]);
+    if (prefix === null) continue; // dynamic/unsupported controller prefix — skip this controller safely
+
+    const classMatch = NEST_CLASS_RE.exec(stripped.slice(cm.index));
+    if (!classMatch) continue;
+    const classKeywordIndex = cm.index + classMatch.index;
+    const openBraceIndex = stripped.indexOf('{', classKeywordIndex);
+    if (openBraceIndex === -1) continue;
+    const closeBraceIndex = _matchingBraceIndex(stripped, openBraceIndex);
+    if (closeBraceIndex === -1) continue;
+
+    const classBody = stripped.slice(openBraceIndex, closeBraceIndex + 1);
+
+    NEST_METHOD_RE.lastIndex = 0;
+    let mm;
+    while ((mm = NEST_METHOD_RE.exec(classBody)) !== null) {
+      const method = mm[1].toUpperCase();
+      const methodPath = _parseNestPathArg(mm[2]);
+      if (methodPath === null) continue; // dynamic method path — skip this route safely
+      const routePath = _joinNestPath(prefix, methodPath);
+      routes.push({ method, path: routePath, file: filePath, framework: 'nestjs', handlerType: 'unknown', handlerName: null });
+    }
+  }
+
+  return routes;
+}
+
 // ── Next.js route discovery ───────────────────────────────────────────────────
 
-// Exported HTTP method handlers in app/api route files
-const NEXT_EXPORT_METHOD_RE = /\bexport\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b/g;
+const NEXT_HTTP_METHOD_NAMES = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+
+// export async function GET(...) {}   /   export function POST(...) {}
+const NEXT_EXPORT_FUNCTION_RE = /\bexport\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b/g;
+
+// export const PATCH = async (...) => {}   /   export const DELETE = function (...) {}
+const NEXT_EXPORT_CONST_RE = /\bexport\s+const\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*=/g;
+
+// export { GET, POST }   /   export { someHandler as GET }
+const NEXT_EXPORT_LIST_RE = /\bexport\s*\{([^}]*)\}/g;
+
+// Parses the identifier list inside an `export { ... }` block, resolving
+// `name as ALIAS` pairs to the alias (the externally-visible export name —
+// the only one Next.js's route-handler convention cares about).
+function _parseNextExportListMethods(inner) {
+  const methods = [];
+  (inner || '').split(',').forEach(function(part) {
+    const trimmed = part.trim();
+    if (!trimmed) return;
+    const asMatch = trimmed.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+    const name = asMatch ? asMatch[2] : trimmed;
+    if (NEXT_HTTP_METHOD_NAMES.has(name)) methods.push(name);
+  });
+  return methods;
+}
 
 function _nextUrlFromPath(filePath) {
   let p = filePath;
@@ -245,7 +462,15 @@ function _nextUrlFromPath(filePath) {
   }
 
   // app/api/users/[id]/route.ts  →  /api/users/:id
-  const appMatch = p.match(/^app\/api\/(.+)\/route\.[jt]sx?$/);
+  // src/app/api/candidates/[id]/edit/route.ts  →  /api/candidates/:id/edit
+  // Workspace/monorepo layouts — a single leading package-name segment under
+  // apps/, packages/, services/, or libs/ (with or without a further src/):
+  //   apps/web/src/app/api/users/route.ts       →  /api/users
+  //   apps/admin/app/api/users/route.ts         →  /api/users
+  //   packages/web/src/app/api/users/route.ts   →  /api/users
+  //   services/frontend/src/app/api/users/route.ts → /api/users
+  //   libs/demo/src/app/api/users/route.ts      →  /api/users
+  const appMatch = p.match(/^(?:(?:apps|packages|services|libs)\/[^/]+\/)?(?:src\/)?app\/api\/(.+)\/route\.[jt]sx?$/);
   if (appMatch) {
     const segments = appMatch[1];
     const urlPath = '/api/' + segments.replace(/\[([^\]]+)\]/g, ':$1');
@@ -262,16 +487,28 @@ function _extractNextRoutes(filePath, src) {
   const stripped = _stripComments(src);
   const methods = [];
 
-  // app/api route files: detect exported HTTP methods
   if (next.type === 'app') {
+    // App Router route-handler files: only ever record methods that are
+    // actually exported. Do not invent a wildcard fallback here — an
+    // unrecognized or method-less route.ts file safely produces no route
+    // (requirement: prefer skip over guessing).
     let m;
-    NEXT_EXPORT_METHOD_RE.lastIndex = 0;
-    while ((m = NEXT_EXPORT_METHOD_RE.exec(stripped)) !== null) {
-      methods.push(m[1]);
+    NEXT_EXPORT_FUNCTION_RE.lastIndex = 0;
+    while ((m = NEXT_EXPORT_FUNCTION_RE.exec(stripped)) !== null) methods.push(m[1]);
+
+    NEXT_EXPORT_CONST_RE.lastIndex = 0;
+    while ((m = NEXT_EXPORT_CONST_RE.exec(stripped)) !== null) methods.push(m[1]);
+
+    NEXT_EXPORT_LIST_RE.lastIndex = 0;
+    while ((m = NEXT_EXPORT_LIST_RE.exec(stripped)) !== null) {
+      _parseNextExportListMethods(m[1]).forEach(function(method) { methods.push(method); });
     }
+
+    if (methods.length === 0) return [];
+  } else {
+    // pages/api: single default export handles every method — record as wildcard.
+    methods.push('*');
   }
-  // pages/api: default export — all methods accepted, record as wildcard
-  if (methods.length === 0) methods.push('*');
 
   return [{
     urlPattern: next.urlPattern,
@@ -314,6 +551,18 @@ const AXIOS_TMPL_RE = /\b(axios|apiClient)\s*\.\s*(get|post|put|delete|patch|hea
 // Group 1: method value, Group 2: URL quote, Group 3: URL value, \2 closes URL quote
 const CLIENT_REQ_RE = /\bclient\s*\.\s*request\s*\(\s*\{[^}]*?method\s*:\s*['"`]([A-Z]+)['"`][^}]*?url\s*:\s*(['"`])((?:\\.|[^\\])*?)\2[^}]*?\}/gis;
 const CLIENT_REQ_RE2 = /\bclient\s*\.\s*request\s*\(\s*\{[^}]*?url\s*:\s*(['"`])((?:\\.|[^\\])*?)\1[^}]*?method\s*:\s*['"`]([A-Z]+)['"`][^}]*?\}/gis;
+
+// serverFetch('/path')  apiFetch('/path')  internalFetch('/path')  backendFetch('/path')
+// Server-side BFF/internal fetch wrappers — same path-form support as fetch() below
+// (single/double-quoted, template literal with or without ${...} interpolation, and
+// simple two-segment string concatenation). Group 1 in every BFF_* regex is the
+// wrapper name itself, used verbatim as the call's `client` field.
+const BFF_SQ_RE   = /\b(serverFetch|apiFetch|internalFetch|backendFetch)\s*\(\s*'((?:\\.|[^'\\])*)'/gs;
+const BFF_DQ_RE   = /\b(serverFetch|apiFetch|internalFetch|backendFetch)\s*\(\s*"((?:\\.|[^"\\])*)"/gs;
+const BFF_TMPL_RE = /\b(serverFetch|apiFetch|internalFetch|backendFetch)\s*\(\s*`((?:\\.|[^`\\])*)`/gs;
+// serverFetch('/api/repos/' + id + '/metrics', opts) — mirrors FETCH_CONCAT_RE.
+// Group 1: wrapper name, Group 2: prefix, Group 3: suffix, Group 4: optional options object.
+const BFF_CONCAT_RE = /\b(serverFetch|apiFetch|internalFetch|backendFetch)\s*\(\s*'(\/[^'\\]*)'\s*\+\s*[^'"]*?\+\s*'([^'\\]*)'\s*(,\s*\{(?:[^{}]|\{[^{}]*\})*\})?/gs;
 
 function _extractMethod(optionsStr) {
   if (!optionsStr) return null;
@@ -415,6 +664,61 @@ function _extractFrontendCalls(filePath, src) {
     calls.push({ method, path: _normRoutePath(rawPath), file: filePath, client: 'client' });
   }
 
+  // serverFetch/apiFetch/internalFetch/backendFetch with string concatenation.
+  // Runs before BFF_SQ_RE for the same reason as FETCH_CONCAT_RE above — otherwise
+  // BFF_SQ_RE would emit only the truncated prefix instead of the full parameterised path.
+  const bffConcatPositions = new Set();
+  BFF_CONCAT_RE.lastIndex = 0;
+  while ((m = BFF_CONCAT_RE.exec(stripped)) !== null) {
+    bffConcatPositions.add(m.index);
+    const wrapperName = m[1];
+    const prefix = m[2].replace(/\/$/, '');
+    const suffix = m[3];
+    const method = _extractMethod(m[4]) || 'GET';
+    const path   = _normRoutePath(prefix + '/:_p' + suffix);
+    if (path.startsWith('/')) {
+      calls.push({ method, path, file: filePath, client: wrapperName });
+    }
+  }
+
+  // serverFetch/... with single-quoted URL (skip positions already consumed by BFF_CONCAT_RE)
+  BFF_SQ_RE.lastIndex = 0;
+  while ((m = BFF_SQ_RE.exec(stripped)) !== null) {
+    if (bffConcatPositions.has(m.index)) continue;
+    const wrapperName = m[1];
+    const rawPath = m[2];
+    if (!rawPath.startsWith('/')) continue;
+    const rest   = stripped.slice(m.index + m[0].length);
+    const mo     = FETCH_OPTS_RE.exec(rest);
+    const method = mo ? mo[1].toUpperCase() : 'GET';
+    calls.push({ method, path: _normRoutePath(rawPath), file: filePath, client: wrapperName });
+  }
+
+  // serverFetch/... with double-quoted URL
+  BFF_DQ_RE.lastIndex = 0;
+  while ((m = BFF_DQ_RE.exec(stripped)) !== null) {
+    const wrapperName = m[1];
+    const rawPath = m[2];
+    if (!rawPath.startsWith('/')) continue;
+    const rest   = stripped.slice(m.index + m[0].length);
+    const mo     = FETCH_OPTS_RE.exec(rest);
+    const method = mo ? mo[1].toUpperCase() : 'GET';
+    calls.push({ method, path: _normRoutePath(rawPath), file: filePath, client: wrapperName });
+  }
+
+  // serverFetch/... with template literal URL
+  BFF_TMPL_RE.lastIndex = 0;
+  while ((m = BFF_TMPL_RE.exec(stripped)) !== null) {
+    const wrapperName = m[1];
+    const rawPath = m[2];
+    if (!rawPath.startsWith('/')) continue;
+    const rest   = stripped.slice(m.index + m[0].length);
+    const mo     = FETCH_OPTS_RE.exec(rest);
+    const method = mo ? mo[1].toUpperCase() : 'GET';
+    const path   = _normRoutePath(_normTemplateParams(rawPath));
+    calls.push({ method, path, file: filePath, client: wrapperName });
+  }
+
   return calls;
 }
 
@@ -503,6 +807,86 @@ function _buildSummary(backendRoutes, nextRoutes, frontendCalls, unresolved, unu
   return parts.join(' ');
 }
 
+// ── Analyzer coverage / framework-support hints ───────────────────────────────
+// Answers: "does this repo *look like* it uses a framework we know how to parse,
+// independent of whether extraction actually succeeded?" These hints are raw
+// textual/path signals — they do not affect scoring, linking, or the extraction
+// results above; they only drive the analyzerCoverage warnings surfaced to the
+// user so measurement-confidence gaps are visible without being mistaken for
+// architecture risk.
+
+// @Controller, @Get, @Post, @Put, @Patch, @Delete, @Module, @Injectable
+const NEST_HINT_RE = /@(?:Controller|Get|Post|Put|Patch|Delete|Module|Injectable)\b/;
+
+// serverFetch(  apiFetch(  internalFetch(  backendFetch(
+const BFF_HINT_RE = /\b(?:serverFetch|apiFetch|internalFetch|backendFetch)\s*\(/;
+
+// app/api/**/route.*  and  src/app/api/**/route.*  (existence only — does not
+// require an exported HTTP handler, unlike _nextUrlFromPath's appMatch usage).
+const NEXT_APP_ROUTER_FILE_RE = /^(?:src\/)?app\/api\/(.+)\/route\.[jt]sx?$/;
+
+const BFF_CLIENT_NAMES = new Set(['serverFetch', 'apiFetch', 'internalFetch', 'backendFetch']);
+
+function _buildAnalyzerCoverage(normalized, backendRoutes, nextRoutes, frontendCalls) {
+  let hasNestDecoratorHints     = false;
+  let hasNextAppRouterFileHints = false;
+  let hasBffWrapperHints        = false;
+
+  for (const f of normalized) {
+    if (!hasNextAppRouterFileHints && NEXT_APP_ROUTER_FILE_RE.test(f.path)) {
+      hasNextAppRouterFileHints = true;
+    }
+    if (!hasNestDecoratorHints || !hasBffWrapperHints) {
+      const stripped = _stripComments(f.content);
+      if (!hasNestDecoratorHints && NEST_HINT_RE.test(stripped)) hasNestDecoratorHints = true;
+      if (!hasBffWrapperHints && BFF_HINT_RE.test(stripped))     hasBffWrapperHints    = true;
+    }
+  }
+
+  const nestRoutesExtracted    = backendRoutes.some(function(rt) { return rt.framework === 'nestjs'; });
+  const nextAppRoutesExtracted = nextRoutes.some(function(nr) { return nr.type === 'app'; });
+  const bffCallsExtracted      = frontendCalls.some(function(c) { return BFF_CLIENT_NAMES.has(c.client); });
+
+  const supportedPatterns = [];
+  if (backendRoutes.some(function(rt) { return rt.framework === 'express'; })) supportedPatterns.push('express');
+  if (backendRoutes.some(function(rt) { return rt.framework === 'fastify'; })) supportedPatterns.push('fastify');
+  if (nestRoutesExtracted) supportedPatterns.push('nestjs-decorators');
+  if (nextRoutes.some(function(nr) { return nr.type === 'pages'; })) supportedPatterns.push('nextjs-pages');
+  if (nextAppRoutesExtracted) supportedPatterns.push('nextjs-app-router');
+  if (bffCallsExtracted) supportedPatterns.push('bff-fetch-wrappers');
+
+  const warnings = [];
+
+  if ((hasNestDecoratorHints || hasNextAppRouterFileHints || hasBffWrapperHints) && backendRoutes.length === 0) {
+    warnings.push('Framework patterns detected but no backend routes were extracted; architecture linkage may be underreported.');
+  }
+
+  if (frontendCalls.length > 0 && backendRoutes.length === 0) {
+    warnings.push('Frontend/BFF API calls were detected without matching backend route extraction; verify framework support before treating unresolved calls as architecture debt.');
+  }
+
+  if (hasNextAppRouterFileHints && !nextAppRoutesExtracted) {
+    warnings.push('Next.js App Router files were detected but no exported HTTP handlers were recognized.');
+  }
+
+  if (hasNestDecoratorHints && !nestRoutesExtracted) {
+    warnings.push('NestJS decorators were detected but no routes were extracted.');
+  }
+
+  const unsupportedRisk = warnings.length === 0 ? 'low' : warnings.length === 1 ? 'medium' : 'high';
+
+  return {
+    frameworkHints: {
+      nestjs:           hasNestDecoratorHints,
+      nextAppRouter:    hasNextAppRouterFileHints,
+      bffFetchWrappers: hasBffWrapperHints,
+    },
+    supportedPatterns,
+    unsupportedRisk,
+    warnings,
+  };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -532,6 +916,10 @@ function extractRouteApiStructure(params) {
       const { routes, handlers } = _extractExpressRoutes(f.path, f.content);
       for (const rt of routes)   backendRoutes.push(rt);
       for (const h  of handlers) routeHandlers.push(h);
+
+      // NestJS decorator-based controllers — same Markdown exclusion rationale.
+      const nestRoutes = _extractNestRoutes(f.path, f.content);
+      for (const rt of nestRoutes) backendRoutes.push(rt);
     }
 
     // Frontend API calls
@@ -553,6 +941,43 @@ function extractRouteApiStructure(params) {
     }
   }
 
+  // Prepend a detected app.setGlobalPrefix(...) to NestJS routes only — never
+  // Express/Fastify (they have their own app.use() mount-prefix handling above),
+  // never Next.js routes (merged below), never frontend calls.
+  const nestGlobalPrefix = _detectNestGlobalPrefix(normalized);
+  if (nestGlobalPrefix !== null) {
+    for (let i = 0; i < backendRoutes.length; i++) {
+      if (backendRoutes[i].framework === 'nestjs') {
+        backendRoutes[i] = Object.assign({}, backendRoutes[i],
+          { path: _joinNestPath(nestGlobalPrefix, backendRoutes[i].path) });
+      }
+    }
+  }
+
+  // Merge Next.js App Router routes into backendRoutes so they participate in
+  // linkFrontendBackendApis matching exactly like Express/Fastify/NestJS routes.
+  // Only `type: 'app'` entries qualify — Step #2's extraction guarantees a
+  // route.ts file with no recognized exported HTTP method never reaches
+  // `nextRoutes` in the first place, so there is nothing methodless to merge here.
+  // `nextRoutes` itself is left fully intact below (unfiltered) for backward
+  // compatibility with existing consumers; only the *downstream* computations in
+  // this function (routeKeySet, unusedBackendRoutes, endpointInventory, summary)
+  // are scoped to the non-'app' subset below, so each app-router route is
+  // represented exactly once (via backendRoutes) rather than twice.
+  for (const nr of nextRoutes) {
+    if (nr.type !== 'app') continue;
+    for (const method of nr.methods) {
+      backendRoutes.push({
+        method,
+        path:        nr.urlPattern,
+        file:        nr.file,
+        framework:   'nextjs-app-router',
+        handlerType: 'unknown',
+        handlerName: null,
+      });
+    }
+  }
+
   // Sort deterministically
   backendRoutes.sort((a, b) => {
     if (a.file !== b.file) return a.file < b.file ? -1 : 1;
@@ -570,8 +995,12 @@ function extractRouteApiStructure(params) {
     return a.mountPath < b.mountPath ? -1 : 1;
   });
 
+  // Non-'app' Next.js routes (pages/api only) — used below wherever nextRoutes
+  // would otherwise double-count routes already merged into backendRoutes above.
+  const pageRoutesOnly = nextRoutes.filter(nr => nr.type !== 'app');
+
   // Build route key set for matching
-  const routeKeySet = _buildRouteKeySet(backendRoutes, nextRoutes);
+  const routeKeySet = _buildRouteKeySet(backendRoutes, pageRoutesOnly);
 
   // Unresolved API calls: frontend calls with no matching backend
   const unresolvedApiCalls = [];
@@ -601,7 +1030,7 @@ function extractRouteApiStructure(params) {
       unusedBackendRoutes.push({ method: rt.method, path: rt.path, file: rt.file, framework: rt.framework, candidate: true });
     }
   }
-  for (const nr of nextRoutes) {
+  for (const nr of pageRoutesOnly) {
     let matched = false;
     for (const method of nr.methods) {
       if (method === '*') {
@@ -629,7 +1058,7 @@ function extractRouteApiStructure(params) {
   });
 
   // Endpoint inventory
-  const endpointInventory = _buildEndpointInventory(backendRoutes, nextRoutes, frontendCalls);
+  const endpointInventory = _buildEndpointInventory(backendRoutes, pageRoutesOnly, frontendCalls);
 
   // Framework hints
   const hasExpressRoutes  = backendRoutes.some(rt => rt.framework === 'express');
@@ -644,7 +1073,9 @@ function extractRouteApiStructure(params) {
     likelyFullStackApiIntegration: (hasExpressRoutes || hasFastifyRoutes || hasNextApiRoutes) && hasFrontendApiCalls,
   };
 
-  const summary = _buildSummary(backendRoutes, nextRoutes, frontendCalls, unresolvedApiCalls, unusedBackendRoutes);
+  const summary = _buildSummary(backendRoutes, pageRoutesOnly, frontendCalls, unresolvedApiCalls, unusedBackendRoutes);
+
+  const analyzerCoverage = _buildAnalyzerCoverage(normalized, backendRoutes, nextRoutes, frontendCalls);
 
   return {
     backendRoutes,
@@ -655,6 +1086,7 @@ function extractRouteApiStructure(params) {
     unresolvedApiCalls,
     unusedBackendRoutes,
     frameworkHints,
+    analyzerCoverage,
     summary,
   };
 }
