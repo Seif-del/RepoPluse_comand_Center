@@ -23,6 +23,27 @@ function _architectureWarningMessage(raw) {
   return 'Unable to access repository files.';
 }
 
+// ── buildAnalyzerCoverageHtml (copied verbatim from dashboard.html) ───────────
+function buildAnalyzerCoverageHtml(coverage) {
+  if (!coverage || !Array.isArray(coverage.warnings) || coverage.warnings.length === 0) return '';
+
+  var riskLabel = coverage.unsupportedRisk || 'low';
+
+  var html = '<div class="arch-sub-panel"><div class="arch-sub-label">Analyzer Coverage</div>';
+  html += '<p style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;">'
+    + 'These notes describe scanner measurement confidence, not application architecture risk.</p>';
+  html += '<div style="margin-bottom:6px;">'
+    + '<span class="aq-badge severity-neutral">Coverage confidence: ' + esc(riskLabel) + '</span>'
+    + '</div>';
+  html += '<ul style="margin:0;padding-left:16px;font-size:0.79rem;line-height:1.6;color:var(--text-secondary);">';
+  coverage.warnings.forEach(function(w) {
+    html += '<li>' + esc(w) + '</li>';
+  });
+  html += '</ul>';
+  html += '</div>';
+  return html;
+}
+
 // ── buildRepositoryArchitectureHtml (copied verbatim from dashboard.html:4903) ─
 function buildRepositoryArchitectureHtml(data) {
   var UNAVAILABLE = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
@@ -185,6 +206,9 @@ function buildRepositoryArchitectureHtml(data) {
       + 'No frontend-backend API calls detected.</p>';
   }
   html += '</div>';
+
+  // ── 3b. Analyzer Coverage panel — measurement confidence, not app risk ───
+  html += buildAnalyzerCoverageHtml(data.analyzerCoverage);
 
   // ── 4. Circular Dependencies panel ──────────────────────────────────────
   var circles   = dep.circularDependencies || [];
@@ -500,4 +524,129 @@ describe('buildRepositoryArchitectureHtml — recommendations rendering', () => 
 
   });
 
+});
+
+// ── buildAnalyzerCoverageHtml (Analyzer Coverage panel) ───────────────────────
+
+describe('buildAnalyzerCoverageHtml — direct unit tests', () => {
+  test('returns empty string when coverage is null', () => {
+    expect(buildAnalyzerCoverageHtml(null)).toBe('');
+  });
+
+  test('returns empty string when coverage is undefined', () => {
+    expect(buildAnalyzerCoverageHtml(undefined)).toBe('');
+  });
+
+  test('returns empty string when warnings array is empty', () => {
+    expect(buildAnalyzerCoverageHtml({ warnings: [], unsupportedRisk: 'low' })).toBe('');
+  });
+
+  test('returns empty string when warnings is missing', () => {
+    expect(buildAnalyzerCoverageHtml({ unsupportedRisk: 'low' })).toBe('');
+  });
+
+  test('returns empty string when warnings is not an array', () => {
+    expect(buildAnalyzerCoverageHtml({ warnings: 'not-an-array' })).toBe('');
+  });
+
+  test('renders the Analyzer Coverage label when warnings exist', () => {
+    const html = buildAnalyzerCoverageHtml({
+      warnings: ['NestJS decorators were detected but no routes were extracted.'],
+      unsupportedRisk: 'medium',
+    });
+    expect(html).toContain('Analyzer Coverage');
+  });
+
+  test('renders every warning as a list item', () => {
+    const html = buildAnalyzerCoverageHtml({
+      warnings: [
+        'Framework patterns detected but no backend routes were extracted; architecture linkage may be underreported.',
+        'NestJS decorators were detected but no routes were extracted.',
+      ],
+      unsupportedRisk: 'high',
+    });
+    expect(html).toContain('Framework patterns detected but no backend routes were extracted');
+    expect(html).toContain('NestJS decorators were detected but no routes were extracted.');
+    expect((html.match(/<li>/g) || []).length).toBe(2);
+  });
+
+  test('renders the unsupportedRisk label in the coverage confidence badge', () => {
+    const html = buildAnalyzerCoverageHtml({
+      warnings: ['Next.js App Router files were detected but no exported HTTP handlers were recognized.'],
+      unsupportedRisk: 'high',
+    });
+    expect(html).toContain('Coverage confidence: high');
+  });
+
+  test('defaults unsupportedRisk label to low when absent', () => {
+    const html = buildAnalyzerCoverageHtml({
+      warnings: ['Frontend/BFF API calls were detected without matching backend route extraction; verify framework support before treating unresolved calls as architecture debt.'],
+    });
+    expect(html).toContain('Coverage confidence: low');
+  });
+
+  test('does not use severity-critical or severity-high styling (measurement confidence, not app risk)', () => {
+    const html = buildAnalyzerCoverageHtml({
+      warnings: ['NestJS decorators were detected but no routes were extracted.'],
+      unsupportedRisk: 'high',
+    });
+    expect(html).not.toContain('severity-critical');
+    expect(html).not.toContain('severity-high');
+  });
+
+  test('includes a measurement-confidence framing sentence, not a product-risk framing', () => {
+    const html = buildAnalyzerCoverageHtml({
+      warnings: ['NestJS decorators were detected but no routes were extracted.'],
+      unsupportedRisk: 'medium',
+    });
+    expect(html).toContain('scanner measurement confidence, not application architecture risk');
+  });
+});
+
+describe('buildRepositoryArchitectureHtml — Analyzer Coverage integration', () => {
+  test('renders Analyzer Coverage section when analyzerCoverage has warnings', () => {
+    const html = buildRepositoryArchitectureHtml(minimalData({
+      analyzerCoverage: {
+        frameworkHints: { nestjs: true, nextAppRouter: false, bffFetchWrappers: false },
+        supportedPatterns: [],
+        unsupportedRisk: 'high',
+        warnings: [
+          'Framework patterns detected but no backend routes were extracted; architecture linkage may be underreported.',
+          'NestJS decorators were detected but no routes were extracted.',
+        ],
+      },
+    }));
+    expect(html).toContain('Analyzer Coverage');
+    expect(html).toContain('NestJS decorators were detected but no routes were extracted.');
+  });
+
+  test('renders nothing extra when analyzerCoverage has no warnings', () => {
+    const html = buildRepositoryArchitectureHtml(minimalData({
+      analyzerCoverage: {
+        frameworkHints: { nestjs: false, nextAppRouter: false, bffFetchWrappers: false },
+        supportedPatterns: [],
+        unsupportedRisk: 'low',
+        warnings: [],
+      },
+    }));
+    expect(html).not.toContain('Analyzer Coverage');
+  });
+
+  test('renders nothing extra when analyzerCoverage is absent entirely (older cached snapshot)', () => {
+    const html = buildRepositoryArchitectureHtml(minimalData({}));
+    expect(html).not.toContain('Analyzer Coverage');
+  });
+
+  test('supported NestJS routes extracted avoids the NestJS warning (integration through analyzerCoverage)', () => {
+    const html = buildRepositoryArchitectureHtml(minimalData({
+      analyzerCoverage: {
+        frameworkHints: { nestjs: true, nextAppRouter: false, bffFetchWrappers: false },
+        supportedPatterns: ['nestjs-decorators'],
+        unsupportedRisk: 'low',
+        warnings: [],
+      },
+    }));
+    expect(html).not.toContain('Analyzer Coverage');
+    expect(html).not.toContain('NestJS decorators were detected but no routes were extracted.');
+  });
 });

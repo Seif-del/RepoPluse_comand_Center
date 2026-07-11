@@ -1363,128 +1363,6 @@
       line-height: 1.6;
     }
 
-    /* ── Executive Summary briefing card ─────────────────────────────────── */
-    .exec-brief {
-      padding: 16px 20px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border);
-      border-left: 4px solid var(--border);
-      background: var(--surface);
-      box-shadow: var(--shadow-md);
-    }
-
-    .exec-brief.sev-critical { border-left-color: var(--sev-critical-border); background: var(--sev-critical-bg); }
-    .exec-brief.sev-high     { border-left-color: var(--sev-high-border);     background: var(--sev-high-bg);     }
-    .exec-brief.sev-medium   { border-left-color: var(--sev-medium-border);   background: var(--sev-medium-bg);   }
-    .exec-brief.sev-low      { border-left-color: var(--sev-low-border);      background: var(--sev-low-bg);      }
-    .exec-brief.sev-healthy  { border-left-color: var(--sev-healthy-border);  background: var(--sev-healthy-bg);  }
-    .exec-brief.sev-unknown  { border-left-color: var(--sev-unknown-border);  background: var(--sev-unknown-bg);  }
-
-    .exec-brief-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-
-    .exec-brief-badge {
-      font-size: 0.62rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      padding: 2px 8px;
-      border-radius: 99px;
-      border: 1px solid transparent;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
-    .exec-brief-label {
-      font-size: 0.65rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.09em;
-      color: var(--text-muted);
-    }
-
-    .exec-brief-headline {
-      font-size: 1.0rem;
-      font-weight: 700;
-      color: var(--text-primary);
-      line-height: 1.3;
-    }
-
-    .exec-brief-summary {
-      font-size: 0.87rem;
-      color: var(--text-secondary);
-      line-height: 1.55;
-      margin-top: 6px;
-    }
-
-    .exec-brief-body {
-      display: flex;
-      gap: 24px;
-      margin-top: 14px;
-      flex-wrap: wrap;
-    }
-
-    .exec-brief-col {
-      flex: 1;
-      min-width: 180px;
-    }
-
-    .exec-brief-col-label {
-      font-size: 0.63rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-    }
-
-    .exec-brief-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .exec-brief-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 7px;
-      font-size: 0.80rem;
-      color: var(--text-primary);
-      line-height: 1.45;
-    }
-
-    .exec-brief-item::before {
-      content: '·';
-      color: var(--text-muted);
-      flex-shrink: 0;
-      font-size: 1.1rem;
-      line-height: 1.3;
-    }
-
-    .exec-brief-rec-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 7px;
-      font-size: 0.80rem;
-      color: var(--text-primary);
-      line-height: 1.45;
-    }
-
-    .exec-brief-rec-item::before {
-      content: '→';
-      color: var(--text-muted);
-      flex-shrink: 0;
-      font-size: 0.78rem;
-      line-height: 1.6;
-    }
-
     /* ── Repo detail section label hierarchy ─────────────────────────────── */
     .section-primary {
       color: var(--text-secondary);
@@ -2018,11 +1896,6 @@
       <div id="summary-cards" class="card-grid">
         <div class="card"><div class="card-label">Loading</div><div class="card-value">—</div></div>
       </div>
-    </div>
-
-    <!-- Portfolio Assessment -->
-    <div class="section">
-      <div id="executive-summary" style="margin-bottom:8px;"></div>
     </div>
 
     <!-- Notifications -->
@@ -3657,139 +3530,6 @@
       container.innerHTML = buildArchTrajectoryHtml(fc);
     }
 
-    // ── Executive Briefing ────────────────────────────────────────────────────
-    // Synthesizes portfolio intelligence from _execKpi — no API call required.
-
-    function buildExecutiveBriefing(kpi) {
-      if (!kpi) kpi = {};
-
-      var dataPresent = kpi.architectureScore != null || kpi.governanceScore != null
-        || kpi.criticalRepos != null;
-
-      if (!dataPresent) {
-        return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
-          + 'Architecture intelligence briefing loading…</p>';
-      }
-
-      var hasCov   = kpi.snapshotCount != null && kpi.repoCount != null && kpi.repoCount > 0;
-      var covPct   = hasCov ? Math.round(kpi.snapshotCount / kpi.repoCount * 100) : null;
-      var covRatio = hasCov ? (kpi.snapshotCount + ' / ' + kpi.repoCount) : null;
-
-      // ── Executive Status ───────────────────────────────────────────────────
-      function execStatus() {
-        if (kpi.forecastLevel === 'critical' || kpi.forecastLevel === 'degrading')   return 'needs_attention';
-        if (kpi.criticalRepos != null && kpi.criticalRepos >= 3)                     return 'needs_attention';
-        if (kpi.architectureScore != null && kpi.architectureScore < 60)             return 'needs_attention';
-        if (kpi.governanceScore   != null && kpi.governanceScore   < 60)             return 'needs_attention';
-        var isWatch = kpi.forecastLevel === 'watch'
-          || (kpi.criticalRepos  != null && kpi.criticalRepos  >  0)
-          || (kpi.architectureScore != null && kpi.architectureScore < 80)
-          || (kpi.governanceScore   != null && kpi.governanceScore   < 80)
-          || (covPct !== null && covPct < 80);
-        if (isWatch) return 'watch';
-        var allLoaded = kpi.architectureScore != null && kpi.governanceScore != null
-          && kpi.forecastLevel != null && kpi.criticalRepos != null;
-        return allLoaded ? 'healthy' : 'stable';
-      }
-
-      var status = execStatus();
-
-      var STATUS_LABELS = { healthy: 'Healthy', stable: 'Stable', watch: 'Watch', needs_attention: 'Needs Attention' };
-      var STATUS_SEV    = { healthy: 'healthy', stable: 'unknown', watch: 'medium', needs_attention: 'high' };
-      var statusLabel = STATUS_LABELS[status] || status;
-      var statusSev   = STATUS_SEV[status]   || 'unknown';
-
-      // ── Key Metrics ────────────────────────────────────────────────────────
-      function scoreSev(s) {
-        if (s == null) return 'unknown';
-        return s >= 80 ? 'healthy' : s >= 60 ? 'medium' : 'high';
-      }
-
-      var archMetricVal = kpi.architectureScore != null
-        ? (kpi.architectureScore + ' — ' + (kpi.architectureScore >= 85 ? 'Healthy' : kpi.architectureScore >= 70 ? 'Watch' : kpi.architectureScore >= 45 ? 'Weak' : 'Risky'))
-        : '—';
-      var critMetricVal = kpi.criticalRepos != null ? (kpi.criticalRepos > 0 ? String(kpi.criticalRepos) : 'None') : '—';
-      var critMetricSev = kpi.criticalRepos != null && kpi.criticalRepos > 0 ? 'critical'
-        : kpi.criticalRepos != null ? 'healthy' : 'unknown';
-      var riskMetricVal = kpi.riskConcentration != null ? (kpi.riskConcentration > 0 ? String(kpi.riskConcentration) : 'None') : '—';
-      var riskMetricSev = kpi.riskConcentration != null && kpi.riskConcentration > 0 ? 'high'
-        : kpi.riskConcentration != null ? 'healthy' : 'unknown';
-      var covMetricVal  = covPct != null ? (covPct + '% (' + covRatio + ')') : '—';
-      var covMetricSev  = covPct != null ? (covPct >= 80 ? 'healthy' : covPct >= 50 ? 'medium' : 'high') : 'unknown';
-
-      var metrics = [
-        { label: 'Architecture Health',   text: archMetricVal, sev: scoreSev(kpi.architectureScore) },
-        { label: 'Critical Repos',        text: critMetricVal, sev: critMetricSev },
-        { label: 'Repositories at Risk',  text: riskMetricVal, sev: riskMetricSev },
-        { label: 'Snapshot Coverage',     text: covMetricVal,  sev: covMetricSev },
-      ];
-
-      // ── Portfolio Assessment ───────────────────────────────────────────────
-      var assessment;
-      if (status === 'needs_attention') {
-        var naReasons = [];
-        if (kpi.forecastLevel === 'critical')  naReasons.push('critical structural degradation forecast');
-        if (kpi.forecastLevel === 'degrading') naReasons.push('degrading structural forecast');
-        if (kpi.criticalRepos != null && kpi.criticalRepos > 0)  naReasons.push(kpi.criticalRepos + ' critical repositor' + (kpi.criticalRepos > 1 ? 'ies' : 'y') + ' requiring remediation');
-        if (kpi.architectureScore != null && kpi.architectureScore < 60) naReasons.push('architecture score below threshold (' + kpi.architectureScore + ')');
-        if (kpi.governanceScore   != null && kpi.governanceScore   < 60) naReasons.push('governance score below threshold (' + kpi.governanceScore + ')');
-        assessment = 'Portfolio requires immediate attention due to ' + (naReasons.slice(0, 2).join(' and ') || 'critical signals detected') + '.';
-      } else if (status === 'watch') {
-        var wReasons = [];
-        if (kpi.forecastLevel === 'watch')     wReasons.push('structural forecast in watch state');
-        if (kpi.architectureScore != null && kpi.architectureScore < 80) wReasons.push('architecture score at ' + kpi.architectureScore);
-        if (kpi.governanceScore   != null && kpi.governanceScore   < 80) wReasons.push('governance at ' + kpi.governanceScore);
-        assessment = 'Portfolio requires monitoring — ' + (wReasons.slice(0, 2).join(', ') || 'elevated indicators present') + '.';
-      } else if (status === 'healthy') {
-        assessment = 'Portfolio architecture is healthy across all monitored dimensions. Governance and coverage are within acceptable thresholds.';
-      } else {
-        assessment = 'Portfolio intelligence is partially loaded. Architecture signals will update as data completes.';
-      }
-
-      // ── Render ─────────────────────────────────────────────────────────────
-      var html = '<div class="exec-brief sev-' + esc(statusSev) + '">';
-      html += '<div class="exec-brief-header">';
-      html += '<span class="exec-brief-label">Portfolio Assessment</span>';
-      html += '<span class="exec-brief-badge severity-' + esc(statusSev) + '">' + esc(statusLabel) + '</span>';
-      html += '</div>';
-      html += '<div class="exec-brief-summary" style="margin-top:4px;">' + esc(assessment) + '</div>';
-      html += '<div class="exec-brief-body" style="margin-top:12px;">';
-
-      // Key Metrics
-      html += '<div class="exec-brief-col" style="min-width:230px;">';
-      html += '<div class="exec-brief-col-label">Key Metrics</div>';
-      html += '<div style="display:flex;flex-direction:column;gap:5px;margin-top:4px;">';
-      metrics.forEach(function(m) {
-        html += '<div style="display:flex;align-items:center;gap:8px;">';
-        html += '<span style="width:7px;height:7px;border-radius:50%;background:var(--sev-' + esc(m.sev) + '-text);flex-shrink:0;display:inline-block;"></span>';
-        html += '<span style="font-size:0.74rem;color:var(--text-muted);min-width:118px;flex-shrink:0;">' + esc(m.label) + '</span>';
-        html += '<span style="font-size:0.80rem;color:var(--text-primary);">' + esc(m.text) + '</span>';
-        html += '</div>';
-      });
-      html += '</div></div>';
-
-      // Next Action
-      html += '<div class="exec-brief-col">';
-      html += '<div class="exec-brief-col-label">Next Action</div>';
-      html += '<p style="font-size:0.80rem;color:var(--text-primary);margin:4px 0 0;">Prioritize remediation for the highest-risk repositories.</p>';
-      html += '</div>';
-
-      html += '</div></div>';
-      return html;
-    }
-
-    function renderExecutiveBriefing() {
-      var container = document.getElementById('executive-summary');
-      if (!container) return;
-      container.innerHTML = buildExecutiveBriefing(_execKpi);
-      var confEl = document.getElementById('exec-summary-conf');
-      if (confEl) confEl.innerHTML = '';
-    }
-
-    function loadExecutiveSummary() {
-      renderExecutiveBriefing();
-    }
-
     function _fmtDetectedAt(iso) {
       if (!iso) return '';
       try {
@@ -4707,6 +4447,31 @@
       return 'Unable to access repository files.';
     }
 
+    // Renders the "Analyzer Coverage" notice — communicates scanner measurement
+    // confidence (missed routes/calls due to unsupported patterns), not application
+    // architecture risk. Intentionally styled muted/neutral, never severity-critical
+    // or severity-high, so it cannot be mistaken for a product health signal.
+    // Returns '' when there is nothing to say (no warnings) — renders nothing.
+    function buildAnalyzerCoverageHtml(coverage) {
+      if (!coverage || !Array.isArray(coverage.warnings) || coverage.warnings.length === 0) return '';
+
+      var riskLabel = coverage.unsupportedRisk || 'low';
+
+      var html = '<div class="arch-sub-panel"><div class="arch-sub-label">Analyzer Coverage</div>';
+      html += '<p style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;">'
+        + 'These notes describe scanner measurement confidence, not application architecture risk.</p>';
+      html += '<div style="margin-bottom:6px;">'
+        + '<span class="aq-badge severity-neutral">Coverage confidence: ' + esc(riskLabel) + '</span>'
+        + '</div>';
+      html += '<ul style="margin:0;padding-left:16px;font-size:0.79rem;line-height:1.6;color:var(--text-secondary);">';
+      coverage.warnings.forEach(function(w) {
+        html += '<li>' + esc(w) + '</li>';
+      });
+      html += '</ul>';
+      html += '</div>';
+      return html;
+    }
+
     function buildRepositoryArchitectureHtml(data) {
       var UNAVAILABLE = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
         + 'Architecture intelligence unavailable until repository files are accessible.</p>';
@@ -4868,6 +4633,9 @@
           + 'No frontend-backend API calls detected.</p>';
       }
       html += '</div>';
+
+      // ── 3b. Analyzer Coverage panel — measurement confidence, not app risk ───
+      html += buildAnalyzerCoverageHtml(data.analyzerCoverage);
 
       // ── 4. Circular Dependencies panel ──────────────────────────────────────
       var circles   = dep.circularDependencies || [];
@@ -5229,117 +4997,12 @@
       if (!data) {
         return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:2px 0;">No operational metrics available yet.</p>';
       }
-      var commits = data.commits7d  != null ? String(data.commits7d)  : '—';
-      var openPrs = data.openPrs    != null ? String(data.openPrs)    : '—';
-      var stale   = data.stalePrs   != null ? String(data.stalePrs)   : '—';
-      var issues  = data.openIssues != null ? String(data.openIssues) : '—';
+      var commits = data.commits7d != null ? String(data.commits7d) : '—';
       var ms = 'font-size:0.74rem;color:var(--text-muted);';
       var vs = 'font-size:0.86rem;font-weight:600;color:var(--text-primary);';
-      return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;padding:4px 0;">'
-        + '<div><span style="' + ms + '">Commits (7d) </span><span style="' + vs + '">' + esc(commits) + '</span></div>'
-        + '<div><span style="' + ms + '">Open PRs </span><span style="' + vs + '">' + esc(openPrs) + '</span></div>'
-        + '<div><span style="' + ms + '">Stale PRs </span><span style="' + vs + '">' + esc(stale) + '</span></div>'
-        + '<div><span style="' + ms + '">Open Issues </span><span style="' + vs + '">' + esc(issues) + '</span></div>'
+      return '<div style="padding:4px 0;">'
+        + '<span style="' + ms + '">Commits (7d) </span><span style="' + vs + '">' + esc(commits) + '</span>'
         + '</div>';
-    }
-
-    function buildRepoRiskHtml(data) {
-      var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:2px 0;">No risk score available yet.</p>';
-      if (!data || !data.current) return EMPTY;
-      var cur   = data.current;
-      var prev  = data.previous || null;
-      var score = cur.score != null ? String(cur.score) : '—';
-      var label = (cur.label || 'unknown').toLowerCase();
-      var labelCap = label.charAt(0).toUpperCase() + label.slice(1);
-      var labelCls = label === 'healthy'                       ? 'severity-healthy'
-                   : label === 'watch'                         ? 'severity-medium'
-                   : label === 'at_risk' || label === 'at-risk' ? 'severity-high'
-                   : label === 'critical'                      ? 'severity-critical'
-                   : 'severity-unknown';
-      var deltaTxt = '';
-      if (prev && prev.score != null && cur.score != null) {
-        var delta = cur.score - prev.score;
-        deltaTxt = delta > 0 ? ' (+' + delta + ' vs prior)'
-                 : delta < 0 ? ' (' + delta + ' vs prior)'
-                 : ' (unchanged)';
-      }
-      var bs = 'font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;'
-             + 'padding:2px 8px;border-radius:99px;border:1px solid transparent;';
-      return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 0;">'
-        + '<span style="font-size:1.1rem;font-weight:700;color:var(--text-primary);">' + esc(score) + '</span>'
-        + '<span class="aq-badge ' + labelCls + '" style="' + bs + '">' + esc(labelCap) + '</span>'
-        + (deltaTxt ? '<span style="font-size:0.78rem;color:var(--text-muted);">' + esc(deltaTxt) + '</span>' : '')
-        + '</div>';
-    }
-
-    function buildRepoPrHealthHtml(data) {
-      var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:2px 0;">No PR health data available yet.</p>';
-      if (!data) return EMPTY;
-      var label = (data.label || 'unknown').toLowerCase();
-      if (label === 'none')    return '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:2px 0;">No pull request activity detected.</p>';
-      if (label === 'unknown') return EMPTY;
-      var labelCap = label.charAt(0).toUpperCase() + label.slice(1);
-      var labelCls = label === 'healthy'  ? 'severity-healthy'
-                   : label === 'watch'    ? 'severity-medium'
-                   : label === 'high'     ? 'severity-high'
-                   : label === 'critical' ? 'severity-critical'
-                   : 'severity-unknown';
-      var bs = 'font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;'
-             + 'padding:2px 8px;border-radius:99px;border:1px solid transparent;';
-      var reasons = Array.isArray(data.reasons) ? data.reasons : [];
-      var html = '<div style="padding:4px 0;">';
-      html += '<span class="aq-badge ' + labelCls + '" style="' + bs + '">' + esc(labelCap) + '</span>';
-      if (reasons.length > 0) {
-        html += '<ul style="margin:6px 0 0;padding-left:16px;font-size:0.80rem;line-height:1.7;">';
-        reasons.slice(0, 2).forEach(function(r) {
-          html += '<li style="color:var(--text-secondary);">' + esc(r) + '</li>';
-        });
-        html += '</ul>';
-      } else {
-        html += '<span style="font-size:0.74rem;color:var(--text-muted);margin-left:8px;">No PR health issues detected.</span>';
-      }
-      html += '</div>';
-      return html;
-    }
-
-    function buildRepoEventsHtml(data) {
-      var EMPTY = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:2px 0;">No recent operational events detected.</p>';
-      if (!data) return EMPTY;
-      var events = Array.isArray(data.events) ? data.events : [];
-      if (events.length === 0) return EMPTY;
-      var SEV_CLS = {
-        critical: 'severity-critical',
-        high:     'severity-high',
-        medium:   'severity-medium',
-        healthy:  'severity-healthy',
-      };
-      var EVENT_LABEL = {
-        risk_increase:                 'Risk Increased',
-        risk_recovery:                 'Risk Recovered',
-        ci_failure_detected:           'CI Failed',
-        ci_recovered:                  'CI Recovered',
-        release_activity_declined:     'Release Declined',
-        release_activity_recovered:    'Release Recovered',
-        contributor_activity_declined: 'Activity Declined',
-        contributor_activity_recovered:'Activity Recovered',
-        bus_factor_detected:           'Bus Factor Risk',
-      };
-      var bs = 'font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;'
-             + 'padding:1px 7px;border-radius:99px;border:1px solid transparent;white-space:nowrap;';
-      var html = '<div style="display:flex;flex-direction:column;gap:5px;padding:4px 0;">';
-      events.slice(0, 3).forEach(function(ev) {
-        var evLabel = EVENT_LABEL[ev.type] || String(ev.type || 'Event').replace(/_/g, ' ');
-        var sevCls  = SEV_CLS[ev.severity] || 'severity-unknown';
-        var desc    = ev.description || '';
-        html += '<div style="display:flex;align-items:flex-start;gap:8px;">';
-        html += '<span class="aq-badge ' + sevCls + '" style="' + bs + '">' + esc(evLabel) + '</span>';
-        if (desc) {
-          html += '<span style="font-size:0.78rem;color:var(--text-secondary);line-height:1.4;">' + esc(desc) + '</span>';
-        }
-        html += '</div>';
-      });
-      html += '</div>';
-      return html;
     }
 
     function loadRepoArchitecture(repoId) {
@@ -5859,66 +5522,6 @@
         .catch(function() {
           var el = document.getElementById('repo-ops-metrics-content');
           if (el) el.innerHTML = buildRepoMetricsHtml(null);
-        });
-    }
-
-    function loadRepoRisk(repoId) {
-      var container = document.getElementById('repo-ops-risk-content');
-      if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/risk', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403 || r.status === 404) return null;
-          if (!r.ok) return null;
-          return r.json().catch(function() { return null; });
-        })
-        .then(function(data) {
-          var el = document.getElementById('repo-ops-risk-content');
-          if (el) el.innerHTML = buildRepoRiskHtml(data);
-        })
-        .catch(function() {
-          var el = document.getElementById('repo-ops-risk-content');
-          if (el) el.innerHTML = buildRepoRiskHtml(null);
-        });
-    }
-
-    function loadRepoPrHealth(repoId) {
-      var container = document.getElementById('repo-ops-pr-health-content');
-      if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/pr-health', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403 || r.status === 404) return null;
-          if (!r.ok) return null;
-          return r.json().catch(function() { return null; });
-        })
-        .then(function(data) {
-          var el = document.getElementById('repo-ops-pr-health-content');
-          if (el) el.innerHTML = buildRepoPrHealthHtml(data);
-        })
-        .catch(function() {
-          var el = document.getElementById('repo-ops-pr-health-content');
-          if (el) el.innerHTML = buildRepoPrHealthHtml(null);
-        });
-    }
-
-    function loadRepoEvents(repoId) {
-      var container = document.getElementById('repo-ops-events-content');
-      if (!container) return;
-      container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
-      fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/events', { credentials: 'include' })
-        .then(function(r) {
-          if (r.status === 401 || r.status === 403 || r.status === 404) return null;
-          if (!r.ok) return null;
-          return r.json().catch(function() { return null; });
-        })
-        .then(function(data) {
-          var el = document.getElementById('repo-ops-events-content');
-          if (el) el.innerHTML = buildRepoEventsHtml(data);
-        })
-        .catch(function() {
-          var el = document.getElementById('repo-ops-events-content');
-          if (el) el.innerHTML = buildRepoEventsHtml(null);
         });
     }
 
@@ -6477,12 +6080,6 @@
         +   overviewCards
         +   '<div class="repo-detail-label section-secondary" style="margin-top:14px;">Operational Metrics</div>'
         +   '<div id="repo-ops-metrics-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:10px;">Risk Score</div>'
-        +   '<div id="repo-ops-risk-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:10px;">PR Health</div>'
-        +   '<div id="repo-ops-pr-health-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
-        +   '<div class="repo-detail-label section-secondary" style="margin-top:10px;">Recent Events</div>'
-        +   '<div id="repo-ops-events-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         +   buildAttentionDriversHtml(aq)
         +   '<div class="repo-detail-label section-primary" style="margin-top:18px;">Architecture Assessment</div>'
         +   buildArchitectureAssessmentHtml(repo)
@@ -6583,9 +6180,6 @@
       loadRepoArchitectureForecast(repo.id);
       loadRepoRemediation(repo.id);
       loadRepoMetrics(repo.id);
-      loadRepoRisk(repo.id);
-      loadRepoPrHealth(repo.id);
-      loadRepoEvents(repo.id);
     }
 
     // ── Repository Priority ───────────────────────────────────────────────────
@@ -7869,7 +7463,6 @@
             return sa - sb;
           }).slice(0, 3).map(function(r) { return r.repoName || ''; }).filter(Boolean);
           renderExecutiveKpis();
-          renderExecutiveBriefing();
           // Populate per-repo architecture intel from benchmarkedRepositories[]
           benched.forEach(function(r) {
             if (!r.repoName) return;
@@ -8294,7 +7887,6 @@
           if (d && typeof d.governanceScore === 'number') {
             _execKpi.governanceScore = d.governanceScore;
             renderExecutiveKpis();
-            renderExecutiveBriefing();
           }
         })
         .catch(function(err) {
@@ -8313,7 +7905,6 @@
       loadAttentionQueue();
       loadNotifications();
       loadHistory();
-      loadExecutiveSummary();
     }
 
     refresh();
