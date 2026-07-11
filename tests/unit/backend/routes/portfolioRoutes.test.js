@@ -51,6 +51,12 @@ const { detectArchitectureAnomalies }            = require('../../../../executio
 const { buildArchitectureWatchlists }            = require('../../../../execution/architecture/buildArchitectureWatchlists');
 
 // ── Handler extraction ────────────────────────────────────────────────────────
+// portfolioRoutes.js is now a composition router that mounts
+// portfolioArchitectureRoutes and portfolioGovernanceRoutes (Coupling
+// Refinement #3), so a route's layer may live on a nested sub-router's stack
+// rather than directly on `r.stack`. Recurse into any layer that is itself a
+// router (has `layer.handle.stack`) so every existing extractHandler(...)
+// call below keeps resolving to the same handler function it always did.
 
 function extractHandler(r, method, path) {
   for (const layer of r.stack) {
@@ -61,6 +67,13 @@ function extractHandler(r, method, path) {
     ) {
       const handlers = layer.route.stack;
       return handlers[handlers.length - 1].handle;
+    }
+    if (layer.handle && layer.handle.stack) {
+      try {
+        return extractHandler(layer.handle, method, path);
+      } catch (e) {
+        // Not found in this nested router — keep searching sibling layers.
+      }
     }
   }
   throw new Error(`Handler not found: ${method} ${path}`);
