@@ -354,15 +354,15 @@ describe('fetchRepositoryFiles — file size limit (400 KB)', () => {
     expect(files).toHaveLength(0);
   });
 
-  it('still excludes test files even when they are well under the 400 KB limit', async () => {
+  it('includes test files when they are well under the 400 KB limit', async () => {
     const content = 'x'.repeat(50 * 1024);
     const fetchFn = makeFetchFn({
       tree:     [makeBlob('tests/unit/example.test.js', 'a')],
       contents: { 'tests/unit/example.test.js': makeContentEntry(content) },
     });
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(0);
-    expect(files).toHaveLength(0);
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
   });
 
   it('includes normal production JS and HTML files regardless of the limit increase', async () => {
@@ -586,9 +586,13 @@ describe('fetchRepositoryFiles — throttled concurrency', () => {
   });
 });
 
-// ── Test file exclusion ───────────────────────────────────────────────────────
+// ── Test file inclusion ───────────────────────────────────────────────────────
+// Test files are no longer excluded at fetch time — structure inventory and
+// implementation-completeness analysis need to see them to compute accurate
+// test-coverage signals (hasTests). The false-positive protection this used
+// to provide now lives in extractRouteApiStructure.js's own test-file guard.
 
-describe('fetchRepositoryFiles — test file exclusion', () => {
+describe('fetchRepositoryFiles — test file inclusion', () => {
   function singleFileFetchFn(filePath, content) {
     return makeFetchFn({
       tree:     [makeBlob(filePath, 'a')],
@@ -596,42 +600,63 @@ describe('fetchRepositoryFiles — test file exclusion', () => {
     });
   }
 
-  it('excludes files in tests/ directory', async () => {
-    const fetchFn = singleFileFetchFn('tests/unit/foo.test.js', "fetch('/api/ghost')");
+  // A
+  it('includes tests/unit/backend/routes/fooRoutes.test.js', async () => {
+    const fetchFn = singleFileFetchFn('tests/unit/backend/routes/fooRoutes.test.js', "fetch('/api/ghost')");
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(0);
-    expect(files).toHaveLength(0);
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('tests/unit/backend/routes/fooRoutes.test.js');
   });
 
-  it('excludes files in test/ directory', async () => {
+  // B
+  it('includes tests/unit/backend/routes/fooRoutes.spec.js', async () => {
+    const fetchFn = singleFileFetchFn('tests/unit/backend/routes/fooRoutes.spec.js', "it('test', () => {})");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('tests/unit/backend/routes/fooRoutes.spec.js');
+  });
+
+  // C
+  it('includes __tests__/foo.test.js', async () => {
+    const fetchFn = singleFileFetchFn('__tests__/foo.test.js', "test('x', () => {})");
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('__tests__/foo.test.js');
+  });
+
+  it('includes files in test/ directory', async () => {
     const fetchFn = singleFileFetchFn('test/foo.spec.ts', "it('test', () => {})");
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(0);
-    expect(files).toHaveLength(0);
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
   });
 
-  it('excludes files in src/__tests__/ directory', async () => {
+  it('includes files in src/__tests__/ directory', async () => {
     const fetchFn = singleFileFetchFn('src/__tests__/thing.test.jsx', "test('x', () => {})");
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(0);
-    expect(files).toHaveLength(0);
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
   });
 
-  it('excludes *.test.tsx files anywhere in the tree', async () => {
+  it('includes *.test.tsx files anywhere in the tree', async () => {
     const fetchFn = singleFileFetchFn('src/app.test.tsx', "it('test', () => {})");
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(0);
-    expect(files).toHaveLength(0);
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
   });
 
-  it('excludes *.spec.js files anywhere in the tree', async () => {
+  it('includes *.spec.js files anywhere in the tree', async () => {
     const fetchFn = singleFileFetchFn('src/app.spec.js', "it('test', () => {})");
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(0);
-    expect(files).toHaveLength(0);
+    expect(debug.eligibleFileCount).toBe(1);
+    expect(files).toHaveLength(1);
   });
 
-  it('includes src/app.js (not a test file)', async () => {
+  // D
+  it('includes src/app.js (a normal production source file)', async () => {
     const fetchFn = singleFileFetchFn('src/app.js', "fetch('/api/users')");
     const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
     expect(files).toHaveLength(1);
@@ -652,7 +677,7 @@ describe('fetchRepositoryFiles — test file exclusion', () => {
     expect(files[0].path).toBe('backend/routes/repoRoutes.js');
   });
 
-  it('excludes all test files and keeps all production files in a mixed tree', async () => {
+  it('includes both test files and production files in a mixed tree', async () => {
     const production = [
       'src/app.js',
       'frontend/dashboard.html',
@@ -669,17 +694,56 @@ describe('fetchRepositoryFiles — test file exclusion', () => {
     const contents  = Object.fromEntries(allPaths.map(p => [p, makeContentEntry('content')]));
     const fetchFn   = makeFetchFn({ tree, contents });
     const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
-    expect(debug.eligibleFileCount).toBe(production.length);
-    expect(files.map(f => f.path).sort()).toEqual(production.slice().sort());
+    expect(debug.eligibleFileCount).toBe(allPaths.length);
+    expect(files.map(f => f.path).sort()).toEqual(allPaths.slice().sort());
+  });
+
+  // E — secret-file filtering remains unchanged (unaffected by this change,
+  // re-asserted here alongside the test-file behavior for completeness)
+  it('still excludes secret files even when they look like test files', async () => {
+    const fetchFn = singleFileFetchFn('tests/fixtures/credentials.test.js', 'module.exports = {};');
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  // F — unsupported-extension filtering remains unchanged
+  it('still excludes unsupported extensions even under a tests/ directory', async () => {
+    const fetchFn = singleFileFetchFn('tests/fixtures/binary.exe', 'x');
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(0);
+    expect(files).toHaveLength(0);
+  });
+
+  // G — test files participate in the same MAX_FILES eligibility/slicing pool
+  // as everything else; no separate/second fetch pass is introduced for them.
+  it('counts test files toward the same eligibility pool as production files, sliced together', async () => {
+    const paths = [
+      'tests/unit/a.test.js',
+      'src/b.js',
+      'tests/unit/c.test.js',
+      'src/d.js',
+    ];
+    const tree     = paths.map(p => makeBlob(p, 'a'));
+    const contents = Object.fromEntries(paths.map(p => [p, makeContentEntry('content')]));
+    const fetchFn  = makeFetchFn({ tree, contents });
+    const { files, debug } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
+    expect(debug.eligibleFileCount).toBe(paths.length);
+    expect(debug.fetchedFileCount).toBe(paths.length);
+    expect(files.map(f => f.path).sort()).toEqual(paths.slice().sort());
   });
 });
 
-// ── Regression: test file fixture paths do not contaminate architecture ────────
+// ── Regression: test fixture paths reach analysis but don't contaminate architecture ──
+// Test files are now fetched (visible to structure inventory/completeness), but
+// their fixture source-code strings must still never become real architecture
+// evidence — that protection now lives in extractRouteApiStructure.js's own
+// test-file guard rather than at fetch time.
 
-describe('fetchRepositoryFiles — regression: test fixture paths excluded from architecture', () => {
+describe('fetchRepositoryFiles — regression: test fixture content excluded from architecture, but the file itself is fetched', () => {
   const { extractRouteApiStructure } = require('../../../../execution/architecture/extractRouteApiStructure');
 
-  it('fetch("/api/ghost") inside a *.test.js file produces no unresolved API calls', async () => {
+  it('fetch("/api/ghost") inside a *.test.js file is fetched but produces no unresolved API calls', async () => {
     const fetchFn = makeFetchFn({
       tree: [
         makeBlob('tests/unit/buildSnapshot.test.js', 'a'),
@@ -697,17 +761,17 @@ describe('fetchRepositoryFiles — regression: test fixture paths excluded from 
 
     const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
 
-    // The test file must not appear in the returned files
-    expect(files.map(f => f.path)).not.toContain('tests/unit/buildSnapshot.test.js');
+    // The test file now IS present in the fetched set...
+    expect(files.map(f => f.path)).toContain('tests/unit/buildSnapshot.test.js');
     expect(files.map(f => f.path)).toContain('backend/routes/health.js');
 
-    // When those files reach the architecture extractor, /api/ghost is absent
+    // ...but its fixture content is still excluded at extraction time.
     const structure = extractRouteApiStructure({ files });
     expect(structure.unresolvedApiCalls.find(u => u.path === '/api/ghost')).toBeUndefined();
     expect(structure.frontendApiCalls.find(c => c.path === '/api/ghost')).toBeUndefined();
   });
 
-  it('POST /api/data fixture inside a *.test.js file produces no unresolved API calls', async () => {
+  it('POST /api/data fixture inside a *.test.js file is fetched but produces no unresolved API calls', async () => {
     const fetchFn = makeFetchFn({
       tree: [
         makeBlob('tests/unit/methodMismatch.test.js', 'a'),
@@ -725,7 +789,7 @@ describe('fetchRepositoryFiles — regression: test fixture paths excluded from 
 
     const { files } = await fetchRepositoryFiles({ accessToken: VALID_TOKEN, fullName: VALID_FULLNAME, branch: 'main', fetchFn });
 
-    expect(files.map(f => f.path)).not.toContain('tests/unit/methodMismatch.test.js');
+    expect(files.map(f => f.path)).toContain('tests/unit/methodMismatch.test.js');
 
     // POST /api/data must not appear as an unresolved frontend call
     const structure = extractRouteApiStructure({ files });

@@ -275,6 +275,332 @@ describe('assessImplementationCompleteness — route_without_service_path', () =
   });
 });
 
+// ── Composition-router awareness (route_without_service_path only) ───────────
+// Analyzer Improvement — Composition-Router Awareness for route_without_service_path.
+// Confirmed live regression: repoId=80 snapshot #201/#202 flagged exactly 2
+// route_without_service_path files — backend/routes/repoRoutes.js and
+// backend/routes/portfolioRoutes.js — both composition-only routers (own no
+// HTTP handler, only mount child routers) that have no business-logic
+// boundary to delegate to a service in the first place.
+
+describe('assessImplementationCompleteness — composition-router awareness', () => {
+  // A
+  test('A. router.use(childRouter) only — composition-only, excluded from signal and denominator', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/parentRoutes.js', "const childRoutes = require('./childRoutes');\nrouter.use(childRoutes);")],
+      inventory: makeInventory({ routes: ['routes/parentRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+    expect(r.routeServiceCoverage.routeFileCount).toBe(0);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(0);
+  });
+
+  // B
+  test("B. router.use('/', childRouter) only — composition-only, excluded", () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/parentRoutes.js', "const childRoutes = require('./childRoutes');\nrouter.use('/', childRoutes);")],
+      inventory: makeInventory({ routes: ['routes/parentRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+    expect(r.routeServiceCoverage.routeFileCount).toBe(0);
+  });
+
+  // C
+  test("C. app.use('/api', childRouter) only — composition-only, excluded", () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/parentRoutes.js', "const childRoutes = require('./childRoutes');\napp.use('/api', childRoutes);")],
+      inventory: makeInventory({ routes: ['routes/parentRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+    expect(r.routeServiceCoverage.routeFileCount).toBe(0);
+  });
+
+  // D
+  test('D. router.get("/x", handler) with no service import — not composition-only, remains flagged', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/handlerRoutes.js', "router.get('/x', (req, res) => res.json({}));")],
+      inventory: makeInventory({ routes: ['routes/handlerRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    const sig = r.signals.find(s => s.type === 'route_without_service_path');
+    expect(sig).toBeDefined();
+    expect(sig.count).toBe(1);
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(0);
+  });
+
+  // E
+  test('E. router.post("/x", handler) with an execution/ dependency edge — denominator 1, covered 1, 100%', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/handlerRoutes.js', "const { doThing } = require('../../execution/domain/doThing');\nrouter.post('/x', doThing);")],
+      inventory: makeInventory({ routes: ['routes/handlerRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [{ from: 'routes/handlerRoutes.js', to: 'execution/domain/doThing.js', importPath: '../../execution/domain/doThing', importType: 'require' }],
+      }),
+    });
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(1);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(100);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+
+  // F
+  test('F. router.use(childRouter) + router.get("/x", handler), no service edge — mixed file, remains flagged', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/mixedRoutes.js', "const childRoutes = require('./childRoutes');\nrouter.use(childRoutes);\nrouter.get('/x', (req, res) => res.json({}));")],
+      inventory: makeInventory({ routes: ['routes/mixedRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    const sig = r.signals.find(s => s.type === 'route_without_service_path');
+    expect(sig).toBeDefined();
+    expect(sig.count).toBe(1);
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(0);
+  });
+
+  // G
+  test('G. fooRoutes.js filename with no .use and no handler registration — not composition-only by filename alone', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/fooRoutes.js', "module.exports = { note: 'placeholder module, no routing calls at all' };")],
+      inventory: makeInventory({ routes: ['routes/fooRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    // No .use() mount call exists, so _isCompositionOnlyRouter is false —
+    // the file is not excluded; existing route_without_service_path behavior applies.
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    const sig = r.signals.find(s => s.type === 'route_without_service_path');
+    expect(sig).toBeDefined();
+  });
+
+  // H — reuses the module's existing _stripComments helper (already used by
+  // _isRichCode/_hasPlaceholderHint/_isScaffoldLike); no new parser introduced.
+  test('H. ".use(" text appearing only in a comment does not classify a file as composition-only', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/handlerRoutes.js', "// example: router.use('/', childRoutes)\nrouter.get('/x', (req, res) => res.json({}));")],
+      inventory: makeInventory({ routes: ['routes/handlerRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    // The commented-out .use() must not suppress the real .get() handler
+    // detection — this remains a handler-owning file, flagged as before.
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeDefined();
+  });
+
+  // I
+  test('I. ".get(" text appearing only in a comment does not turn a genuine composition router into a mixed router', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('routes/parentRoutes.js', "// legacy note: used to call router.get('/x', handler) directly here\nconst childRoutes = require('./childRoutes');\nrouter.use(childRoutes);")],
+      inventory: makeInventory({ routes: ['routes/parentRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    expect(r.routeServiceCoverage.routeFileCount).toBe(0);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+});
+
+// ── repoId=80-shaped composition-router regression fixtures ──────────────────
+
+describe('assessImplementationCompleteness — repoId=80-shaped composition-router fixtures', () => {
+  const repoRoutesShape = [
+    "const express = require('express');",
+    "const authenticate = require('../middleware/authenticate');",
+    "const repoCoreRoutes = require('./repoCoreRoutes');",
+    "const repoRiskRoutes = require('./repoRiskRoutes');",
+    "const repoArchitectureRoutes = require('./repoArchitectureRoutes');",
+    '',
+    'const router = express.Router();',
+    '',
+    'router.use(authenticate);',
+    "router.use('/', repoCoreRoutes);",
+    "router.use('/', repoRiskRoutes);",
+    "router.use('/', repoArchitectureRoutes);",
+    '',
+    'module.exports = router;',
+  ].join('\n');
+
+  const portfolioRoutesShape = [
+    "const express = require('express');",
+    "const authenticate = require('../middleware/authenticate');",
+    "const portfolioArchitectureRoutes = require('./portfolioArchitectureRoutes');",
+    "const portfolioGovernanceRoutes = require('./portfolioGovernanceRoutes');",
+    '',
+    'const router = express.Router();',
+    '',
+    'router.use(authenticate);',
+    'router.use(portfolioArchitectureRoutes);',
+    'router.use(portfolioGovernanceRoutes);',
+    '',
+    'module.exports = router;',
+  ].join('\n');
+
+  test('Fixture 1: repoRoutes.js shape is composition-only and excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/routes/repoRoutes.js', repoRoutesShape)],
+      inventory: makeInventory({ routes: ['backend/routes/repoRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    expect(r.routeServiceCoverage.routeFileCount).toBe(0);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+
+  test('Fixture 2: portfolioRoutes.js shape is composition-only and excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/routes/portfolioRoutes.js', portfolioRoutesShape)],
+      inventory: makeInventory({ routes: ['backend/routes/portfolioRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({ edges: [] }),
+    });
+    expect(r.routeServiceCoverage.routeFileCount).toBe(0);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+
+  test('Fixture 3: a child/domain route with an execution/ dependency edge is handler-owning, included, and covered', () => {
+    const childRouteShape = [
+      "router.get('/forecast', async (req, res, next) => {",
+      '  try {',
+      "    const { getForecast } = require('../../execution/risk/getForecast');",
+      '    res.json(await getForecast());',
+      '  } catch (err) { next(err); }',
+      '});',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/routes/repoRiskRoutes.js', childRouteShape)],
+      inventory: makeInventory({ routes: ['backend/routes/repoRiskRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [{ from: 'backend/routes/repoRiskRoutes.js', to: 'execution/risk/getForecast.js', importPath: '../../execution/risk/getForecast', importType: 'require' }],
+      }),
+    });
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(1);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(100);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+});
+
+// ── Full completeness regression: mirrors the repoId=80 10-route-file shape ──
+// 2 composition-only routers (repoRoutes.js/portfolioRoutes.js-shaped) + 8
+// handler-owning routers (all with a service/execution edge, tests present,
+// no placeholder/scaffold signals, boundary not weak) — proves the eligible-
+// route-file population is used consistently for both the signal and the
+// routeServiceCoverage metric (8/8, not 8/10).
+
+describe('assessImplementationCompleteness — full completeness regression (2 composition + 8 handler-owning)', () => {
+  test('routeServiceCoverage denominator is 8 (handler-owning only), not 10 (all route files)', () => {
+    const compositionRoutes = ['backend/routes/repoRoutes.js', 'backend/routes/portfolioRoutes.js'];
+    const handlerRoutes = Array.from({ length: 8 }, (_, i) => `backend/routes/domain${i}Routes.js`);
+    const allRoutes = compositionRoutes.concat(handlerRoutes);
+
+    const compositionFiles = compositionRoutes.map(p =>
+      makeFile(p, "const child = require('./child');\nrouter.use('/', child);"));
+
+    const handlerFiles = handlerRoutes.map((p, i) =>
+      makeFile(p, `const { doThing${i} } = require('../../execution/domain/doThing${i}');\nrouter.get('/x${i}', doThing${i});`));
+
+    const testFile = makeFile('tests/unit/backend/routes/domain0Routes.test.js', "test('x', () => {});");
+
+    const edges = handlerRoutes.map((p, i) => ({
+      from: p, to: `execution/domain/doThing${i}.js`,
+      importPath: `../../execution/domain/doThing${i}`, importType: 'require',
+    }));
+
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: compositionFiles.concat(handlerFiles, [testFile]),
+      inventory: makeInventory({
+        routes: allRoutes,
+        tests: ['tests/unit/backend/routes/domain0Routes.test.js'],
+        hasApiLayer: true, hasServiceLayer: true, hasTests: true,
+      }),
+      dependencyGraph: makeDependencyGraph({ edges }),
+      boundaryVerification: makeBoundaryVerification({ boundaryHealthScore: 90, boundaryHealthLevel: 'healthy' }),
+    });
+
+    expect(r.routeServiceCoverage.routeFileCount).toBe(8);
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(8);
+    expect(r.routeServiceCoverage.coveragePercent).toBe(100);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeUndefined();
+    expect(r.signals.find(s => s.type === 'route_without_tests')).toBeUndefined();
+  });
+});
+
+// ── Framework preservation: composition-only check is Express-.use()-specific ─
+// The composition-only rule only recognizes generic-identifier `.use(...)`
+// mount calls; it does not interpret NestJS decorators or Fastify's plugin/
+// route-object registration forms as mounts, so it cannot misclassify them.
+
+describe('assessImplementationCompleteness — framework preservation (NestJS/Fastify unaffected)', () => {
+  test('a NestJS controller (decorator-based, no .use()/.get() call syntax) is evaluated exactly as before', () => {
+    const nestControllerShape = [
+      "import { Controller, Get } from '@nestjs/common';",
+      "import { UsersService } from '../../execution/users/usersService';",
+      '',
+      "@Controller('users')",
+      'export class UsersController {',
+      '  constructor(private usersService: UsersService) {}',
+      '',
+      '  @Get()',
+      '  findAll() { return this.usersService.findAll(); }',
+      '}',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/controllers/users.controller.ts', nestControllerShape, 'TypeScript')],
+      inventory: makeInventory({ routes: ['backend/controllers/users.controller.ts'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [{ from: 'backend/controllers/users.controller.ts', to: 'execution/users/usersService.ts', importPath: '../../execution/users/usersService', importType: 'import' }],
+      }),
+    });
+    // No .use() mount call anywhere in this file, so _isCompositionOnlyRouter
+    // is false — it is evaluated as a normal (handler-owning) route file,
+    // exactly as before this change, and correctly counted as covered.
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(1);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+
+  test('a Fastify route-object registration (fastify.route({...})) is evaluated exactly as before', () => {
+    const fastifyRouteShape = [
+      "const { getWidgets } = require('../../execution/widgets/getWidgets');",
+      'fastify.route({',
+      "  method: 'GET',",
+      "  url: '/widgets',",
+      '  handler: getWidgets,',
+      '});',
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('backend/routes/widgetsRoutes.js', fastifyRouteShape)],
+      inventory: makeInventory({ routes: ['backend/routes/widgetsRoutes.js'], hasApiLayer: true, hasServiceLayer: true }),
+      dependencyGraph: makeDependencyGraph({
+        edges: [{ from: 'backend/routes/widgetsRoutes.js', to: 'execution/widgets/getWidgets.js', importPath: '../../execution/widgets/getWidgets', importType: 'require' }],
+      }),
+    });
+    // fastify.route({...}) contains neither a generic `.use(` mount call nor
+    // a `.get(`/`.post(`/etc. call — _isCompositionOnlyRouter's hasMount check
+    // is false, so this file is unaffected by the composition-only exclusion
+    // and is evaluated exactly as before.
+    expect(r.routeServiceCoverage.routeFileCount).toBe(1);
+    expect(r.routeServiceCoverage.routeFilesWithServiceImport).toBe(1);
+    expect(r.signals.find(s => s.type === 'route_without_service_path')).toBeUndefined();
+  });
+});
+
 // ── Unresolved frontend API ───────────────────────────────────────────────────
 
 describe('assessImplementationCompleteness — unresolved_frontend_api', () => {
@@ -501,6 +827,245 @@ describe('assessImplementationCompleteness — scaffold_like_file', () => {
     });
     // 5 × -8 = -40 capped at -32 → score ≤ 68
     expect(r.completenessScore).toBeLessThanOrEqual(68);
+  });
+});
+
+// ── Test-file exclusion from placeholder/scaffold heuristics ─────────────────
+// Analyzer Improvement — Exclude Test Files from Implementation Placeholder/
+// Scaffold Heuristics. Confirmed live regression: repoId=80 snapshot #201
+// flagged 9 tests/unit/frontend/*.test.js files as placeholder_code_hint —
+// all 9 use this repository's established verbatim-copy test convention
+// (the pure function under test is copied directly into the test file, so
+// there is no require()/import to satisfy _isRichCode()) and legitimately
+// contain "return null;" guards or the word "placeholder" as UI vocabulary.
+
+describe('assessImplementationCompleteness — placeholder_code_hint excludes test files', () => {
+  const testFixtureContent = [
+    "function buildWidget(data) {",
+    "  if (!data) return null;",
+    "  return '<div>' + data.label + '</div>';",
+    "}",
+    "test('renders a placeholder when no data', () => {",
+    "  expect(buildWidget(null)).toBe(null);",
+    "});",
+    "test('dummy mock data is rendered', () => {",
+    "  const mock = { label: 'x' };",
+    "  expect(buildWidget(mock)).toContain('x');",
+    "});",
+  ].join('\n');
+
+  // A
+  test('A. tests/unit/frontend/foo.test.js with return null / placeholder / dummy / mock data and no require/import is excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('tests/unit/frontend/foo.test.js', testFixtureContent)],
+      inventory: makeInventory({ frontend: ['tests/unit/frontend/foo.test.js'], hasFrontend: true, hasTests: true, tests: ['tests/unit/frontend/foo.test.js'] }),
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('tests/unit/frontend/foo.test.js');
+  });
+
+  // B
+  test('B. a .spec.ts test file with placeholder-pattern text is excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('tests/unit/widget.spec.ts', testFixtureContent, 'TypeScript')],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('tests/unit/widget.spec.ts');
+  });
+
+  // C
+  test('C. __tests__/renderer.js (plain basename, no .test/.spec) is excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('__tests__/renderer.js', testFixtureContent)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('__tests__/renderer.js');
+  });
+
+  // D
+  test('D. a nested test directory (packages/web/tests/fixture.js) is excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('packages/web/tests/fixture.js', testFixtureContent)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+    expect(r.placeholderAssessment.files).not.toContain('packages/web/tests/fixture.js');
+  });
+
+  // E — representative reproduction of the actual snapshot #201 shape
+  test('E. a snapshot-#201-style verbatim-copy dashboard test file produces no placeholder_code_hint', () => {
+    const dashboardTestContent = [
+      "function _resolveOverviewArchData(data) { return null; }",
+      "function _resolveOverviewFcData()   { return null; }",
+      "describe('_resolveOverviewArchData', () => {",
+      "  test('no data shows — placeholder', () => {",
+      "    expect(_resolveOverviewArchData(null)).toBe(null);",
+      "  });",
+      "});",
+    ].join('\n');
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('tests/unit/frontend/dashboardExample.test.js', dashboardTestContent)],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+  });
+
+  // F — regression: real production stub must still be flagged
+  test('F. frontend/renderDashboard.js with a genuine TODO/return-null placeholder is still flagged', () => {
+    // Object-literal arrow-function stub (not a named `function X() {}` declaration),
+    // so it is not suppressed by _isRichCode's function+module.exports rule — mirrors
+    // the existing "throw new Error('Not implemented')" false-positive-suppression fixtures.
+    const productionStub = "// TODO: implement real rendering\nmodule.exports = { renderDashboard: (data) => { throw new Error('Not implemented'); } };";
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('frontend/renderDashboard.js', productionStub)],
+      inventory: makeInventory({ frontend: ['frontend/renderDashboard.js'], hasFrontend: true }),
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeDefined();
+    expect(r.placeholderAssessment.files).toContain('frontend/renderDashboard.js');
+  });
+
+  // G — false-positive path controls remain scanned
+  test.each([
+    'backend/contest/routes.js',
+    'frontend/latest/dashboard.js',
+    'services/testimonials/send.js',
+  ])('G. %s (only contains "test" as a substring) remains eligible for placeholder analysis', (path) => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile(path, "throw new Error('Not implemented');")],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeDefined();
+    expect(r.placeholderAssessment.files).toContain(path);
+  });
+
+  // H — .md exclusion unchanged
+  test('H. .md exclusion still works unchanged', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('docs/guide.md', "TODO: placeholder content, not implemented yet")],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+  });
+
+  // I — .html exclusion unchanged
+  test('I. .html exclusion still works unchanged', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('frontend/manage-repos.html', '<input placeholder="dummy value">')],
+    });
+    expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeUndefined();
+  });
+});
+
+// ── Test-file exclusion from scaffold_like_file heuristic ────────────────────
+
+describe('assessImplementationCompleteness — scaffold_like_file excludes test files', () => {
+  const staticJsxContent = "export default function Empty() { return <div>Placeholder</div>; }";
+  const staticJsonRouteContent = "router.get('/health', (req, res) => res.json({ status: 'ok' }));";
+
+  // A
+  test('A. a *.test.jsx file satisfying the static-JSX scaffold detector is not counted', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('tests/unit/frontend/Empty.test.jsx', staticJsxContent)],
+    });
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeUndefined();
+    expect(r.scaffoldAssessment.files).not.toContain('tests/unit/frontend/Empty.test.jsx');
+  });
+
+  // B
+  test('B. a *.spec.ts file satisfying the static-JSON-route scaffold detector is excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('tests/unit/backend/health.spec.ts', staticJsonRouteContent, 'TypeScript')],
+      inventory: makeInventory({ routes: ['tests/unit/backend/health.spec.ts'], hasApiLayer: true }),
+    });
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeUndefined();
+    expect(r.scaffoldAssessment.files).not.toContain('tests/unit/backend/health.spec.ts');
+  });
+
+  // C
+  test('C. a file under tests/ (no .test/.spec basename) satisfying the scaffold detector is excluded', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('tests/unit/health.js', staticJsonRouteContent)],
+      inventory: makeInventory({ routes: ['tests/unit/health.js'], hasApiLayer: true }),
+    });
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeUndefined();
+  });
+
+  // D — regression: genuine production scaffold-like file remains counted
+  test('D. a genuine production component satisfying the scaffold detector remains counted', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('src/components/Empty.jsx', staticJsxContent)],
+      inventory: makeInventory({ components: ['src/components/Empty.jsx'], hasComponentLayer: true }),
+    });
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeDefined();
+    expect(r.scaffoldAssessment.files).toContain('src/components/Empty.jsx');
+  });
+
+  // E — false-positive path controls remain eligible
+  test('E. frontend/latest/Widget.jsx (only contains "test" as a substring) remains eligible for scaffold analysis', () => {
+    const r = assessImplementationCompleteness({
+      ...emptyInput(),
+      files: [makeFile('frontend/latest/Widget.jsx', staticJsxContent)],
+    });
+    expect(r.signals.find(s => s.type === 'scaffold_like_file')).toBeDefined();
+  });
+});
+
+// ── Combined end-to-end: real inventory, test visibility, production evidence ─
+// Proves the intended architectural separation: test files remain visible as
+// test evidence (hasTests true, no routes/services_without_tests), but their
+// contents never become production placeholder/scaffold evidence.
+
+describe('assessImplementationCompleteness — combined end-to-end (real buildRepositoryStructureInventory)', () => {
+  const { buildRepositoryStructureInventory } = require('../../../../execution/architecture/buildRepositoryStructureInventory');
+
+  test('test placeholder/scaffold content is excluded while production placeholder/scaffold content is still flagged, and hasTests is true', () => {
+    const files = [
+      makeFile('backend/routes/fooRoutes.js', "const svc = require('../../services/fooService');\nrouter.get('/foo', svc.getFoo);"),
+      makeFile('services/fooService.js',      "module.exports = { getFoo: async () => db.query('SELECT 1') };"),
+      makeFile('tests/unit/backend/routes/fooRoutes.test.js', "test('foo', () => {});"),
+      makeFile('tests/unit/frontend/widget.test.js',
+        "function buildWidget(data) { if (!data) return null; return data.label; }\n" +
+        "test('placeholder when empty', () => { expect(buildWidget(null)).toBe(null); });"),
+      makeFile('tests/unit/frontend/Empty.test.jsx', "export default function Empty() { return <div>Placeholder</div>; }"),
+      makeFile('frontend/renderStub.js', "// TODO: implement real rendering\nmodule.exports = { renderStub: () => { throw new Error('Not implemented'); } };"),
+      makeFile('src/components/Empty.jsx', "export default function Empty() { return <div>Placeholder</div>; }"),
+    ];
+
+    const inventory = buildRepositoryStructureInventory({ files });
+    expect(inventory.architectureHints.hasTests).toBe(true);
+
+    const r = assessImplementationCompleteness({
+      files,
+      inventory,
+      dependencyGraph: {
+        nodes: [], edges: [
+          { from: 'backend/routes/fooRoutes.js', to: 'services/fooService.js', importPath: '../../services/fooService', importType: 'require' },
+        ],
+        circularDependencies: [], boundaryHints: [],
+        couplingMetrics: { totalNodes: 0, totalEdges: 0, unresolvedCount: 0, externalDependencyCount: 0, circularDependencyCount: 0, averageOutDegree: 0, highFanOutFiles: [], highFanInFiles: [] },
+      },
+      routeApiStructure: makeRouteApiStructure(),
+      apiLinkage: makeApiLinkage(),
+      boundaryVerification: makeBoundaryVerification(),
+    });
+
+    expect(r.signals.find(s => s.type === 'route_without_tests')).toBeUndefined();
+    expect(r.signals.find(s => s.type === 'service_without_tests')).toBeUndefined();
+
+    expect(r.placeholderAssessment.files).not.toContain('tests/unit/frontend/widget.test.js');
+    expect(r.scaffoldAssessment.files).not.toContain('tests/unit/frontend/Empty.test.jsx');
+
+    expect(r.placeholderAssessment.files).toContain('frontend/renderStub.js');
+    expect(r.scaffoldAssessment.files).toContain('src/components/Empty.jsx');
   });
 });
 
@@ -1195,5 +1760,84 @@ describe('assessImplementationCompleteness — false-positive suppression (Step 
     });
     expect(r.signals.find(s => s.type === 'placeholder_code_hint')).toBeDefined();
     expect(r.placeholderAssessment.files).toContain('execution/auth/refreshSession.js');
+  });
+});
+
+// ── End-to-end: real buildRepositoryStructureInventory → hasTests → completeness ──
+// Analyzer Improvement — Restore Test-File Visibility Without Scanning Test
+// Fixtures as Architecture. Test files are no longer excluded before reaching
+// the inventory categorizer (that exclusion moved to extractRouteApiStructure.js
+// at extraction time), so this validates the repo-wide hasTests boolean flows
+// correctly end-to-end from real file paths through to route_without_tests/
+// service_without_tests. This validates the CURRENT repo-wide hasTests
+// heuristic only — there is still no per-file production-file-to-test-file
+// matcher, so this does not (and cannot) prove per-file coverage association.
+
+describe('assessImplementationCompleteness — end-to-end inventory visibility (real buildRepositoryStructureInventory)', () => {
+  const { buildRepositoryStructureInventory } = require('../../../../execution/architecture/buildRepositoryStructureInventory');
+
+  function buildInventoryFromFiles(files) {
+    return buildRepositoryStructureInventory({ files });
+  }
+
+  test('requirement 6: test files reach categories.routes/services/tests and hasTests becomes true end-to-end', () => {
+    const files = [
+      makeFile('backend/routes/fooRoutes.js',                  "router.get('/foo', getFoo);"),
+      makeFile('services/domain/doThing.js',                   'module.exports = { doThing: () => {} };'),
+      makeFile('tests/unit/backend/routes/fooRoutes.test.js',  "test('foo', () => {});"),
+      makeFile('tests/unit/services/domain/doThing.test.js',   "test('doThing', () => {});"),
+    ];
+
+    const inventory = buildInventoryFromFiles(files);
+
+    expect(inventory.categories.routes).toContain('backend/routes/fooRoutes.js');
+    expect(inventory.categories.services).toContain('services/domain/doThing.js');
+    expect(inventory.categories.tests).toEqual(
+      expect.arrayContaining([
+        'tests/unit/backend/routes/fooRoutes.test.js',
+        'tests/unit/services/domain/doThing.test.js',
+      ])
+    );
+    expect(inventory.architectureHints.hasTests).toBe(true);
+
+    const r = assessImplementationCompleteness({
+      files,
+      inventory,
+      dependencyGraph:      makeDependencyGraph(),
+      routeApiStructure:    makeRouteApiStructure(),
+      apiLinkage:           makeApiLinkage(),
+      boundaryVerification: makeBoundaryVerification(),
+    });
+
+    expect(r.signals.find(s => s.type === 'route_without_tests')).toBeUndefined();
+    expect(r.signals.find(s => s.type === 'service_without_tests')).toBeUndefined();
+  });
+
+  test('requirement 7 (negative control): with no test files anywhere, hasTests stays false and both signals still fire at their real counts', () => {
+    const files = [
+      makeFile('backend/routes/fooRoutes.js', "router.get('/foo', getFoo);"),
+      makeFile('services/domain/doThing.js',  'module.exports = { doThing: () => {} };'),
+    ];
+
+    const inventory = buildInventoryFromFiles(files);
+
+    expect(inventory.categories.tests).toEqual([]);
+    expect(inventory.architectureHints.hasTests).toBe(false);
+
+    const r = assessImplementationCompleteness({
+      files,
+      inventory,
+      dependencyGraph:      makeDependencyGraph(),
+      routeApiStructure:    makeRouteApiStructure(),
+      apiLinkage:           makeApiLinkage(),
+      boundaryVerification: makeBoundaryVerification(),
+    });
+
+    const routeSignal   = r.signals.find(s => s.type === 'route_without_tests');
+    const serviceSignal = r.signals.find(s => s.type === 'service_without_tests');
+    expect(routeSignal).toBeDefined();
+    expect(routeSignal.count).toBe(1);
+    expect(serviceSignal).toBeDefined();
+    expect(serviceSignal.count).toBe(1);
   });
 });

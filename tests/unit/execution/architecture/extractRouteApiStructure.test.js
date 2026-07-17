@@ -2144,6 +2144,400 @@ describe('extractRouteApiStructure — mount prefix resolution', () => {
   });
 });
 
+// ── Nested router mount-prefix resolution ─────────────────────────────────────
+// Analyzer Improvement — Nested Express Router Mount Prefix Resolution.
+// Covers the live repoId=80 regression: after repoRoutes.js/portfolioRoutes.js
+// were split into composition routers, routes defined in the *child* domain
+// routers (mounted onto the composition router, not directly onto `app`) lost
+// their real /api/repos and /api/portfolio prefixes entirely.
+
+describe('extractRouteApiStructure — nested router mount-prefix resolution', () => {
+  const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+
+  // A. Current repoRoutes composition: server.js → /api/repos → repoRoutes → / → repoCoreRoutes
+  test('A. repoRoutes composition: routes in repoCoreRoutes inherit /api/repos', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', [
+          "const repoCoreRoutes = require('./repoCoreRoutes');",
+          "router.use('/', repoCoreRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoCoreRoutes.js', [
+          "router.get('/summary', getSummary);",
+          "router.get('/:id/metrics', getMetrics);",
+        ].join('\n')),
+      ],
+    });
+    expect(r.backendRoutes.find(rt => rt.method === 'GET' && rt.path === '/api/repos/summary')).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.method === 'GET' && rt.path === '/api/repos/:id/metrics')).toBeDefined();
+    // The stale, prefix-less extraction must not also be present.
+    expect(r.backendRoutes.find(rt => rt.path === '/summary')).toBeUndefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/:id/metrics')).toBeUndefined();
+  });
+
+  // B. Current portfolioRoutes composition: server.js → /api/portfolio → portfolioRoutes → portfolioArchitectureRoutes
+  test('B. portfolioRoutes composition: routes in portfolioArchitectureRoutes inherit /api/portfolio', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const portfolioRoutes = require('./routes/portfolioRoutes');",
+          "app.use('/api/portfolio', portfolioRoutes);",
+        ].join('\n')),
+        makeFile('routes/portfolioRoutes.js', [
+          "const portfolioArchitectureRoutes = require('./portfolioArchitectureRoutes');",
+          "router.use(portfolioArchitectureRoutes);",
+        ].join('\n')),
+        makeFile('routes/portfolioArchitectureRoutes.js', [
+          "router.get('/architecture', getArch);",
+          "router.get('/watchlists', getWatchlists);",
+        ].join('\n')),
+      ],
+    });
+    expect(r.backendRoutes.find(rt => rt.method === 'GET' && rt.path === '/api/portfolio/architecture')).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.method === 'GET' && rt.path === '/api/portfolio/watchlists')).toBeDefined();
+  });
+
+  // C. Omitted router.use prefix is equivalent to router.use('/', childRoutes)
+  test('C. router.use(childRoutes) with no prefix argument mounts at "/"', () => {
+    const withOmitted = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const parentRoutes = require('./parentRoutes');",
+          "app.use('/api/x', parentRoutes);",
+        ].join('\n')),
+        makeFile('parentRoutes.js', [
+          "const childRoutes = require('./childRoutes');",
+          "router.use(childRoutes);",
+        ].join('\n')),
+        makeFile('childRoutes.js', "router.get('/y', getY);"),
+      ],
+    });
+    const withExplicitSlash = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const parentRoutes = require('./parentRoutes');",
+          "app.use('/api/x', parentRoutes);",
+        ].join('\n')),
+        makeFile('parentRoutes.js', [
+          "const childRoutes = require('./childRoutes');",
+          "router.use('/', childRoutes);",
+        ].join('\n')),
+        makeFile('childRoutes.js', "router.get('/y', getY);"),
+      ],
+    });
+    const omittedPath  = withOmitted.backendRoutes.find(rt => rt.file === 'childRoutes.js').path;
+    const explicitPath = withExplicitSlash.backendRoutes.find(rt => rt.file === 'childRoutes.js').path;
+    expect(omittedPath).toBe('/api/x/y');
+    expect(omittedPath).toBe(explicitPath);
+  });
+
+  // D. Explicit child prefix
+  test('D. router.use("/risk", riskRoutes) applies the explicit child prefix', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('repoRoutes.js', [
+          "const riskRoutes = require('./riskRoutes');",
+          "router.use('/risk', riskRoutes);",
+        ].join('\n')),
+        makeFile('riskRoutes.js', "router.get('/:id', getRisk);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.file === 'riskRoutes.js');
+    expect(route.path).toBe('/api/repos/risk/:id');
+  });
+
+  // E. Three-hop mount chain: app → apiRouter → repoRouter → riskRouter
+  test('E. three-hop mount chain resolves the full transitive prefix', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const apiRouter = require('./apiRouter');",
+          "app.use('/api', apiRouter);",
+        ].join('\n')),
+        makeFile('apiRouter.js', [
+          "const repoRouter = require('./repoRouter');",
+          "router.use('/repos', repoRouter);",
+        ].join('\n')),
+        makeFile('repoRouter.js', [
+          "const riskRouter = require('./riskRouter');",
+          "router.use('/risk', riskRouter);",
+        ].join('\n')),
+        makeFile('riskRouter.js', "router.get('/:id', getRisk);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.file === 'riskRouter.js');
+    expect(route).toBeDefined();
+    expect(route.path).toBe('/api/repos/risk/:id');
+  });
+
+  // F. Direct mount regression — existing single-hop behavior unchanged
+  test('F. direct mount app.use("/api/auth", authRoutes) is unaffected', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const authRoutes = require('./routes/authRoutes');",
+          "app.use('/api/auth', authRoutes);",
+        ].join('\n')),
+        makeFile('routes/authRoutes.js', "router.get('/github', githubLogin);"),
+      ],
+    });
+    const route = r.backendRoutes.find(rt => rt.file === 'routes/authRoutes.js');
+    expect(route.path).toBe('/api/auth/github');
+  });
+
+  // G. Non-router middleware is never interpreted as child-router composition
+  test('G. router.use(authenticate) and app.use(express.json()) are ignored as mounts', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "const authenticate = require('./middleware/authenticate');",
+          "app.use(express.json());",
+          "app.use(cors());",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', [
+          "const authenticateAgain = require('../middleware/authenticate');",
+          "router.use(authenticateAgain);",
+          "router.get('/summary', getSummary);",
+        ].join('\n')),
+        makeFile('middleware/authenticate.js',
+          "module.exports = function authenticate(req, res, next) { next(); };"),
+      ],
+    });
+    // The real route still gets its prefix.
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos/summary')).toBeDefined();
+    // authenticate.js contributes no routes of its own and must not be treated
+    // as a mount target — it should never appear as a `file` in backendRoutes,
+    // and no route should be prefixed as if authenticate.js were a router.
+    expect(r.backendRoutes.find(rt => rt.file === 'middleware/authenticate.js')).toBeUndefined();
+    expect(r.backendRoutes.every(rt => !rt.path.includes('authenticate'))).toBe(true);
+  });
+
+  // H. Cycle protection: aRoutes ↔ bRoutes must not hang or throw
+  test('H. mutually-mounting routers (cycle) terminate safely without throwing', () => {
+    let r;
+    expect(() => {
+      r = extractRouteApiStructure({
+        files: [
+          makeFile('aRoutes.js', [
+            "const bRoutes = require('./bRoutes');",
+            "router.use(bRoutes);",
+            "router.get('/from-a', getFromA);",
+          ].join('\n')),
+          makeFile('bRoutes.js', [
+            "const aRoutes = require('./aRoutes');",
+            "router.use(aRoutes);",
+            "router.get('/from-b', getFromB);",
+          ].join('\n')),
+        ],
+      });
+    }).not.toThrow();
+    // Both routes are still extracted exactly once each — no infinite duplication.
+    const fromA = r.backendRoutes.filter(rt => rt.path.endsWith('/from-a'));
+    const fromB = r.backendRoutes.filter(rt => rt.path.endsWith('/from-b'));
+    expect(fromA).toHaveLength(1);
+    expect(fromB).toHaveLength(1);
+  });
+
+  // I. Same router mounted at two different prefixes — both must remain
+  test('I. the same router mounted at /v1 and /v2 produces both route sets', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const apiRoutes = require('./apiRoutes');",
+          "app.use('/v1', apiRoutes);",
+          "app.use('/v2', apiRoutes);",
+        ].join('\n')),
+        makeFile('apiRoutes.js', "router.get('/x', getX);"),
+      ],
+    });
+    expect(r.backendRoutes.find(rt => rt.path === '/v1/x')).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/v2/x')).toBeDefined();
+    expect(r.backendRoutes.filter(rt => rt.file === 'apiRoutes.js')).toHaveLength(2);
+  });
+
+  // J. Duplicate-path normalization — no double slashes anywhere
+  test('J. no resolved path contains a double slash, at any composition depth', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', [
+          "const repoCoreRoutes = require('./repoCoreRoutes');",
+          "router.use('/', repoCoreRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoCoreRoutes.js', [
+          "router.get('/summary', getSummary);",
+          "router.get('/:id/architecture', getArch);",
+        ].join('\n')),
+      ],
+    });
+    for (const rt of r.backendRoutes) {
+      expect(rt.path).not.toContain('//');
+    }
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos//summary')).toBeUndefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos//:id/architecture')).toBeUndefined();
+  });
+
+  // K. Full linkage regression — a real dynamic frontend call now links correctly
+  test('K. fetch to a dynamic child-router route links via linkFrontendBackendApis', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', [
+          "const repoCoreRoutes = require('./repoCoreRoutes');",
+          "router.use('/', repoCoreRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoCoreRoutes.js', "router.get('/:id/metrics', getMetrics);"),
+        makeFile('frontend/dashboard.html', 'fetch(`/api/repos/${id}/metrics`)'),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/repos/:id/metrics' || e.path === '/api/repos/:_p/metrics')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls.find(c => c.path.includes('metrics'))).toBeUndefined();
+  });
+
+  // L. False-link regression — a real prefixed route must not accidentally
+  // match an unrelated root-level frontend call just because the un-prefixed
+  // (buggy) extraction happened to collide with it.
+  test('L. GET /api/repos/summary does not exact-link to fetch("/summary")', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+          "app.get('/summary', getLegacySummary);",
+        ].join('\n')),
+        makeFile('routes/repoRoutes.js', [
+          "const repoCoreRoutes = require('./repoCoreRoutes');",
+          "router.use('/', repoCoreRoutes);",
+        ].join('\n')),
+        makeFile('routes/repoCoreRoutes.js', "router.get('/summary', getRepoSummary);"),
+        makeFile('frontend/legacy.html', "fetch('/summary')"),
+      ],
+    });
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    const repoSummaryLink = linkage.linkedEndpoints.find(e => e.path === '/api/repos/summary');
+    expect(repoSummaryLink).toBeUndefined(); // no frontend call targets this path
+    const legacySummaryLink = linkage.linkedEndpoints.find(e => e.path === '/summary');
+    expect(legacySummaryLink).toBeDefined();
+    // The legacy /summary link must only carry the server.js-level route, never
+    // the /api/repos/summary route mis-collapsed onto the same bare path.
+    expect(legacySummaryLink.backendRoutes.every(br => br.file === 'server.js')).toBe(true);
+  });
+
+  // Requirement 11 — route inventory is preserved: nested resolution must not
+  // drop any route, only correct its effective public path. Mirrors the real
+  // repoId=80 composition shape (repoRoutes → 3 child routers, portfolioRoutes
+  // → 2 child routers) at the same route counts documented in PROGRESS.md.
+  test('repoId=80-like fixture: nested resolution does not reduce backendRoutes count', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('backend/server.js', [
+          "const repoRoutes = require('./routes/repoRoutes');",
+          "const portfolioRoutes = require('./routes/portfolioRoutes');",
+          "app.use('/api/repos', repoRoutes);",
+          "app.use('/api/portfolio', portfolioRoutes);",
+        ].join('\n')),
+        makeFile('backend/routes/repoRoutes.js', [
+          "const repoCoreRoutes = require('./repoCoreRoutes');",
+          "const repoRiskRoutes = require('./repoRiskRoutes');",
+          "const repoArchitectureRoutes = require('./repoArchitectureRoutes');",
+          "router.use('/', repoCoreRoutes);",
+          "router.use('/', repoRiskRoutes);",
+          "router.use('/', repoArchitectureRoutes);",
+        ].join('\n')),
+        makeFile('backend/routes/repoCoreRoutes.js', [
+          "router.get('/', listRepos);",
+          "router.get('/:id/metrics', getMetrics);",
+          "router.get('/attention', getAttention);",
+          "router.get('/summary', getSummary);",
+          "router.post('/register', registerRepo);",
+          "router.post('/:id/change-risk', changeRisk);",
+          "router.post('/sync', syncRepos);",
+        ].join('\n')),
+        makeFile('backend/routes/repoRiskRoutes.js', [
+          "router.get('/:id/risk', getRisk);",
+          "router.get('/:id/events', getEvents);",
+          "router.get('/:id/escalation', getEscalation);",
+          "router.get('/:id/forecast', getForecast);",
+          "router.get('/:id/confidence', getConfidence);",
+          "router.get('/:id/pr-health', getPrHealth);",
+          "router.get('/:id/engineering-volatility', getVolatility);",
+          "router.get('/:id/maturity', getMaturity);",
+          "router.get('/:id/maturity-trend', getMaturityTrend);",
+        ].join('\n')),
+        makeFile('backend/routes/repoArchitectureRoutes.js', [
+          "router.get('/:id/architecture', getArch);",
+          "router.get('/:id/architecture/forecast', getArchForecast);",
+          "router.get('/:id/remediation', getRemediation);",
+        ].join('\n')),
+        makeFile('backend/routes/portfolioRoutes.js', [
+          "const portfolioArchitectureRoutes = require('./portfolioArchitectureRoutes');",
+          "const portfolioGovernanceRoutes = require('./portfolioGovernanceRoutes');",
+          "router.use(portfolioArchitectureRoutes);",
+          "router.use(portfolioGovernanceRoutes);",
+        ].join('\n')),
+        makeFile('backend/routes/portfolioArchitectureRoutes.js', [
+          "router.get('/forecast', getForecast);",
+          "router.get('/anomalies', getAnomalies);",
+          "router.get('/anomaly-clusters', getAnomalyClusters);",
+          "router.get('/telemetry-coverage', getTelemetryCoverage);",
+          "router.get('/architecture', getArch);",
+          "router.get('/watchlists', getWatchlists);",
+        ].join('\n')),
+        makeFile('backend/routes/portfolioGovernanceRoutes.js', [
+          "router.get('/executive-summary', getExecSummary);",
+          "router.get('/history', getHistory);",
+          "router.get('/changes', getChanges);",
+          "router.get('/behavioral-stability', getBehavioralStability);",
+          "router.get('/maturity', getMaturity);",
+          "router.get('/governance', getGovernance);",
+        ].join('\n')),
+      ],
+    });
+
+    // Same total route count as the ungrouped originals: 7 + 9 + 3 + 6 + 6 = 31.
+    const repoAndPortfolioRoutes = r.backendRoutes.filter(rt =>
+      rt.file.startsWith('backend/routes/repo') || rt.file.startsWith('backend/routes/portfolio'));
+    expect(repoAndPortfolioRoutes).toHaveLength(31);
+
+    // Every one of them carries the correct effective prefix — none stayed bare.
+    const repoRoutePaths      = r.backendRoutes.filter(rt => /repo(Core|Risk|Architecture)Routes\.js$/.test(rt.file)).map(rt => rt.path);
+    const portfolioRoutePaths = r.backendRoutes.filter(rt => /portfolio(Architecture|Governance)Routes\.js$/.test(rt.file)).map(rt => rt.path);
+    expect(repoRoutePaths.every(p => p.startsWith('/api/repos'))).toBe(true);
+    expect(portfolioRoutePaths.every(p => p.startsWith('/api/portfolio'))).toBe(true);
+
+    // Spot-check the two exact examples from the live regression.
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos/summary' && rt.file.endsWith('repoCoreRoutes.js'))).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/api/repos/:id/metrics' && rt.file.endsWith('repoCoreRoutes.js'))).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/api/portfolio/architecture')).toBeDefined();
+    expect(r.backendRoutes.find(rt => rt.path === '/api/portfolio/watchlists')).toBeDefined();
+  });
+});
+
 // ── Output shape ──────────────────────────────────────────────────────────────
 
 describe('extractRouteApiStructure — output shape', () => {
@@ -2251,6 +2645,290 @@ describe('extractRouteApiStructure — Markdown route code blocks are not backen
     });
     // /api/live is called and served — only route present
     expect(r.unusedBackendRoutes).toHaveLength(0);
+  });
+});
+
+// ── Documentation exclusion from frontend/BFF API-call extraction ───────────
+// Analyzer Improvement — Exclude Documentation from Frontend/BFF API-Call
+// Extraction. Confirmed live regression: snapshot #194 for repoId=80 had 6
+// unresolvedFrontendCalls, all traced to PROGRESS.md's own "Example Extracted
+// Calls" table documenting serverFetch/apiFetch/internalFetch/backendFetch
+// support — the table's illustrative call syntax was parsed as real calls
+// because _extractFrontendCalls ran unconditionally on every file, including
+// Markdown, while only backend-route extraction had a (`.md`-only) guard.
+
+describe('extractRouteApiStructure — documentation exclusion from frontend/BFF API-call extraction', () => {
+  const allCallForms = [
+    "fetch('/api/fetch')",
+    "axios.get('/api/axios')",
+    "serverFetch('/api/server')",
+    "apiFetch('/api/api-fetch')",
+    "internalFetch('/api/internal')",
+    "backendFetch('/api/backend')",
+  ].join('\n');
+
+  // A. .md file with every supported call form produces zero frontendApiCalls
+  test('A. a .md file containing fetch/axios/serverFetch/apiFetch/internalFetch/backendFetch produces zero frontendApiCalls', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('docs/api-guide.md', allCallForms)],
+    });
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  // B. .mdx file — same content, same zero result
+  test('B. a .mdx file containing the same call syntax produces zero frontendApiCalls', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('docs/api-guide.mdx', allCallForms)],
+    });
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  // C. Realistic PROGRESS.md-shaped regression fixture — the exact table that
+  // produced the live snapshot #194 false positives, reproduced verbatim.
+  test('C. PROGRESS.md-shaped markdown table contributes zero frontendApiCalls and zero unresolvedApiCalls', () => {
+    const progressLikeContent = [
+      '#### Example Extracted Calls',
+      '',
+      '| Input | Extracted call |',
+      '|---|---|',
+      "| `serverFetch('/api/repos')` | `{ method: 'GET', path: '/api/repos', client: 'serverFetch' }` |",
+      "| `` serverFetch(`/api/repos/${id}`) `` | `{ method: 'GET', path: '/api/repos/:param', client: 'serverFetch' }` |",
+      "| `serverFetch('/api/repos/' + id + '/metrics')` | `{ method: 'GET', path: '/api/repos/:_p/metrics', client: 'serverFetch' }` |",
+      "| `serverFetch('/api/repos', { method: 'POST' })` | `{ method: 'POST', path: '/api/repos', client: 'serverFetch' }` |",
+      '| `apiFetch(\'/api/x\', { method: "PATCH" })` | `{ method: \'PATCH\', path: \'/api/x\', client: \'apiFetch\' }` |',
+      "| `internalFetch('/api/y')` | `{ method: 'GET', path: '/api/y', client: 'internalFetch' }` |",
+      "| `backendFetch('/api/z')` | `{ method: 'GET', path: '/api/z', client: 'backendFetch' }` |",
+      '',
+      "a three-segment concatenation (`serverFetch('/api/' + a + '/' + b)`) is not handled",
+    ].join('\n');
+
+    const r = extractRouteApiStructure({
+      files: [makeFile('PROGRESS.md', progressLikeContent)],
+    });
+
+    // Actual returned field names: frontendApiCalls and unresolvedApiCalls.
+    expect(r.frontendApiCalls).toHaveLength(0);
+    expect(r.unresolvedApiCalls).toHaveLength(0);
+
+    const forbiddenPaths = [
+      '/api/:_p',
+      '/api/repos',
+      '/api/repos/:param',
+      '/api/repos/:_p/metrics',
+      '/api/x',
+      '/api/y',
+      '/api/z',
+    ];
+    for (const p of forbiddenPaths) {
+      expect(r.frontendApiCalls.find(c => c.path === p)).toBeUndefined();
+      expect(r.unresolvedApiCalls.find(c => c.path === p)).toBeUndefined();
+    }
+  });
+
+  // D. Identical call syntax in real code files is still extracted —
+  // parameterized across every supported code extension.
+  describe.each([
+    ['.js',   'JavaScript'],
+    ['.jsx',  'JavaScript'],
+    ['.ts',   'TypeScript'],
+    ['.tsx',  'TypeScript'],
+    ['.mjs',  'JavaScript'],
+    ['.cjs',  'JavaScript'],
+  ])('D. %s files are unaffected by the documentation guard', (ext, language) => {
+    test(`fetch/axios/serverFetch/apiFetch/internalFetch/backendFetch all still extract from a src/api${ext} file`, () => {
+      const r = extractRouteApiStructure({
+        files: [makeFile('src/api' + ext, allCallForms, language)],
+      });
+      expect(r.frontendApiCalls).toHaveLength(6);
+      const paths = r.frontendApiCalls.map(c => c.path).sort();
+      expect(paths).toEqual([
+        '/api/api-fetch', '/api/axios', '/api/backend',
+        '/api/fetch', '/api/internal', '/api/server',
+      ]);
+    });
+  });
+
+  // E. .html remains fully scanned and still links end-to-end.
+  test('E. an .html file with a real fetch() call is still extracted and links to its backend route', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('frontend/index.html', "fetch('/api/example')"),
+        makeFile('server.js', "app.get('/api/example', getExample);"),
+      ],
+    });
+    const call = r.frontendApiCalls.find(c => c.path === '/api/example' && c.method === 'GET');
+    expect(call).toBeDefined();
+    expect(call.file).toBe('frontend/index.html');
+
+    const { linkFrontendBackendApis } = require('../../../../execution/architecture/linkFrontendBackendApis');
+    const linkage = linkFrontendBackendApis({
+      backendRoutes:     r.backendRoutes,
+      frontendApiCalls:  r.frontendApiCalls,
+      endpointInventory: r.endpointInventory,
+    });
+    expect(linkage.linkedEndpoints.find(e => e.path === '/api/example')).toBeDefined();
+    expect(linkage.unresolvedFrontendCalls).toHaveLength(0);
+  });
+
+  // F. Pre-existing Markdown backend-route exclusion behavior is preserved —
+  // both .md and .mdx.
+  test('F. Express/NestJS-looking route examples in .md and .mdx still create zero backendRoutes', () => {
+    const routeLikeContent = [
+      "app.get('/api/users', getUsers);",
+      "router.post('/api/users', createUser);",
+      "@Controller('cats')",
+      'class CatsController {',
+      "  @Get('/')",
+      '  findAll() {}',
+      '}',
+    ].join('\n');
+
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('docs/api-reference.md', routeLikeContent),
+        makeFile('docs/api-reference.mdx', routeLikeContent),
+      ],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+  });
+});
+
+// ── Test-file exclusion from architecture extraction ─────────────────────────
+// Analyzer Improvement — Restore Test-File Visibility Without Scanning Test
+// Fixtures as Architecture. Test files are no longer excluded at the GitHub-
+// fetch layer (fetchRepositoryFiles.js) so structure inventory/completeness
+// analysis can see them; this block proves the false-positive protection that
+// exclusion used to provide (fixture strings like "app.get('/api/foo', ...)"
+// or "fetch('/api/ghost')" inside test files being scanned as real
+// architecture evidence) now holds at extraction time instead.
+
+describe('extractRouteApiStructure — test-file exclusion from architecture extraction', () => {
+  // A
+  test('A. a .test.js file with Express/fetch/BFF fixture strings produces no backendRoutes or frontendApiCalls', () => {
+    const fixtureContent = [
+      "app.get('/api/foo', handler);",
+      "router.post('/api/bar', handler);",
+      "fetch('/api/foo')",
+      "serverFetch('/api/server')",
+    ].join('\n');
+    const r = extractRouteApiStructure({
+      files: [makeFile('tests/unit/backend/routes/fooRoutes.test.js', fixtureContent)],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  // B
+  test('B. a .spec.ts file with NestJS decorator examples produces no NestJS backendRoutes', () => {
+    const nestFixture = [
+      "@Controller('api/users')",
+      'class UsersController {',
+      '  @Get()',
+      '  findAll() {}',
+      "  @Post('create')",
+      '  create() {}',
+      '}',
+    ].join('\n');
+    const r = extractRouteApiStructure({
+      files: [makeFile('tests/unit/users.controller.spec.ts', nestFixture, 'TypeScript')],
+    });
+    expect(r.backendRoutes.filter(rt => rt.framework === 'nestjs')).toHaveLength(0);
+  });
+
+  // C — excluded regardless of basename, purely by directory segment
+  test.each([
+    'tests/fixture.js',
+    'test/fixture.js',
+    '__tests__/fixture.js',
+  ])('C. a file under a test directory (%s) is excluded even without .test/.spec in its basename', (path) => {
+    const r = extractRouteApiStructure({
+      files: [makeFile(path, "app.get('/api/fixture', handler); fetch('/api/fixture')")],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  // D
+  test('D. a nested test directory (packages/web/tests/fixture.js) is excluded', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('packages/web/tests/fixture.js', "app.get('/api/fixture', handler); fetch('/api/fixture')")],
+    });
+    expect(r.backendRoutes).toHaveLength(0);
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  // E — directories that merely contain the substring "test" must not be
+  // misclassified; these must remain fully scanned.
+  test.each([
+    ['backend/contest/routes.js',      "app.get('/api/contest', handler);"],
+    ['frontend/latest/dashboard.js',   "fetch('/api/latest')"],
+    ['services/testimonials/send.js',  "fetch('/api/testimonials')"],
+  ])('E. %s (only contains "test" as a substring) remains scanned', (path, content) => {
+    const r = extractRouteApiStructure({ files: [makeFile(path, content)] });
+    const total = r.backendRoutes.length + r.frontendApiCalls.length;
+    expect(total).toBeGreaterThan(0);
+  });
+
+  // F
+  test('F. a real production route file is extracted while its co-located test file fixture is ignored', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('backend/routes/fooRoutes.js', "router.get('/foo', getFoo);"),
+        makeFile('tests/unit/backend/routes/fooRoutes.test.js',
+          "app.get('/api/fixture-only', handler); fetch('/api/fixture-only')"),
+      ],
+    });
+    expect(r.backendRoutes.find(rt => rt.path === '/foo' && rt.file === 'backend/routes/fooRoutes.js')).toBeDefined();
+    expect(r.backendRoutes).toHaveLength(1);
+    expect(r.frontendApiCalls.find(c => c.path === '/api/fixture-only')).toBeUndefined();
+  });
+
+  // G — HTML production extraction remains unchanged
+  test('G. a real .html file (not under a test path) is still fully scanned', () => {
+    const r = extractRouteApiStructure({
+      files: [makeFile('frontend/index.html', "fetch('/api/real')")],
+    });
+    expect(r.frontendApiCalls.find(c => c.path === '/api/real')).toBeDefined();
+  });
+
+  // H — .md/.mdx documentation exclusion remains unchanged and independent
+  // of the new test-file guard.
+  test('H. .md/.mdx documentation exclusion is unaffected by the test-file guard', () => {
+    const r = extractRouteApiStructure({
+      files: [
+        makeFile('docs/guide.md', "serverFetch('/api/doc')"),
+        makeFile('docs/guide.mdx', "serverFetch('/api/doc-mdx')"),
+      ],
+    });
+    expect(r.frontendApiCalls).toHaveLength(0);
+  });
+
+  // Next.js interaction (requirement 10) — proves _nextUrlFromPath's anchored
+  // regexes structurally cannot match a test-marked path, so no additional
+  // guard was needed for Next.js extraction.
+  describe('Next.js route extraction cannot match test-marked paths (structural, no guard needed)', () => {
+    test('tests/app/api/users/route.ts does not become a Next.js route', () => {
+      const r = extractRouteApiStructure({
+        files: [makeFile('tests/app/api/users/route.ts', 'export async function GET() {}', 'TypeScript')],
+      });
+      expect(r.nextRoutes).toHaveLength(0);
+      expect(r.backendRoutes.filter(rt => rt.framework === 'nextjs-app-router')).toHaveLength(0);
+    });
+
+    test('apps/web/__tests__/app/api/users/route.ts does not become a Next.js route', () => {
+      const r = extractRouteApiStructure({
+        files: [makeFile('apps/web/__tests__/app/api/users/route.ts', 'export async function GET() {}', 'TypeScript')],
+      });
+      expect(r.nextRoutes).toHaveLength(0);
+      expect(r.backendRoutes.filter(rt => rt.framework === 'nextjs-app-router')).toHaveLength(0);
+    });
+
+    test('a real (non-test) app/api/users/route.ts at the same shape still extracts normally', () => {
+      const r = extractRouteApiStructure({
+        files: [makeFile('apps/web/app/api/users/route.ts', 'export async function GET() {}', 'TypeScript')],
+      });
+      expect(r.nextRoutes).toHaveLength(1);
+    });
   });
 });
 

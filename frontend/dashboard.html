@@ -5229,65 +5229,16 @@
       return h;
     }
 
-    function buildTopRemediationActionsHtml(data, esc) {
-      var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
-
-      function priRank(p) {
-        var s = (p || '').toLowerCase();
-        return PRIORITY_RANK.hasOwnProperty(s) ? PRIORITY_RANK[s] : 4;
-      }
-
-      function priCls(p) {
-        var s = (p || '').toLowerCase();
-        if (s === 'critical') return 'severity-critical';
-        if (s === 'high')     return 'severity-high';
-        if (s === 'medium')   return 'severity-medium';
-        if (s === 'low')      return 'severity-healthy';
-        return 'severity-unknown';
-      }
-
-      var items;
-      var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
-      if (recs.length > 0) {
-        items = recs.slice().sort(function(a, b) {
-          return priRank(a.priority) - priRank(b.priority);
-        }).slice(0, 5);
-      } else {
-        var ap = data.actionPlan || {};
-        var combined = (Array.isArray(ap.immediate) ? ap.immediate : [])
-          .concat(Array.isArray(ap.shortTerm) ? ap.shortTerm : []);
-        if (!combined.length) return '';
-        items = combined.slice(0, 5).map(function(item) {
-          return { title: item ? item.title : undefined, rationale: item ? item.reason : undefined };
-        });
-      }
-
-      if (!items || !items.length) return '';
-
-      var h = '<div class="arch-sub-panel" style="margin-bottom:12px;">';
-      h += '<div class="arch-sub-label">Top Remediation Actions</div>';
-      items.forEach(function(item) {
-        if (!item) return;
-        h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">';
-        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px;">';
-        if (item.priority) {
-          h += '<span class="aq-badge ' + priCls(item.priority) + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
-            + esc(String(item.priority).toUpperCase()) + '</span>';
-        }
-        if (item.category) {
-          h += '<span style="font-size:0.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">'
-            + esc(String(item.category)) + '</span>';
-        }
-        h += '</div>';
-        if (item.title)     h += '<div style="font-size:0.82rem;font-weight:600;color:var(--text-primary);margin-bottom:2px;">' + esc(item.title) + '</div>';
-        if (item.rationale) h += '<div style="font-size:0.77rem;color:var(--text-secondary);">' + esc(item.rationale) + '</div>';
-        h += '</div>';
-      });
-      h += '</div>';
-      return h;
+    function _remediationPriCls(p) {
+      var s = (p || '').toLowerCase();
+      if (s === 'critical') return 'severity-critical';
+      if (s === 'high')     return 'severity-high';
+      if (s === 'medium')   return 'severity-medium';
+      if (s === 'low')      return 'severity-healthy';
+      return 'severity-unknown';
     }
 
-    function buildRepoRemediationHtml(data) {
+    function buildRemediationHeaderHtml(data) {
       var UNAVAIL = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
         + 'Remediation guidance unavailable until architecture intelligence is available for this repository.</p>';
 
@@ -5296,26 +5247,11 @@
       var level = (data.recommendationLevel || 'unknown').toLowerCase();
       if (level === 'unknown') return UNAVAIL;
 
-      var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
-      if (recs.length === 0 && level === 'none') {
-        return '<p style="font-size:0.83rem;color:var(--text-muted);padding:6px 0;">'
-          + 'No remediation actions are currently recommended for this repository.</p>';
-      }
-
       function levelCls(l) {
         if (l === 'none' || l === 'low') return 'severity-healthy';
         if (l === 'medium')   return 'severity-medium';
         if (l === 'high')     return 'severity-high';
         if (l === 'critical') return 'severity-critical';
-        return 'severity-unknown';
-      }
-
-      function priCls(p) {
-        var s = (p || '').toLowerCase();
-        if (s === 'critical') return 'severity-critical';
-        if (s === 'high')     return 'severity-high';
-        if (s === 'medium')   return 'severity-medium';
-        if (s === 'low')      return 'severity-healthy';
         return 'severity-unknown';
       }
 
@@ -5337,8 +5273,6 @@
           + esc(String(conf).toUpperCase()) + ' CONFIDENCE</span>';
       }
       h += '</div>';
-
-      h += buildTopRemediationActionsHtml(data, esc);
 
       if (data.rawRemediationScore != null && data.scoreCapApplied) {
         h += '<div style="font-size:0.71rem;color:var(--text-muted);margin:-2px 0 5px;">'
@@ -5374,109 +5308,94 @@
         try { mp.push('generated ' + new Date(meta.generatedAt).toLocaleString()); } catch (e) { /* ignore */ }
       }
       if (mp.length) {
-        h += '<div style="font-size:0.70rem;color:var(--text-muted);margin-bottom:10px;">' + mp.join(' · ') + '</div>';
-      }
-
-      // A. Action Plan
-      var ap     = data.actionPlan || {};
-      var phases = [['immediate','Immediate'],['shortTerm','Short-term'],['mediumTerm','Medium-term'],['longTerm','Long-term']];
-      var hasAP  = phases.some(function(p) { var a = ap[p[0]]; return Array.isArray(a) && a.length > 0; });
-      if (hasAP) {
-        h += '<div class="arch-sub-panel">';
-        h += '<div class="arch-sub-label">Action Plan</div>';
-        phases.forEach(function(p) {
-          var items = ap[p[0]];
-          if (!Array.isArray(items) || !items.length) return;
-          h += '<div style="font-size:0.72rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 4px;">'
-            + esc(p[1]) + '</div>';
-          items.forEach(function(item) {
-            if (!item) return;
-            h += '<div class="arch-rec">';
-            if (item.title)  h += '<strong>' + esc(item.title) + '</strong>';
-            if (item.reason) h += '<span style="color:var(--text-muted);font-size:0.78rem;margin-left:6px;">' + esc(item.reason) + '</span>';
-            h += '</div>';
-          });
-        });
-        h += '</div>';
-      }
-
-      // B. Recommendations (top 10)
-      if (recs.length > 0) {
-        h += '<div class="arch-sub-panel">';
-        h += '<div class="arch-sub-label">Recommendations</div>';
-        recs.slice(0, 10).forEach(function(rec) {
-          if (!rec) return;
-          h += '<div style="padding:8px 0;border-bottom:1px solid var(--border);">';
-          h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">';
-          if (rec.priority) {
-            h += '<span class="aq-badge ' + priCls(rec.priority) + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
-              + esc(String(rec.priority).toUpperCase()) + '</span>';
-          }
-          if (rec.category) {
-            h += '<span style="font-size:0.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">'
-              + esc(String(rec.category)) + '</span>';
-          }
-          h += '</div>';
-          if (rec.title)           h += '<div style="font-size:0.82rem;font-weight:600;color:var(--text-primary);margin-bottom:3px;">' + esc(rec.title) + '</div>';
-          if (rec.rationale)       h += '<div style="font-size:0.77rem;color:var(--text-secondary);margin-bottom:2px;">' + esc(rec.rationale) + '</div>';
-          if (rec.expectedOutcome) h += '<div style="font-size:0.75rem;color:var(--text-muted);font-style:italic;">Expected outcome: ' + esc(rec.expectedOutcome) + '</div>';
-          if (Array.isArray(rec.evidence) && rec.evidence.length) {
-            var ev = rec.evidence.slice(0, 2).map(function(e) { return esc(typeof e === 'string' ? e : String(e)); });
-            h += '<div style="font-size:0.70rem;color:var(--text-muted);margin-top:3px;">Evidence: '
-              + ev.join(', ') + (rec.evidence.length > 2 ? '…' : '') + '</div>';
-          }
-          h += '</div>';
-        });
-        h += '</div>';
-      }
-
-      // C. Priorities
-      var pri = data.priorities || {};
-      if (pri.highestPriorityCategory || pri.highestPriorityRecommendationId != null
-          || pri.criticalRecommendationCount != null || pri.highRecommendationCount != null) {
-        h += '<div class="arch-sub-panel">';
-        h += '<div class="arch-sub-label">Priorities</div>';
-        h += '<div class="arch-metric-grid">';
-        if (pri.criticalRecommendationCount != null) h += '<div class="arch-metric"><div class="arch-metric-val">' + esc(String(pri.criticalRecommendationCount)) + '</div><div class="arch-metric-lbl">Critical</div></div>';
-        if (pri.highRecommendationCount    != null) h += '<div class="arch-metric"><div class="arch-metric-val">' + esc(String(pri.highRecommendationCount))    + '</div><div class="arch-metric-lbl">High</div></div>';
-        if (pri.highestPriorityCategory)            h += '<div class="arch-metric"><div class="arch-metric-val" style="font-size:0.8rem;">' + esc(String(pri.highestPriorityCategory)) + '</div><div class="arch-metric-lbl">Top Category</div></div>';
-        h += '</div>';
-        if (pri.highestPriorityRecommendationId) {
-          h += '<div style="font-size:0.71rem;color:var(--text-muted);margin-top:6px;">Highest priority: '
-            + esc(String(pri.highestPriorityRecommendationId)) + '</div>';
-        }
-        h += '</div>';
-      }
-
-      // D. Estimated Impact
-      var imp     = data.estimatedImpact || {};
-      var impKeys = ['governanceImpact','architectureImpact','riskReduction','confidence'];
-      var impLbls = { governanceImpact:'Governance', architectureImpact:'Architecture', riskReduction:'Risk Reduction', confidence:'Confidence' };
-      if (impKeys.some(function(k) { return imp[k] != null; })) {
-        h += '<div class="arch-sub-panel">';
-        h += '<div class="arch-sub-label">Estimated Impact</div>';
-        h += '<div class="arch-metric-grid">';
-        impKeys.forEach(function(k) {
-          if (imp[k] == null) return;
-          h += '<div class="arch-metric"><div class="arch-metric-val" style="font-size:0.85rem;text-transform:capitalize;">'
-            + esc(String(imp[k])) + '</div><div class="arch-metric-lbl">' + esc(impLbls[k]) + '</div></div>';
-        });
-        h += '</div>';
-        h += '</div>';
+        h += '<div style="font-size:0.70rem;color:var(--text-muted);margin-bottom:6px;">' + mp.join(' · ') + '</div>';
       }
 
       return h;
     }
 
-    function loadRepoRemediation(repoId) {
-      var mySeq     = ++_remediationRequestSeq;
-      var container = document.getElementById('repo-remediation-content');
-      if (!container) return;
+    function buildRemediationActionPlanHtml(data) {
+      var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+      if (!recs.length) return '';
 
-      if (_remediationCacheByRepoId[repoId]) {
-        container.innerHTML = _remediationCacheByRepoId[repoId];
+      var h = '<div class="arch-sub-panel">';
+      h += '<div class="arch-sub-label">Prioritized Action Plan</div>';
+      recs.slice(0, 10).forEach(function(rec) {
+        if (!rec) return;
+        h += '<div style="padding:8px 0;border-bottom:1px solid var(--border);">';
+        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">';
+        if (rec.priority) {
+          h += '<span class="aq-badge ' + _remediationPriCls(rec.priority) + '" style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:1px 7px;border-radius:99px;border:1px solid transparent;">'
+            + esc(String(rec.priority).toUpperCase()) + '</span>';
+        }
+        if (rec.category) {
+          h += '<span style="font-size:0.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">'
+            + esc(String(rec.category)) + '</span>';
+        }
+        h += '</div>';
+        if (rec.title)           h += '<div style="font-size:0.82rem;font-weight:600;color:var(--text-primary);margin-bottom:3px;">' + esc(rec.title) + '</div>';
+        if (rec.rationale)       h += '<div style="font-size:0.77rem;color:var(--text-secondary);margin-bottom:2px;">' + esc(rec.rationale) + '</div>';
+        if (rec.expectedOutcome) h += '<div style="font-size:0.75rem;color:var(--text-muted);font-style:italic;">Expected outcome: ' + esc(rec.expectedOutcome) + '</div>';
+        h += '</div>';
+      });
+      h += '</div>';
+      return h;
+    }
+
+    function buildRemediationImpactSummaryHtml(data) {
+      var pri = data.priorities      || {};
+      var imp = data.estimatedImpact || {};
+
+      var metrics = [];
+      if (pri.criticalRecommendationCount != null) metrics.push(['Critical', String(pri.criticalRecommendationCount)]);
+      if (pri.highRecommendationCount    != null) metrics.push(['High',     String(pri.highRecommendationCount)]);
+      if (pri.highestPriorityCategory)            metrics.push(['Top Category', String(pri.highestPriorityCategory)]);
+      if (imp.governanceImpact    != null)        metrics.push(['Governance',    String(imp.governanceImpact)]);
+      if (imp.architectureImpact  != null)        metrics.push(['Architecture',  String(imp.architectureImpact)]);
+      if (imp.riskReduction       != null)        metrics.push(['Risk Reduction', String(imp.riskReduction)]);
+
+      if (!metrics.length) return '';
+
+      var h = '<div class="arch-sub-panel">';
+      h += '<div class="arch-sub-label">Impact Summary</div>';
+      h += '<div class="arch-metric-grid">';
+      metrics.forEach(function(m) {
+        h += '<div class="arch-metric"><div class="arch-metric-val" style="font-size:0.85rem;text-transform:capitalize;">'
+          + esc(m[1]) + '</div><div class="arch-metric-lbl">' + esc(m[0]) + '</div></div>';
+      });
+      h += '</div>';
+      h += '</div>';
+      return h;
+    }
+
+    function buildRemediationBodyHtml(data) {
+      if (!data) return '';
+
+      var level = (data.recommendationLevel || 'unknown').toLowerCase();
+      if (level === 'unknown') return '';
+
+      var recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+      if (!recs.length) {
+        return '<p style="font-size:0.83rem;color:var(--text-muted);padding:6px 0;">'
+          + 'No remediation actions are currently recommended for this repository.</p>';
+      }
+
+      return buildRemediationActionPlanHtml(data) + buildRemediationImpactSummaryHtml(data);
+    }
+
+    function loadRepoRemediation(repoId) {
+      var mySeq   = ++_remediationRequestSeq;
+      var headerEl = document.getElementById('repo-remediation-header-content');
+      var bodyEl   = document.getElementById('repo-remediation-content');
+      if (!headerEl && !bodyEl) return;
+
+      var cached = _remediationCacheByRepoId[repoId];
+      if (cached) {
+        if (headerEl) headerEl.innerHTML = cached.header;
+        if (bodyEl)   bodyEl.innerHTML   = cached.body;
       } else {
-        container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+        if (headerEl) headerEl.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
+        if (bodyEl)   bodyEl.innerHTML   = '<p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p>';
       }
 
       fetch('/api/repos/' + encodeURIComponent(String(repoId)) + '/remediation', { credentials: 'include' })
@@ -5486,19 +5405,25 @@
           return r.json().catch(function() { return null; });
         })
         .then(function(data) {
-          if (_remediationRequestSeq !== mySeq || !container) return;
-          var html = buildRepoRemediationHtml(data);
-          _remediationCacheByRepoId[repoId] = html;
-          container.innerHTML = html;
+          if (_remediationRequestSeq !== mySeq) return;
+          var headerHtml = buildRemediationHeaderHtml(data);
+          var bodyHtml   = buildRemediationBodyHtml(data);
+          _remediationCacheByRepoId[repoId] = { header: headerHtml, body: bodyHtml };
+          if (headerEl) headerEl.innerHTML = headerHtml;
+          if (bodyEl)   bodyEl.innerHTML   = bodyHtml;
         })
         .catch(function(err) {
           console.warn('[remediation] fetch failed:', err);
-          if (_remediationRequestSeq !== mySeq || !container) return;
-          if (_remediationCacheByRepoId[repoId]) {
-            container.innerHTML = _remediationCacheByRepoId[repoId];
+          if (_remediationRequestSeq !== mySeq) return;
+          var fallback = _remediationCacheByRepoId[repoId];
+          if (fallback) {
+            if (headerEl) headerEl.innerHTML = fallback.header;
+            if (bodyEl)   bodyEl.innerHTML   = fallback.body;
           } else {
-            container.innerHTML = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
+            var unavail = '<p style="font-size:0.82rem;color:var(--text-muted);font-style:italic;padding:4px 0;">'
               + 'Remediation guidance unavailable until architecture intelligence is available for this repository.</p>';
+            if (headerEl) headerEl.innerHTML = unavail;
+            if (bodyEl)   bodyEl.innerHTML   = '';
           }
         });
     }
@@ -6112,12 +6037,13 @@
         +   '<div id="repo-architecture-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="remediation">'
-        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Recent Regressions</div>'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Repository Remediation</div>'
+        +   '<div id="repo-remediation-header-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
+        +   '<div class="repo-detail-label section-primary" style="margin-top:12px;">Recent Regressions</div>'
         +   '<div id="repo-regressions-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
+        +   '<div id="repo-remediation-content" style="margin-top:10px;"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         +   '<div class="repo-detail-label section-primary" style="margin-top:12px;">Recent Version Changes</div>'
         +   '<div id="repo-version-changes-content"></div>'
-        +   '<div class="repo-detail-label section-primary" style="margin-top:12px;">Repository Remediation</div>'
-        +   '<div id="repo-remediation-content"><p style="font-size:0.82rem;color:var(--text-muted);">Loading…</p></div>'
         + '</div>'
         + '<div class="repo-tab-panel" data-panel="change-risk">'
         +   '<div class="repo-detail-label section-primary" style="margin-top:8px;">Change Risk Prediction</div>'

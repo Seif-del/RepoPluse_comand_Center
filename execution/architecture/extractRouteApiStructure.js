@@ -37,6 +37,44 @@ function _normTemplateParams(p) {
   return p.replace(/\$\{[^}]+\}/g, ':param');
 }
 
+// ── Documentation-file exclusion ──────────────────────────────────────────────
+// Markdown/MDX prose is not executable source. Code samples inside .md/.mdx
+// files (e.g. a table documenting `serverFetch('/api/x')` usage) match the same
+// regexes as real route registrations and API calls, producing false positives.
+// Extension-only, case-insensitive — deliberately narrow: no repository category
+// metadata, no docs-directory classification (unlike buildImportDependencyGraph.js's
+// broader exclusion), and HTML is never matched by this predicate.
+
+function _isDocumentationFile(path) {
+  return /\.mdx?$/i.test(path || '');
+}
+
+// ── Test-file exclusion ───────────────────────────────────────────────────────
+// Test fixtures routinely contain source-code strings that look exactly like
+// real route registrations or API calls (e.g. a supertest fixture literally
+// containing "app.get('/api/foo', handler)" or "fetch('/api/ghost')"). Those
+// strings are not real architecture evidence. This used to be enforced by
+// excluding test files from the GitHub fetch entirely (fetchRepositoryFiles.js),
+// which also hid them from structure-inventory/completeness analysis that
+// legitimately needs to see them. The exclusion now lives here instead, at
+// extraction time, so test files remain visible everywhere else.
+//
+// Segment-boundary-anchored (`/…/`) so a directory merely *containing* the
+// substring "test" — backend/contest/routes.js, frontend/latest/dashboard.js,
+// services/testimonials/send.js — is never misclassified; only an exact
+// tests/test/__tests__ path segment, or a *.test.*/*.spec.* filename, counts.
+
+const TEST_FILE_PATTERNS = [
+  /^(?:tests?|__tests__)\//i,   // starts with tests/, test/, or __tests__/
+  /\/(?:tests?|__tests__)\//i,  // tests/, test/, or __tests__/ nested anywhere
+  /\.(?:test|spec)\.[jt]sx?$/i, // *.test.js/jsx/ts/tsx  *.spec.js/jsx/ts/tsx
+];
+
+function _isTestFile(path) {
+  const p = path || '';
+  return TEST_FILE_PATTERNS.some(function(re) { return re.test(p); });
+}
+
 // ── Comment stripping ─────────────────────────────────────────────────────────
 
 function _stripComments(src) {
@@ -103,9 +141,17 @@ const FASTIFY_ROUTE_OBJ_RE2 = /\bfastify\s*\.\s*route\s*\(\s*\{[^}]*?url\s*:\s*[
 // fastify.get/post/etc.
 const FASTIFY_METHOD_RE = /\bfastify\s*\.\s*(get|post|put|delete|patch|head|options)\s*\(\s*(['"`])((?:\\.|[^\\])*?)\2\s*(.*?)(?=\)|\n|;)/gis;
 
-// app.use / router.use (mount)
+// app.use / router.use (mount) — explicit-prefix form
 // Group 1: object, Group 2: quote, Group 3: path, \2 closes the quote
 const USE_RE = /\b(app|router)\s*\.\s*use\s*\(\s*(['"`])((?:\\.|[^\\])*?)\2\s*,\s*([A-Za-z_$][\w$]*)\s*\)/gis;
+
+// app.use / router.use (mount) — omitted-prefix composition form, e.g.
+// `router.use(childRoutes)`, equivalent to mounting at '/'. The identifier
+// must be the *only* argument, immediately followed by the closing paren, so
+// this never matches the explicit-prefix form above (which always has a
+// leading quoted path) or a call expression like `express.json()`/`cors()`
+// (which have `(`/`.` immediately after the identifier, not `)`).
+const USE_NO_PREFIX_RE = /\b(app|router)\s*\.\s*use\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/gis;
 
 function _extractExpressRoutes(filePath, src) {
   const stripped = _stripComments(src);
@@ -149,12 +195,21 @@ function _extractExpressRoutes(filePath, src) {
     routes.push({ method, path, file: filePath, framework: 'fastify', handlerType: 'unknown', handlerName: null });
   }
 
-  // app.use / router.use mounts
+  // app.use / router.use mounts — explicit-prefix form
   USE_RE.lastIndex = 0;
   while ((m = USE_RE.exec(stripped)) !== null) {
     const mountPath  = _normRoutePath(m[3]);
     const routerName = m[4];
     handlers.push({ file: filePath, mountPath, routerName });
+  }
+
+  // app.use / router.use mounts — omitted-prefix form (mount at '/').
+  // Raw/unfiltered, same as the explicit-prefix form above: whether the
+  // identifier actually resolves to a route module (vs. plain middleware
+  // like `authenticate`) is decided later, in _buildMountEdges.
+  USE_NO_PREFIX_RE.lastIndex = 0;
+  while ((m = USE_NO_PREFIX_RE.exec(stripped)) !== null) {
+    handlers.push({ file: filePath, mountPath: '/', routerName: m[2] });
   }
 
   return { routes, handlers };
@@ -163,9 +218,30 @@ function _extractExpressRoutes(filePath, src) {
 // ── Mount-prefix resolution ───────────────────────────────────────────────────
 // Parses `const routerVar = require('./relative/path')` assignments so each
 // routerVar can be traced back to its source file path.  Combined with the
-// app.use('/prefix', routerVar) entries already captured in routeHandlers, this
-// lets us rewrite router-relative paths (e.g. /summary) to their full
-// prefixed form (e.g. /api/repos/summary) before any matching takes place.
+// app.use('/prefix', routerVar) / router.use(routerVar) entries already
+// captured in routeHandlers, this builds a *mount graph* — edges from a
+// mounting file to the router file it mounts, carrying that hop's prefix —
+// which is then resolved transitively (server.js → repoRoutes.js →
+// repoCoreRoutes.js → ...) so a route defined arbitrarily deep in a chain of
+// composed routers inherits its full effective public path (e.g. /summary
+// becomes /api/repos/summary) before any frontend/backend matching takes place.
+//
+// Internal pipeline (see extractRouteApiStructure's call site for the order):
+//   1. _extractRequireAssignments / _resolveRequirePath — trace `const X =
+//      require('./path')` per file (existing convention, unchanged).
+//   2. _buildMountEdges — cross-reference every routeHandlers entry (both the
+//      explicit-prefix `use('/x', X)` and omitted-prefix `use(X)` forms) against
+//      that per-file require map, keeping an edge only when X resolves to a
+//      file the analyzer independently found routes or further use() mounts in
+//      (i.e. an actual route module — not `authenticate`/`errorHandler`/
+//      `express.json()`, which produce no routes/handlers of their own and are
+//      therefore never mistaken for child-router composition).
+//   3. _groupIncomingEdges — index edges by child file for graph traversal.
+//   4. _resolveEffectivePrefixes — per file, walk backward through incoming
+//      edges to every root (cycle-protected, arbitrary depth), returning the
+//      *set* of effective prefixes that file is reachable at (usually one; two
+//      when the same router is mounted at two different prefixes, e.g. /v1 and
+//      /v2 — both must be preserved, not collapsed).
 
 // Matches:  const foo = require('./path')  (const / let / var)
 const REQUIRE_ASSIGN_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*(['"`])((?:\\.|[^\\])*?)\2\s*\)/g;
@@ -201,10 +277,19 @@ function _resolveRequirePath(fromFilePath, requirePath) {
   return path || null;
 }
 
-// Build a Map<routerFilePath, mountPrefix> by cross-referencing:
-//   1. require assignments extracted from every file
-//   2. app.use(prefix, routerVar) entries already in routeHandlers
-function _buildMountPrefixMap(normalizedFiles, routeHandlers) {
+// Build mount-graph edges { parentFile, childFile, prefix } by cross-referencing:
+//   1. require assignments extracted from every file (routerVar → file it names)
+//   2. every routeHandlers entry (both use('/x', routerVar) and use(routerVar))
+// An edge is only kept when the resolved child file is among the files the
+// analyzer actually fetched *and* is itself a route module — meaning
+// backendRoutes or routeHandlers already contains at least one entry for that
+// file (real .get/.post/... routes, or its own further use() mounts). This is
+// what distinguishes `router.use(childRoutes)` (composition) from
+// `router.use(authenticate)` / `app.use(express.json())` (ordinary middleware,
+// which extract zero routes/handlers and therefore never qualify) — reusing
+// the analyzer's own already-computed extraction results rather than a new
+// filename- or content-pattern heuristic.
+function _buildMountEdges(normalizedFiles, backendRoutes, routeHandlers) {
   const varToFile = new Map(); // 'sourceFile:varName' → resolvedFilePath
   for (const f of normalizedFiles) {
     for (const { varName, requirePath } of _extractRequireAssignments(f.content)) {
@@ -212,20 +297,88 @@ function _buildMountPrefixMap(normalizedFiles, routeHandlers) {
       if (resolved) varToFile.set(f.path + ':' + varName, resolved);
     }
   }
-  const map = new Map(); // routerFilePath → mountPrefix
+
+  const fileSet = new Set(normalizedFiles.map(f => f.path));
+
+  const routeModuleFiles = new Set();
+  for (const rt of backendRoutes) routeModuleFiles.add(rt.file);
+  for (const h  of routeHandlers) routeModuleFiles.add(h.file);
+
+  const edges = [];
   for (const handler of routeHandlers) {
-    const routerFile = varToFile.get(handler.file + ':' + handler.routerName);
-    if (routerFile) map.set(routerFile, handler.mountPath);
+    const childFile = varToFile.get(handler.file + ':' + handler.routerName);
+    if (!childFile) continue;                       // not a locally require()'d identifier
+    if (!fileSet.has(childFile)) continue;           // resolved path wasn't among the analyzed files
+    if (!routeModuleFiles.has(childFile)) continue;  // no routes/handlers of its own — not a route module
+    edges.push({ parentFile: handler.file, childFile, prefix: handler.mountPath });
+  }
+  return edges;
+}
+
+// Index mount-graph edges by child file for backward traversal.
+function _groupIncomingEdges(edges) {
+  const map = new Map(); // childFile → [{ parentFile, prefix }]
+  for (const e of edges) {
+    if (!map.has(e.childFile)) map.set(e.childFile, []);
+    map.get(e.childFile).push({ parentFile: e.parentFile, prefix: e.prefix });
   }
   return map;
 }
 
-// Combine a mount prefix with a router-relative path.
-// router.get('/')  + /api/repos → /api/repos  (no trailing slash)
-// router.get('/x') + /api/repos → /api/repos/x
-function _joinRoutePaths(prefix, routerPath) {
-  if (routerPath === '/') return prefix;
-  return prefix + routerPath;
+// Join any number of path segments into a single normalized path: exactly one
+// leading slash, no duplicate internal slashes, no trailing slash (unless the
+// result is the bare root). Each segment's own leading/trailing slashes are
+// trimmed before joining, so '/api/repos' + '/' + '/summary' → '/api/repos/summary'
+// and '/api' + '/repos' + '/risk/:id' → '/api/repos/risk/:id'.
+function _joinPrefixSegments(...segments) {
+  const atoms = [];
+  for (const seg of segments) {
+    const trimmed = (seg || '').replace(/^\/+|\/+$/g, '');
+    if (trimmed) atoms.push(trimmed);
+  }
+  return '/' + atoms.join('/');
+}
+
+// Combines a parent's already-resolved effective prefix ('' means "no prefix
+// — root") with one mount hop's own prefix (which may itself be '/', the
+// omitted-prefix default). Canonicalizes back to '' whenever the combination
+// is the bare root, so '' consistently means "no prefix" throughout resolution.
+function _combinePrefix(parentPrefix, hopPrefix) {
+  const joined = _joinPrefixSegments(parentPrefix, hopPrefix);
+  return joined === '/' ? '' : joined;
+}
+
+// Resolves the *set* of effective public-path prefixes for `file` by walking
+// backward through the mount graph to every root (a file with no incoming
+// mount edge — e.g. server.js, or a router file the analyzer couldn't trace a
+// mount for, which safely falls back to no-prefix, matching pre-existing
+// behavior for untraceable files). Supports arbitrary transitive depth — no
+// hard-coded hop limit — and multiple distinct mounts of the same file (e.g.
+// the same router mounted at both /v1 and /v2: both prefixes are returned,
+// not collapsed to one).
+//
+// `visiting` is the set of files already on the *current* resolution path;
+// encountering one again means a mount cycle (aRoutes ↔ bRoutes) — that
+// branch simply contributes no further prefix rather than recursing forever,
+// which guarantees termination without throwing or emitting infinite routes.
+function _resolveEffectivePrefixes(file, incomingByFile, visiting) {
+  if (visiting.has(file)) return new Set();
+
+  const parents = incomingByFile.get(file);
+  if (!parents || parents.length === 0) return new Set(['']);
+
+  const nextVisiting = new Set(visiting);
+  nextVisiting.add(file);
+
+  const result = new Set();
+  for (const { parentFile, prefix } of parents) {
+    const parentPrefixes = _resolveEffectivePrefixes(parentFile, incomingByFile, nextVisiting);
+    for (const pp of parentPrefixes) {
+      result.add(_combinePrefix(pp, prefix));
+    }
+  }
+  if (result.size === 0) result.add(''); // every parent path was cut off by cycle protection
+  return result;
 }
 
 // ── NestJS decorator route discovery ──────────────────────────────────────────
@@ -900,45 +1053,72 @@ function extractRouteApiStructure(params) {
 
   const normalized = files.map(f => ({ path: _norm(f.path), content: f.content || '', language: f.language || null }));
 
-  const backendRoutes   = [];
+  let backendRoutes     = [];
   const routeHandlers   = [];
   const nextRoutes      = [];
   const frontendCalls   = [];
 
   for (const f of normalized) {
-    // Next.js route files
+    // Next.js route files — path-pattern-driven (app/api/**/route.* or
+    // pages/api/**). Neither a .md/.mdx path nor a test-marked path
+    // (tests/**, *.test.ts, __tests__/**, etc.) can structurally match these
+    // anchored regexes: _nextUrlFromPath's appMatch only allows an optional
+    // apps|packages|services|libs workspace-root segment before app/api/, and
+    // pagesMatch requires pages/api/ at the very start — "tests/app/api/..."
+    // and "apps/web/__tests__/app/api/..." both fail to match either pattern
+    // (verified by dedicated regression tests). No guard needed here.
     const nxt = _extractNextRoutes(f.path, f.content);
     for (const nr of nxt) nextRoutes.push(nr);
 
-    // Express / Fastify routes — skip Markdown files; code blocks in documentation
-    // are not real route registrations and would produce false positives.
-    if (!f.path.endsWith('.md')) {
+    // Express/Fastify routes, NestJS routes, and frontend/BFF API calls all
+    // skip documentation (.md/.mdx) and test files. Code samples in
+    // documentation (e.g. a table illustrating `router.get('/x', ...)` or
+    // `serverFetch('/api/x')` usage — see PROGRESS.md's own "Example
+    // Extracted Calls" tables, which triggered exactly this false-positive
+    // class live) and fixture strings inside test files (e.g. a supertest
+    // fixture literally containing "app.get('/api/foo', handler)" or
+    // "fetch('/api/ghost')") are not real route registrations or API calls.
+    const isDocumentation      = _isDocumentationFile(f.path);
+    const isTestFile           = _isTestFile(f.path);
+    const isArchitectureSource = !isDocumentation && !isTestFile;
+
+    if (isArchitectureSource) {
       const { routes, handlers } = _extractExpressRoutes(f.path, f.content);
       for (const rt of routes)   backendRoutes.push(rt);
       for (const h  of handlers) routeHandlers.push(h);
 
-      // NestJS decorator-based controllers — same Markdown exclusion rationale.
       const nestRoutes = _extractNestRoutes(f.path, f.content);
       for (const rt of nestRoutes) backendRoutes.push(rt);
-    }
 
-    // Frontend API calls
-    const calls = _extractFrontendCalls(f.path, f.content);
-    for (const c of calls) frontendCalls.push(c);
+      const calls = _extractFrontendCalls(f.path, f.content);
+      for (const c of calls) frontendCalls.push(c);
+    }
   }
 
-  // Prepend app.use() mount prefixes to router-file routes so that
-  // /summary (router-relative) becomes /api/repos/summary (full path),
-  // matching the full paths extracted from frontend fetch() calls.
-  const mountPrefixMap = _buildMountPrefixMap(normalized, routeHandlers);
-  if (mountPrefixMap.size > 0) {
-    for (let i = 0; i < backendRoutes.length; i++) {
-      const prefix = mountPrefixMap.get(backendRoutes[i].file);
-      if (prefix) {
-        backendRoutes[i] = Object.assign({}, backendRoutes[i],
-          { path: _joinRoutePaths(prefix, backendRoutes[i].path) });
+  // Resolve app.use()/router.use() mount prefixes — including through nested
+  // router composition (server.js → repoRoutes.js → repoCoreRoutes.js, etc.)
+  // — so /summary (router-relative, however deep the composition chain) becomes
+  // /api/repos/summary (full effective public path), matching the full paths
+  // extracted from frontend fetch() calls. A file reachable via more than one
+  // distinct effective prefix (e.g. the same router mounted at /v1 and /v2)
+  // expands into one route entry per prefix; identical (method, path, file)
+  // results — however reached — are deduplicated.
+  const mountEdges     = _buildMountEdges(normalized, backendRoutes, routeHandlers);
+  const incomingByFile = _groupIncomingEdges(mountEdges);
+  if (incomingByFile.size > 0) {
+    const expanded = [];
+    const seenRoutes = new Set();
+    for (const rt of backendRoutes) {
+      const prefixes = _resolveEffectivePrefixes(rt.file, incomingByFile, new Set());
+      for (const prefix of prefixes) {
+        const finalPath = prefix ? _normRoutePath(_joinPrefixSegments(prefix, rt.path)) : rt.path;
+        const identity  = rt.method + ':' + finalPath + ':' + rt.file;
+        if (seenRoutes.has(identity)) continue;
+        seenRoutes.add(identity);
+        expanded.push(finalPath === rt.path ? rt : Object.assign({}, rt, { path: finalPath }));
       }
     }
+    backendRoutes = expanded;
   }
 
   // Prepend a detected app.setGlobalPrefix(...) to NestJS routes only — never

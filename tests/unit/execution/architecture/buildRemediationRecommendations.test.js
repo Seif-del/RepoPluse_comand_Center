@@ -230,6 +230,73 @@ describe('buildRemediationRecommendations', () => {
     });
   });
 
+  // 5b. Governance rationale — architecture-health proxy provenance
+  //     Regression coverage for the score-provenance fix: the numeric value in
+  //     the governance rationale is an architecture-health-derived proxy score,
+  //     not a dedicated governance metric, and the wording must say so.
+  describe('governance rationale — architecture-health proxy wording', () => {
+    it('critical: rationale is the exact approved architecture-health-proxy template', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 42) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.rationale).toBe(
+        'Architecture health is critical (score: 42), indicating weak governance oversight.'
+      );
+    });
+
+    it('critical: recommendation still fires with unchanged category and priority', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 42) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec).toBeDefined();
+      expect(rec.category).toBe('governance');
+      expect(rec.priority).toBe('critical');
+    });
+
+    it('critical: rationale does not present the number as an unqualified governance score', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('critical', 42) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.rationale).not.toBe(
+        'Governance is critical (score: 42). The portfolio lacks effective architecture oversight.'
+      );
+      expect(rec.rationale.startsWith('Architecture health is critical')).toBe(true);
+    });
+
+    it('weak: rationale is the exact approved architecture-health-proxy template', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('weak', 35) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.rationale).toBe(
+        'Architecture health is weak (score: 35), indicating governance practices need strengthening.'
+      );
+    });
+
+    it('weak: recommendation still fires with unchanged category and priority', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('weak', 35) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec).toBeDefined();
+      expect(rec.category).toBe('governance');
+      expect(rec.priority).toBe('high');
+    });
+
+    it('weak: rationale does not present the number as an unqualified governance score', () => {
+      const r = buildRemediationRecommendations({ governance: makeGovernance('weak', 35) });
+      const rec = r.recommendations.find(x => x.id === 'governance_remediation');
+      expect(rec.rationale).not.toBe(
+        'Governance is weak (score: 35). Engineering governance practices need improvement.'
+      );
+      expect(rec.rationale.startsWith('Architecture health is weak')).toBe(true);
+    });
+
+    it('does not change evidence field names or values for either branch', () => {
+      const critical = buildRemediationRecommendations({ governance: makeGovernance('critical', 42) })
+        .recommendations.find(x => x.id === 'governance_remediation');
+      const weak = buildRemediationRecommendations({ governance: makeGovernance('weak', 35) })
+        .recommendations.find(x => x.id === 'governance_remediation');
+      expect(critical.evidence.governanceScore).toBe(42);
+      expect(critical.evidence.governanceLevel).toBe('critical');
+      expect(weak.evidence.governanceScore).toBe(35);
+      expect(weak.evidence.governanceLevel).toBe('weak');
+    });
+  });
+
   // 6. Forecast recommendations
   describe('forecast recommendations', () => {
     it('immediate interventionUrgency generates forecast_immediate_intervention critical', () => {

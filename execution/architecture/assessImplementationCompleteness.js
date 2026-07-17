@@ -25,6 +25,28 @@ function _stripComments(code) {
   return s;
 }
 
+// ── Test-file exclusion ───────────────────────────────────────────────────────
+// Test files are intentionally visible to repository inventory (they populate
+// architectureHints.hasTests) but their content is test evidence, not
+// production implementation quality — a verbatim-copy test fixture legitimately
+// contains "return null;" guard clauses and words like "placeholder"/"dummy"
+// copied from the function under test, or from UI/domain vocabulary in test
+// descriptions. Same pattern shape as extractRouteApiStructure.js's
+// _isTestFile, no shared module: segment-boundary-anchored so a path merely
+// containing the substring "test" (backend/contest/, frontend/latest/,
+// services/testimonials/) is never misclassified.
+
+const TEST_FILE_PATTERNS = [
+  /^(?:tests?|__tests__)\//i,   // starts with tests/, test/, or __tests__/
+  /\/(?:tests?|__tests__)\//i,  // tests/, test/, or __tests__/ nested anywhere
+  /\.(?:test|spec)\.[jt]sx?$/i, // *.test.js/jsx/ts/tsx  *.spec.js/jsx/ts/tsx
+];
+
+function _isTestFile(path) {
+  const p = path || '';
+  return TEST_FILE_PATTERNS.some(function(re) { return re.test(p); });
+}
+
 // ── Rich code detection (suppresses placeholder signals) ──────────────────────
 
 function _isRichCode(nonCommentCode) {
@@ -122,6 +144,27 @@ function _isScaffoldLike(file, edges, routeFiles, componentFiles, frontendFiles)
   if (isRouteFile && _isStaticJsonRoute(stripped))             return true;
   if (isRouteFile && _isConsoleLogOnlyHandler(stripped))       return true;
   return false;
+}
+
+// ── Composition-only router detection (route_without_service_path only) ──────
+// A composition router (e.g. repoRoutes.js/portfolioRoutes.js after the
+// Coupling Refinement route splits) owns no HTTP handler and delegates
+// everything to child routers it mounts via `.use(...)`. It has no business-
+// logic boundary to delegate to a service, so requiring a direct services/
+// or execution/ import from it is a false positive. This predicate is
+// content-based only (no reliance on routeApiStructure/backendRoutes), scoped
+// to this one heuristic, and generic across identifiers — it does not
+// hard-code `router`/`app` as the only recognized mount/handler object names.
+
+const MOUNT_CALL_RE       = /\b[A-Za-z_$][\w$]*\s*\.\s*use\s*\(/;
+const HANDLER_ROUTE_RE    = /\b[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete)\s*\(/;
+
+function _isCompositionOnlyRouter(content) {
+  if (!content) return false;
+  const stripped = _stripComments(content);
+  if (!MOUNT_CALL_RE.test(stripped)) return false;
+  if (HANDLER_ROUTE_RE.test(stripped)) return false;
+  return true;
 }
 
 // ── Structure presence ────────────────────────────────────────────────────────
@@ -256,13 +299,27 @@ function assessImplementationCompleteness(params) {
   const anyStructure = _hasStructure(cats, hints, nodes, backendRoutes);
 
   // ── Heuristic A: route_without_service_path ────────────────────────────────
+  // Composition-only routers (own no HTTP handler, only mount child routers —
+  // e.g. repoRoutes.js/portfolioRoutes.js) are excluded from both the signal
+  // and the routeServiceCoverage denominator: they have no business-logic
+  // boundary to delegate to a service, so "no direct service import" is
+  // expected, not a completeness gap. A route file with no content available
+  // (e.g. an inventory-only fixture) defaults to eligible, preserving prior
+  // behavior exactly — _isCompositionOnlyRouter only excludes what it can
+  // positively prove is composition-only from real source content.
+  const fileContentByPath = new Map();
+  files.forEach(function(f) { fileContentByPath.set(f.path, f.content); });
+
+  const eligibleRouteFiles = routeFiles.filter(function(rf) {
+    return !_isCompositionOnlyRouter(fileContentByPath.get(rf));
+  });
 
   const routesWithoutServiceList = [];
   let routeFilesWithServiceImportCount = 0;
 
-  if (hints.hasServiceLayer && routeFiles.length > 0) {
+  if (hints.hasServiceLayer && eligibleRouteFiles.length > 0) {
     const serviceFileSet = new Set(serviceFiles);
-    routeFiles.forEach(function(rf) {
+    eligibleRouteFiles.forEach(function(rf) {
       const hasEdge = edges.some(function(e) {
         return e.from === rf && (serviceFileSet.has(e.to) || /(services?|execution)\//i.test(e.to));
       });
@@ -272,9 +329,9 @@ function assessImplementationCompleteness(params) {
         routesWithoutServiceList.push(rf);
       }
     });
-  } else if (routeFiles.length > 0) {
+  } else if (eligibleRouteFiles.length > 0) {
     // Count service edges even if no signal (for coverage metric)
-    routeFiles.forEach(function(rf) {
+    eligibleRouteFiles.forEach(function(rf) {
       const hasEdge = edges.some(function(e) {
         return e.from === rf && /(services?|execution)\//i.test(e.to);
       });
@@ -282,8 +339,8 @@ function assessImplementationCompleteness(params) {
     });
   }
 
-  const routeServiceCoveragePercent = routeFiles.length > 0
-    ? Math.round((routeFilesWithServiceImportCount / routeFiles.length) * 100)
+  const routeServiceCoveragePercent = eligibleRouteFiles.length > 0
+    ? Math.round((routeFilesWithServiceImportCount / eligibleRouteFiles.length) * 100)
     : 0;
 
   // ── Heuristic B: frontend_without_backend_linkage ─────────────────────────
@@ -302,6 +359,7 @@ function assessImplementationCompleteness(params) {
   files.forEach(function(f) {
     if (/\.md$/i.test(f.path))   return;
     if (/\.html$/i.test(f.path)) return;
+    if (_isTestFile(f.path))     return;
     if (_hasPlaceholderHint(f.content)) {
       placeholderFilesList.push(f.path);
     }
@@ -311,6 +369,7 @@ function assessImplementationCompleteness(params) {
 
   const scaffoldFilesList = [];
   files.forEach(function(f) {
+    if (_isTestFile(f.path)) return;
     if (_isScaffoldLike(f, edges, routeFiles, componentFiles, frontendFiles)) {
       scaffoldFilesList.push(f.path);
     }
@@ -500,7 +559,9 @@ function assessImplementationCompleteness(params) {
   const weakImplementationHints = signals.map(function(s) { return s.summary; });
 
   const routeServiceCoverage = {
-    routeFileCount:             routeFiles.length,
+    // Files eligible for route-to-service coverage — excludes composition-only
+    // routers, which own no handler/service boundary (see Heuristic A above).
+    routeFileCount:             eligibleRouteFiles.length,
     routeFilesWithServiceImport: routeFilesWithServiceImportCount,
     coveragePercent:            routeServiceCoveragePercent,
   };

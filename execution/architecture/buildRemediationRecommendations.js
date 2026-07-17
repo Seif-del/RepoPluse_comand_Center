@@ -150,7 +150,7 @@ function _govRecs(governance) {
       'governance',
       'critical',
       'Establish architecture governance framework',
-      'Governance is critical (score: ' + gs + '). The portfolio lacks effective architecture oversight.',
+      'Architecture health is critical (score: ' + gs + '), indicating weak governance oversight.',
       'Improved governance score and reduced architecture risk',
       Object.assign({ governanceScore: gs, governanceLevel: gl }, componentEvidence)
     ));
@@ -160,7 +160,7 @@ function _govRecs(governance) {
       'governance',
       'high',
       'Strengthen architecture governance practices',
-      'Governance is weak (score: ' + gs + '). Engineering governance practices need improvement.',
+      'Architecture health is weak (score: ' + gs + '), indicating governance practices need strengthening.',
       'Improved governance score and engineering quality standards',
       Object.assign({ governanceScore: gs, governanceLevel: gl }, componentEvidence)
     ));

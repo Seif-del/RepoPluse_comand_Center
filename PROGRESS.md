@@ -331,6 +331,260 @@ They are not bugs — they are implementation decisions that have been formally 
 
 ## Recent Implementation History
 
+### 2026-07-12 — Analyzer Improvement: Composition-Router Awareness for route_without_service_path
+
+**Capability:** Architecture Intelligence data-quality fix (`execution/architecture/assessImplementationCompleteness.js`) — live repoId=80 snapshot #202 validated the prior turn's test-file-exclusion fix exactly as projected: `architectureHealthScore` rose 58 → 70 with `backend_routes`/`linked_endpoints`/`unresolved_calls`/`api_linkage_score` all unchanged, confirming the entire movement came from `placeholder_code_hint` dropping to 0. The one remaining `route_without_service_path` signal (count 2) was traced in that same snapshot to exactly `backend/routes/repoRoutes.js` and `backend/routes/portfolioRoutes.js` — both composition-only routers (own zero HTTP handlers, only `router.use(...)` child mounts) that structurally have no business-logic boundary to delegate to a service, making "no direct service/execution import" a false completeness gap rather than a real one.
+**Deliverable status:** Narrow heuristic-scope fix — `PENALTY` weights, the completeness/architecture scoring formulas, `routeServiceCoverage`'s service-layer path-matching rules (`/(services?|execution)\//i`), `buildRepositoryStructureInventory.js`, `extractRouteApiStructure.js`, `buildImportDependencyGraph.js`, backend route files, execution modules, services, and `frontend/dashboard.html` are all untouched. Snapshot not regenerated in this step.
+
+#### Confirmed Pre-Change Flow
+
+`routeFiles` = `inventory.categories.routes`, evaluated uniformly with no concept of composition vs. handler-owning routers. The heuristic already has `files` (raw content) available in the function signature but wasn't using it for this loop — only `dependencyGraph.edges` (import-edge presence) drove the signal. `routeApiStructure`/`backendRoutes`/`routeHandlers` are separately available to the function but intentionally not used for this fix, keeping it content-based and decoupled from the extraction pipeline (also honoring the "do not modify `extractRouteApiStructure.js`" scope boundary).
+
+#### Composition-Only Semantic Rule
+
+A route file is composition-only, for `route_without_service_path` only, when its (comment-stripped) content contains at least one generic-identifier `.use(` mount call **and** zero handler-owning HTTP method calls (`.get(`/`.post(`/`.put(`/`.patch(`/`.delete(`, any identifier — not hard-coded to `router`/`app`). Filename alone (`fooRoutes.js`) is never sufficient; comments/strings are never the primary signal (existing `_stripComments` is reused, no new parser).
+
+#### What Changed
+
+- **`execution/architecture/assessImplementationCompleteness.js`**: added `_isCompositionOnlyRouter(content)` (plus `MOUNT_CALL_RE`/`HANDLER_ROUTE_RE` module constants) — returns `false` immediately for missing content (safe default: files without supplied content remain eligible, preserving prior behavior for every existing inventory-only test fixture). In the `route_without_service_path` loop, `routeFiles` is filtered through a new `eligibleRouteFiles = routeFiles.filter(rf => !_isCompositionOnlyRouter(fileContentByPath.get(rf)))` (built from a `files`-derived `Map`) before either the `hints.hasServiceLayer` or the coverage-only branch runs. `routeServiceCoveragePercent`'s denominator changed from `routeFiles.length` to `eligibleRouteFiles.length`.
+- **`routeServiceCoverage.routeFileCount`**: redefined from "all `categories.routes` files" to "route files eligible for route-to-service coverage" (excludes composition-only routers). Checked before changing: `routeFileCount` has no consumer outside this module and its own test file (`frontend/dashboard.html` only reads `routeServiceCoverage.coveragePercent`, confirmed by grep; `buildRepositoryArchitectureSnapshot.js`/its test suite never reference `routeFileCount` at all) — safe to redefine, not a breaking public-contract change. The metric and the signal now share the same eligible-file population, so a redefined-but-still-misleading 8/10 denominator never occurs.
+
+#### Not Changed
+
+- `PENALTY` weights, `_calcScore`, `architectureHealthScore` formula — untouched
+- `routeServiceCoverage`'s `/(services?|execution)\//i` service-path matching — untouched
+- `routeFilesWithServiceImportCount` computation logic itself (still edge-presence based) — untouched, just now iterates the filtered list
+- NestJS/Fastify extraction and service-coverage evaluation — unaffected structurally: NestJS decorator syntax (`@Get()`) and Fastify's `fastify.route({...})` object form contain no generic `.use(` mount call, so `_isCompositionOnlyRouter` never returns `true` for them (verified by regression tests, not assumed)
+- Mixed files (`.use(childRouter)` + `.get('/x', handler)` in the same file) — remain handler-owning, remain flagged when no service edge exists
+
+#### Validation
+
+- **New `describe('assessImplementationCompleteness — composition-router awareness')` block** (9 tests, A–I): `router.use(childRouter)`/`router.use('/', childRouter)`/`app.use('/api', childRouter)` (generic identifier, all three forms) all excluded from both the signal and the denominator; a handler-owning file with no service import remains flagged (denominator 1, coverage 0%); a handler-owning file with an `execution/` edge is covered (denominator 1, coverage 100%); a mixed file (`.use(...)` + `.get(...)`, no service edge) remains flagged; a `fooRoutes.js`-named file with neither `.use(` nor a handler call is **not** composition-only by filename alone; `.use(` text inside a comment does not suppress real handler detection; `.get(` text inside a comment does not turn a genuine composition router into a mixed one (both reuse the existing `_stripComments` helper, no new parser).
+- **New `describe('assessImplementationCompleteness — repoId=80-shaped composition-router fixtures')` block** (3 tests): the exact `repoRoutes.js` and `portfolioRoutes.js` composition shapes from the live repository — both excluded; a child/domain route shape (`repoRiskRoutes.js`-style, with an `execution/` edge) is handler-owning, included, and covered.
+- **New `describe('assessImplementationCompleteness — full completeness regression (2 composition + 8 handler-owning)')` block**: a 10-route-file fixture (2 composition-only + 8 handler-owning, all 8 with a service/execution edge, tests present, boundary healthy) — `routeServiceCoverage` is `{ routeFileCount: 8, routeFilesWithServiceImport: 8, coveragePercent: 100 }`, `route_without_service_path` absent, no other signals present.
+- **New `describe('assessImplementationCompleteness — framework preservation (NestJS/Fastify unaffected)')` block**: a NestJS decorator-based controller and a `fastify.route({...})` registration are both evaluated exactly as before (neither contains a `.use(` mount call, so the composition-only exclusion never applies to them).
+- All 97 pre-existing tests in this file re-run **unmodified** and pass — confirmed via source inspection before writing new tests that no existing fixture supplies a composition-only-shaped route file with content, and that inventory-only fixtures (no `files` entry) safely default to eligible.
+- `npx jest tests/unit/execution/architecture/assessImplementationCompleteness.test.js --runInBand` → **1/1 suite passing, 112/112 tests passing** (97 pre-existing + 15 new)
+- `npx jest tests/unit/execution/architecture --runInBand` (all 24 architecture unit test files) → **24/24 suites passing, 2363/2363 tests passing**
+- `npx jest tests/unit/frontend/dashboardArchitectureTab.test.js --runInBand` → **1/1 suite passing, 32/32 tests passing** — confirms no frontend rendering depends on the redefined `routeFileCount` field
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7316/7386 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline was 110/115 suites, 7301/7371 tests — net +15 tests, no new suites)
+- Coverage: `assessImplementationCompleteness.js` 92.39% statements / 91.31% branches / 100% functions / 100% lines
+
+#### Expected repoId=80 Snapshot Impact (not regenerated in this step, per scope)
+
+`backend/routes/repoRoutes.js` and `backend/routes/portfolioRoutes.js` match the composition-only shape exactly (verified against their real current content). On the next live refresh: `route_without_service_path` 2 → 0, `routeServiceCoverage` 80% (8/10) → 100% (8/8), `placeholder_code_hint` remains 0. Recalculating from the actual current formula rather than assuming a clean 100: with `route_without_service_path`'s 20-point penalty removed and the boundary-weak cross-penalty (8, assuming `boundaryHealthLevel` remains `weak`) still applying, total penalty drops from 28 to 8, so `completenessScore` 72 → 92 (not 100). `architectureHealthScore = 0.40×65 + 0.40×92 + 0.20×75 = 26 + 36.8 + 15 = 77.8 → 78` (assuming boundary=65 and linkage=75 remain stable).
+
+---
+
+### 2026-07-12 — Analyzer Improvement: Exclude Test Files from Implementation Placeholder/Scaffold Heuristics
+
+**Capability:** Architecture Intelligence data-quality fix (`execution/architecture/assessImplementationCompleteness.js`) — confirmed root cause (investigated in the prior session turn) of why restoring test-file visibility only partially recovered `architectureHealthScore` (54 → 58, not the ~70 projected): live repoId=80 snapshot #201 showed `route_without_tests`/`service_without_tests` correctly dropped to zero, but a **new** `placeholder_code_hint` signal appeared, flagging exactly the 9 `tests/unit/frontend/*.test.js` files newly visible to the analyzer. All 9 use this repository's established verbatim-copy test convention (the pure function under test is copied directly into the test file, so there is no `require()`/`import` to satisfy `_isRichCode()`'s suppression) and legitimately contain `return null;` guard clauses or the word "placeholder" as UI/domain vocabulary — 100% test-file false positives, verified by direct inspection of all 9 files (zero `require`/`import` occurrences in any of them).
+**Deliverable status:** Scanner-scope fix only — `PLACEHOLDER_PATTERNS`, `_hasPlaceholderHint`, `_isRichCode`, scaffold pattern logic/thresholds, `PENALTY` weights, the completeness/architecture scoring formulas, `route_without_service_path` logic, route/service test heuristics, `buildRepositoryStructureInventory.js`, `fetchRepositoryFiles.js`, `extractRouteApiStructure.js`, and `frontend/dashboard.html` are all untouched. Snapshot not regenerated in this step.
+
+#### Confirmed Pre-Change Flow
+
+Heuristic C (`placeholder_code_hint`) and Heuristic D (`scaffold_like_file`) both iterate `files.forEach(...)` directly. Heuristic C had `.md`/`.html` early-return guards only; Heuristic D had **no guard of any kind**. Neither had a test-file exclusion, and no test-file predicate existed anywhere in this module before this change (confirmed by inspection — the module has no local convention analogous to `extractRouteApiStructure.js`'s `_isTestFile`).
+
+#### What Changed
+
+- **`execution/architecture/assessImplementationCompleteness.js`**:
+  1. Added `_isTestFile(path)` — the identical pattern shape already used in `extractRouteApiStructure.js` (`^(?:tests?|__tests__)\/`, nested `\/(?:tests?|__tests__)\/`, `\.(?:test|spec)\.[jt]sx?$`, case-insensitive, segment-boundary-anchored) — placed locally in this module, not extracted to a shared utility, per scope.
+  2. Heuristic C: added `if (_isTestFile(f.path)) return;` alongside the existing `.md`/`.html` guards, before `_hasPlaceholderHint(f.content)` is called.
+  3. Heuristic D: added `if (_isTestFile(f.path)) return;` as the first line of the `forEach` callback, before `_isScaffoldLike(...)` is called — defensive consistency, since snapshot #201 currently shows `scaffold_like_file: 0` (not yet proven to be firing), but this heuristic scans the identical newly-visible file set with the same missing-guard shape.
+
+#### Not Changed
+
+- `PLACEHOLDER_PATTERNS`, `_hasPlaceholderHint`, `_isRichCode`, `_isStaticJsxOnly`/`_isStaticJsonRoute`/`_isConsoleLogOnlyHandler`, scaffold thresholds — zero lines touched; this is scanner scope, not pattern semantics
+- `PENALTY` weights, `_calcScore`, `architectureHealthScore` formula, `route_without_service_path` logic, `routeWithoutTests`/`serviceWithoutTests` logic — untouched
+- `buildRepositoryStructureInventory.js`, `fetchRepositoryFiles.js`, `extractRouteApiStructure.js`, route files, service files, execution business modules, `frontend/dashboard.html` — untouched
+
+#### Validation
+
+- **New `describe('assessImplementationCompleteness — placeholder_code_hint excludes test files')` block** (9 tests, A–I): `.test.js` fixture with `return null`/placeholder/dummy/mock-data text and zero require/import → no signal; `.spec.ts` variant excluded; `__tests__/renderer.js` (plain basename, no `.test`/`.spec`) excluded; nested `packages/web/tests/fixture.js` excluded; a representative reproduction of the actual snapshot #201 shape (verbatim-copy dashboard test with `return null;` guards) produces no signal; a real production stub (`frontend/renderDashboard.js`, object-literal arrow-stub form so it isn't independently suppressed by `_isRichCode`'s named-function-declaration rule) is still flagged; the three false-positive-substring path controls (`contest`/`latest`/`testimonials`) remain scanned; `.md` and `.html` exclusions re-verified unchanged.
+- **New `describe('assessImplementationCompleteness — scaffold_like_file excludes test files')` block** (5 tests, A–E): `.test.jsx` static-JSX fixture excluded; `.spec.ts` static-JSON-route fixture excluded; bare `tests/` directory file excluded; a genuine production component (`src/components/Empty.jsx`) remains counted (regression); a `frontend/latest/Widget.jsx` false-positive-substring control remains eligible.
+- **New combined end-to-end `describe` block**: wires the real `buildRepositoryStructureInventory` into `assessImplementationCompleteness` with a real route+service+test-file fixture (`hasTests: true` confirmed), a test file with placeholder-pattern content, a test file with scaffold-pattern content, a genuine production placeholder file, and a genuine production scaffold-like file — proves `route_without_tests`/`service_without_tests` stay absent, test-file placeholder/scaffold content is excluded, and production placeholder/scaffold content is still flagged, all in one real pipeline run.
+- **Step #9 and Step #12 false-positive-suppression tests re-run unmodified** — exported pure functions with `return []`/`return null` remain suppressed, Markdown/HTML exclusions remain unchanged, real JavaScript stubs remain flagged. Not rewritten.
+- `npx jest tests/unit/execution/architecture/assessImplementationCompleteness.test.js --runInBand` → **1/1 suite passing, 97/97 tests passing** (80 pre-existing + 17 new)
+- `npx jest tests/unit/execution/architecture --runInBand` (all 24 architecture unit test files) → **24/24 suites passing, 2348/2348 tests passing**
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7301/7371 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline was 110/115 suites, 7284/7354 tests — net +17 tests, no new suites)
+- Coverage: `assessImplementationCompleteness.js` 91.57% statements / 90.78% branches / 100% functions / 100% lines
+
+#### Expected repoId=80 Snapshot Impact (not regenerated in this step, per scope)
+
+Test files remain fully visible to structure inventory and `architectureHints.hasTests` (unaffected by this change — that fix already landed and is confirmed working). Only the newly-visible test files' *content* is now excluded from placeholder/scaffold evidence. Per the prior turn's quantification: `placeholder_code_hint` should drop from 9 → 0 on the next live refresh (removing its 30-point capped penalty), while `route_without_service_path` (2, a separate confirmed composition-router false positive — not addressed in this step) remains. Projected: `completenessScore` 42 → 72 (penalty 58 → 28: `route_without_service_path` 20 + boundary-weak cross-penalty 8), and `architectureHealthScore` 58 → 70 (`0.40×65 + 0.40×72 + 0.20×75 = 26 + 28.8 + 15 = 69.8 → 70`, assuming boundary/linkage stay stable). The `route_without_service_path` composition-router false positive (`backend/routes/repoRoutes.js`, `backend/routes/portfolioRoutes.js`) remains open, identified as the next candidate fix.
+
+---
+
+### 2026-07-11 — Analyzer Improvement: Restore Test-File Visibility Without Scanning Test Fixtures as Architecture
+
+**Capability:** Architecture Intelligence data-quality fix — confirmed root cause (investigated in the prior session turn) of `route_without_tests: 10` and `service_without_tests: 5` in live repoId=80 snapshot #195, despite the repository having real, dedicated test coverage for every one of those files: `fetchRepositoryFiles.js` excluded every test-file-shaped path from the GitHub fetch entirely, so `inventory.categories.tests` was structurally always empty and `architectureHints.hasTests` was structurally always `false` for any repo this analyzer ever processed — a systemic, always-on false positive, not specific to repo_id=80's recent refactors.
+**Deliverable status:** Ingestion/extraction fix only — `assessImplementationCompleteness.js`'s heuristic design, PENALTY weights, architecture scoring formulas, `buildRepositoryStructureInventory.js`'s category rules, `linkFrontendBackendApis.js`, backend routes, services, execution business modules, and `frontend/dashboard.html` are all untouched. Snapshot not regenerated in this step.
+
+#### Confirmed Pre-Change Flow
+
+`fetchRepositoryFiles.js` filtered `!_isTestFile(item.path)` before the `MAX_FILES` slice — test files never reached any consumer, including `buildRepositoryStructureInventory.js` (whose `categories.tests` classifier, and `_extractRequireAssignments`-style conventions, were already correct and unused for lack of input) and `assessImplementationCompleteness.js` (whose `route_without_tests`/`service_without_tests` signals are a single repo-wide `hints.hasTests` boolean, not a per-file matcher — confirmed by direct source inspection, not assumed). `extractRouteApiStructure.js` had no test-file guard of its own — only the `.md`/`.mdx` documentation guard added last turn — so simply removing the fetch-time exclusion without adding a replacement would have reintroduced the exact false-positive class (test fixture strings like `"app.get('/api/foo', handler)"` or `"fetch('/api/ghost')"` scanned as real routes/calls) that the original exclusion existed to prevent.
+
+#### What Changed
+
+- **`execution/github/fetchRepositoryFiles.js`**: removed the `.filter(item => !_isTestFile(item.path))` eligibility filter (Stage 2), and deleted `_isTestFile`/`TEST_FILE_PATTERNS` along with their comment block — confirmed via full-file grep that this filter was their only caller anywhere in the codebase, so nothing else needed preserving. Test files now flow through the same `MAX_FILES` slice and content-fetch pipeline as every other supported file — no second/separate fetch pass was introduced.
+- **`execution/architecture/extractRouteApiStructure.js`**: added `_isTestFile(path)` — a segment-boundary-anchored, case-insensitive predicate recognizing `^(?:tests?|__tests__)\/`, nested `\/(?:tests?|__tests__)\/` anywhere in the path (a strict superset of the old fetcher's patterns, which only recognized nested `__tests__`, not nested `tests`/`test`), and `\.(?:test|spec)\.[jt]sx?$`. Segment-boundary anchoring means a directory merely *containing* the substring "test" — `backend/contest/routes.js`, `frontend/latest/dashboard.js`, `services/testimonials/send.js` — is never misclassified. In the main extraction loop, replaced the single `isDocumentation`-only gate with three booleans per file — `isDocumentation`, `isTestFile`, `isArchitectureSource = !isDocumentation && !isTestFile` — and gated Express/Fastify extraction, NestJS extraction, and frontend/BFF API-call extraction on `isArchitectureSource` (one shared condition, not a duplicated regex around each extractor). Next.js route extraction (`_extractNextRoutes`) was left ungated: `_nextUrlFromPath`'s anchored regexes only allow an optional `apps|packages|services|libs` workspace-root segment before `app/api/`, and `pages/api/` must appear at the very start — a test-marked prefix (`tests/`, `apps/web/__tests__/`) structurally cannot satisfy either anchor, proven by dedicated regression tests rather than assumed.
+
+#### Extraction Blocks Now Gated
+
+| Extraction | Gate |
+|---|---|
+| Express/Fastify routes | `isArchitectureSource` (documentation OR test file → skipped) |
+| NestJS routes | `isArchitectureSource` |
+| Frontend/BFF API calls | `isArchitectureSource` |
+| Next.js routes | Ungated — structurally cannot match a test-marked path (verified) |
+
+#### Not Changed
+
+- `FETCH_*`/`BFF_*`/Express/NestJS/Next.js regexes, nested router mount resolution, path normalization, `linkFrontendBackendApis.js` matching rules — zero lines touched
+- `assessImplementationCompleteness.js` heuristic design, `PENALTY` weights, `architectureHealthScore` formula, `buildRepositoryStructureInventory.js` category rules (proven correct by the new end-to-end test, not modified) — untouched
+- `.js`/`.jsx`/`.ts`/`.tsx`/`.mjs`/`.cjs`/`.html` production extraction — unaffected when not under a test path (verified)
+- Secret-file (`.env`/`.pem`/`.key`/credentials/secrets) and unsupported-extension filtering in `fetchRepositoryFiles.js` — unaffected, re-verified
+
+#### Validation
+
+- **`tests/unit/execution/github/fetchRepositoryFiles.test.js`**: the "test file exclusion" describe block was rewritten to "test file inclusion" (assertions flipped — test files are now returned, not filtered), including new coverage for `.spec.js`, `__tests__/`, secret-file filtering still applying to test-shaped paths, unsupported-extension filtering still applying under `tests/`, and test files sharing the same `MAX_FILES` eligibility pool as production files (no second fetch pass). The "regression: test fixture paths excluded from architecture" block was updated to assert the fixture file *is* now fetched but its content still contributes no `unresolvedApiCalls`/`frontendApiCalls` once it reaches the (updated) extractor.
+- **`tests/unit/execution/architecture/extractRouteApiStructure.test.js`**: new `describe('extractRouteApiStructure — test-file exclusion from architecture extraction')` block (15 tests): `.test.js` fixture with Express+fetch+BFF strings → zero routes/calls; `.spec.ts` fixture with NestJS decorators → zero NestJS routes; bare `tests/`/`test/`/`__tests__/` directory files excluded even without a `.test`/`.spec` basename; nested `packages/web/tests/fixture.js` excluded; the three false-positive-substring paths (`contest`/`latest`/`testimonials`) remain fully scanned; a real production route file survives alongside an ignored co-located test-fixture file; `.html` production extraction unaffected; `.md`/`.mdx` documentation exclusion unaffected by the new guard; three Next.js interaction tests proving `tests/app/api/users/route.ts` and `apps/web/__tests__/app/api/users/route.ts` never become routes while the equivalent real (non-test) path still does.
+- **`tests/unit/execution/architecture/assessImplementationCompleteness.test.js`**: new end-to-end describe block wiring the *real* `buildRepositoryStructureInventory` into `assessImplementationCompleteness` (not the hand-crafted `makeInventory` fixture used elsewhere in this file) — proves `categories.routes`/`categories.services`/`categories.tests` and `hasTests` all populate correctly from real file paths, and that `route_without_tests`/`service_without_tests` are then absent; plus a negative control (no test files anywhere) proving both signals still fire at their real counts for genuinely untested repos. Explicitly scoped as validating the current repo-wide `hasTests` boolean only — no per-file production-to-test matcher exists or was added.
+- `npx jest tests/unit/execution/github/fetchRepositoryFiles.test.js tests/unit/execution/architecture/extractRouteApiStructure.test.js tests/unit/execution/architecture/buildRepositoryStructureInventory.test.js tests/unit/execution/architecture/assessImplementationCompleteness.test.js --runInBand` → **4/4 suites passing, 551/551 tests passing**
+- `npx jest tests/unit/execution/architecture --runInBand` (all 24 architecture unit test files) → **24/24 suites passing, 2331/2331 tests passing**
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7284/7354 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline was 110/115 suites, 7262/7332 tests — net +22 tests, no new suites)
+- Coverage: `extractRouteApiStructure.js` 91.02% stmts / 81.05% branches; `fetchRepositoryFiles.js` 94.35% stmts / 87.14% branches; `buildRepositoryStructureInventory.js` 100% stmts / 98.6% branches; `assessImplementationCompleteness.js` 91.3% stmts / 90.94% branches (uncovered lines are pre-existing defensive branches unrelated to this change)
+
+#### Expected repoId=80 Snapshot Impact (not regenerated in this step, per scope)
+
+Since repo_id=80 genuinely has dedicated tests for every one of the 10 route files and 5 service files flagged in snapshot #195 (confirmed by direct filesystem inspection in the prior investigation), the next live refresh should see `inventory.categories.tests` populate with real entries and `architectureHints.hasTests` flip to `true`, dropping `route_without_tests` and `service_without_tests` from `implementationCompleteness.signals` entirely (their combined 40-point penalty removed). Per the prior turn's quantification, this alone would move `completenessScore` from 32 toward ~72 and `architectureHealthScore` from 54 toward ~70 — `route_without_service_path` (2 files) and the boundary-level cross-penalty remain independent, unaffected contributors. This heuristic remains repo-wide (not per-file), so it does not newly distinguish composition routers from handler-owning routers, or genuinely-untested files from tested ones within a repo that has *some* tests — that precision gap remains open, out of scope for this step.
+
+---
+
+### 2026-07-11 — Analyzer Improvement: Exclude Documentation from Frontend/BFF API-Call Extraction
+
+**Capability:** Architecture Intelligence data-quality fix (`execution/architecture/extractRouteApiStructure.js`) — confirmed root cause of all 6 `unresolvedFrontendCalls` in live repoId=80 snapshot #194 (investigated in the prior session turn): `_extractFrontendCalls` ran unconditionally on every fetched file, including Markdown, while only backend-route extraction had a (`.md`-only, backend-route-scoped) guard. PROGRESS.md's own "Example Extracted Calls" table (documenting `serverFetch`/`apiFetch`/`internalFetch`/`backendFetch` support) was parsed as 9 real frontend calls, 6 of which stayed unresolved and 2 of which coincidentally matched real routes as false-positive links.
+**Deliverable status:** Analyzer-only bug fix — extraction input filtering only; no backend route files, routes, scoring formulas, `linkFrontendBackendApis.js`, or `frontend/dashboard.html` changed. Snapshot not regenerated in this step.
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. Added `_isDocumentationFile(path)` — a single small predicate (`/\.mdx?$/i.test(path)`), case-insensitive, extension-only. Deliberately narrow per scope: no repository category metadata, no docs-directory classification (unlike `buildImportDependencyGraph.js`'s broader `_isDocumentationFile`), no HTML exclusion, no new shared module — placed directly in this file next to the existing path-normalization helpers.
+  2. In `extractRouteApiStructure`'s main per-file loop, replaced the old `if (!f.path.endsWith('.md'))` guard (which wrapped only `_extractExpressRoutes`/`_extractNestRoutes`) with `if (!_isDocumentationFile(f.path))`, and moved `_extractFrontendCalls` *inside* that same guard. All three extraction calls — Express/Fastify route extraction, NestJS route extraction, and frontend/BFF API-call extraction — are now gated by one consistent predicate that also covers `.mdx` (previously unguarded for backend routes too).
+  3. Next.js route extraction (`_extractNextRoutes`) was left ungated, unchanged — it's driven entirely by file-path pattern matching (`app/api/**/route.*`, `pages/api/**`), which a `.md`/`.mdx` path can never satisfy, so gating it would be a no-op; adding an unnecessary check there was avoided per requirement 4's "unless clearly required for consistency."
+
+#### Extraction Blocks Now Gated by `_isDocumentationFile`
+
+| Extraction | Before | After |
+|---|---|---|
+| Express/Fastify routes (`_extractExpressRoutes`) | Guarded by `.md`-only check | Guarded by `_isDocumentationFile` (`.md` + `.mdx`) |
+| NestJS routes (`_extractNestRoutes`) | Guarded by the same `.md`-only check | Guarded by `_isDocumentationFile` |
+| Frontend/BFF API calls (`_extractFrontendCalls`) | **Unguarded — ran on every file** | Guarded by `_isDocumentationFile` |
+| Next.js routes (`_extractNextRoutes`) | Unguarded | Unguarded (no-op guard would be redundant — path-pattern-driven) |
+
+#### Not Changed
+
+- `FETCH_*`/`BFF_*`/`AXIOS_*`/`CLIENT_REQ_*` regexes, `_extractFrontendCalls`'s internal normalization (`_normRoutePath`, `_normTemplateParams`, concat-path handling) — zero lines touched
+- `.js`/`.jsx`/`.ts`/`.tsx`/`.mjs`/`.cjs` frontend-call extraction — unaffected; `.html` — unaffected and still fully scanned (verified: a real `fetch()` call in an `.html` file still extracts and still links via the unmodified `linkFrontendBackendApis.js`)
+- `execution/architecture/linkFrontendBackendApis.js`, `execution/architecture/assessImplementationCompleteness.js`, architecture scoring formulas, backend route files, `frontend/dashboard.html` — none touched
+- Mount-prefix resolution (prior turn's fix) — untouched, still in place
+
+#### Validation
+
+- **New `describe('extractRouteApiStructure — documentation exclusion from frontend/BFF API-call extraction')` block** (11 tests) in `tests/unit/execution/architecture/extractRouteApiStructure.test.js` (246 → 257 tests): A (`.md` file with all 6 call forms — `fetch`/`axios`/`serverFetch`/`apiFetch`/`internalFetch`/`backendFetch` — produces zero `frontendApiCalls`), B (same for `.mdx`), C (a verbatim reproduction of PROGRESS.md's actual "Example Extracted Calls" table plus the 3-segment-concatenation caveat sentence — the exact fixture that caused the live regression — contributes zero `frontendApiCalls` and zero `unresolvedApiCalls`, checked against all 7 previously-false paths including the partial-match `/api/:_p` artifact), D (parameterized across `.js`/`.jsx`/`.ts`/`.tsx`/`.mjs`/`.cjs` — identical call syntax still extracts all 6 calls correctly in real code files), E (a real `.html` `fetch()` call still extracts and still links end-to-end through the unmodified `linkFrontendBackendApis`), F (the pre-existing Markdown backend-route exclusion behavior — now proven for both `.md` and `.mdx` — still produces zero `backendRoutes` for Express/NestJS-looking documentation examples).
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js --runInBand` → **1/1 suite passing, 257/257 tests passing** (all 246 pre-existing tests pass unchanged)
+- `npx jest tests/unit/execution/architecture --runInBand` (all 24 architecture unit test files) → **24/24 suites passing, 2314/2314 tests passing** — no regression in any downstream consumer
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7262/7332 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline was 110/115 suites, 7251/7321 tests — net +11 tests, no new suites)
+- `extractRouteApiStructure.js` coverage: 90.93% statements / 81.11% branches / 100% functions / 93.77% lines (uncovered lines are pre-existing defensive branches unrelated to this change)
+
+#### Expected repoId=80 Snapshot Impact (not regenerated in this step, per scope)
+
+All 6 of snapshot #194's `unresolvedFrontendCalls` (`GET /api/:_p`, `POST /api/repos`, `GET /api/repos/:param`, `PATCH /api/x`, `GET /api/y`, `GET /api/z`) originated from PROGRESS.md and should disappear entirely on the next live refresh, since `PROGRESS.md` will now contribute zero entries to `frontendApiCalls`. The two coincidental false-positive links identified in the same investigation (`GET /api/repos`, `GET /api/repos/:id/metrics`-shaped) should also no longer be inflated by documentation-derived calls (the *real* dashboard.html calls to those same paths remain and continue to link correctly). `implementationCompleteness`'s `unresolvedFrontendApi` penalty (36/36, capped, in snapshot #194) should drop to 0/36 for this cause specifically — per the same investigation's analysis, this alone will not raise `architectureHealthScore` to "healthy," since `routeWithoutServicePath`, `routeWithoutTests`, `serviceWithoutTests`, and the boundary-level cross-penalty remain independent, non-documentation-related contributors. Per instructions, repoId=80's live snapshot was not regenerated as part of this change.
+
+---
+
+### 2026-07-11 — Analyzer Improvement: Nested Express Router Mount Prefix Resolution
+
+**Capability:** Architecture Intelligence data-quality fix (`execution/architecture/extractRouteApiStructure.js`) — confirmed live regression found during the post-Coupling-Refinement repoId=80 snapshot validation: after `repoRoutes.js`/`portfolioRoutes.js` were split into composition routers (Coupling Refinements #2–#3), routes defined in the *child* domain routers lost their real `/api/repos`/`/api/portfolio` public prefixes, driving `apiLinkage.linkageScore` from 77→43 and `implementationCompleteness.completenessScore` from 52→0 in that validation run.
+**Deliverable status:** Analyzer-only bug fix — route extraction accuracy; no backend route files, `server.js`, route composition, API paths, `linkFrontendBackendApis.js`, `assessImplementationCompleteness.js`, scoring formulas, or `frontend/dashboard.html` changed.
+
+#### Root Cause (inspected before modifying)
+
+The pre-existing pipeline had three relevant pieces:
+1. **`app.use('/prefix', routerVar)` detection** — `USE_RE` (a regex requiring a literal quoted path *and* a bare identifier) captured these into a flat `routeHandlers` list per file. This only ever matched the two-argument form.
+2. **`router.use(...)` composition detection** — did not exist for the single-argument form at all. `router.use(childRoutes)` (no path argument) was syntactically invisible to `USE_RE`, so `portfolioRoutes.js`'s `router.use(portfolioArchitectureRoutes)` / `router.use(portfolioGovernanceRoutes)` produced zero `routeHandlers` entries.
+3. **Router-variable → file association** — `_extractRequireAssignments`/`_resolveRequirePath` already correctly traced `const X = require('./path')` per file (reused unchanged in this fix).
+4. **Where prefixes were applied** — `_buildMountPrefixMap` built a **flat, one-hop** `Map<childFile, mountPrefix>`: for each `routeHandlers` entry, it resolved the identifier to a file and recorded *only that one hop's* prefix, with no propagation through further mounts. Since `repoRoutes.js`/`portfolioRoutes.js` (the composition routers) contain **no route definitions of their own** after the split, the `/api/repos`/`/api/portfolio` prefix captured from `server.js`'s `app.use(...)` was associated with a file that has zero routes — a dead map entry — while the child files holding the real routes (`repoCoreRoutes.js`, etc.) only ever received the *local* prefix from whichever router mounted them directly (e.g. `'/'` from `repoRoutes.js`'s own `router.use('/', repoCoreRoutes)`), never the outer `/api/repos`. Applying `_joinRoutePaths('/', '/summary')` (prefix `'/'` + route path `'/summary'`) also had its own bug — naive `prefix + routerPath` string concatenation produced `'//summary'` rather than collapsing the redundant slash.
+
+#### What Changed
+
+- **`execution/architecture/extractRouteApiStructure.js`**:
+  1. Added `USE_NO_PREFIX_RE` — a second mount regex recognizing the omitted-prefix composition form `router.use(childRoutes)` / `app.use(childRoutes)` (single bare-identifier argument, immediately closed by `)`, so it can never match the two-argument form or a call expression like `express.json()`/`cors()`). Wired into `_extractExpressRoutes` to push a `{ file, mountPath: '/', routerName }` entry into the same raw, unfiltered `handlers` array as the existing two-argument form — `routeHandlers`'s existing contract (a raw syntactic capture, independent of whether the identifier resolves to anything) is unchanged.
+  2. Replaced `_buildMountPrefixMap` (flat one-hop map) with **`_buildMountEdges`**, which builds mount-graph *edges* `{ parentFile, childFile, prefix }`. An edge is only kept when the resolved child file is among the analyzed files **and** the analyzer already found routes or further `use()` mounts in it (checked via membership in the already-computed `backendRoutes`/`routeHandlers`, not a new content- or filename-based heuristic) — this is what distinguishes `router.use(childRoutes)` (composition) from `router.use(authenticate)` / `app.use(express.json())` (ordinary middleware, which extract zero routes/handlers and therefore never qualify).
+  3. Added **`_groupIncomingEdges`** (index edges by child file) and **`_resolveEffectivePrefixes(file, incomingByFile, visiting)`** — a backward DFS that walks from a file to every root (a file with no incoming mount edge) through the mount graph, returning the *set* of effective prefixes that file is reachable at. Supports arbitrary transitive depth (no hard-coded 2/3-hop limit — bounded only by cycle protection) and multiple distinct mounts of the same file (e.g. `/v1` and `/v2` both preserved, not collapsed). `visiting` is a per-resolution-path set: encountering a file already on the current path (a mount cycle, e.g. `aRoutes.js` ↔ `bRoutes.js`) stops that branch immediately rather than recursing — guarantees termination without throwing or emitting infinite duplicate routes.
+  4. Replaced the buggy `_joinRoutePaths` (naive two-string concatenation) with **`_joinPrefixSegments(...segments)`** — trims each segment's leading/trailing slashes and joins the non-empty atoms with exactly one leading slash (generalizes the existing `_joinNestPath` trim-and-join convention from N=2 to N=arbitrary segments) — and **`_combinePrefix(parentPrefix, hopPrefix)`**, which canonicalizes the bare-root result back to `''` so `''` consistently means "no prefix" throughout resolution.
+  5. In `extractRouteApiStructure`'s main body, `backendRoutes` changed from `const` to `let` (now reassigned, not mutated in place) because a single route definition can now **expand into more than one output route** when its containing file is reachable via more than one distinct effective prefix (requirement 9's `/v1`+`/v2` case). The expansion loop computes `_resolveEffectivePrefixes` per route's file, joins each returned prefix with the route's own relative path, and deduplicates on `(method, finalPath, file)` identity so a route reached twice via equivalent paths isn't double-emitted, while genuinely distinct prefixes both survive. This slots into the exact same pipeline position as the code it replaced — after Express/Fastify/NestJS extraction, before the NestJS-global-prefix step and before Next.js App Router routes are merged into `backendRoutes` — so neither of those is affected by this change (verified by the full existing regression suite, unchanged).
+
+#### Supported Nested-Mount Patterns
+
+| Pattern | Example | Resolves to |
+|---|---|---|
+| Direct mount (unchanged) | `app.use('/api/auth', authRoutes)` → `router.get('/github', ...)` | `GET /api/auth/github` |
+| Two-hop, explicit child prefix | `server.js →(/api/repos)→ repoRoutes.js →(/)→ repoCoreRoutes.js` → `router.get('/summary', ...)` | `GET /api/repos/summary` |
+| Two-hop, omitted child prefix | `server.js →(/api/portfolio)→ portfolioRoutes.js →(none)→ portfolioArchitectureRoutes.js` → `router.get('/architecture', ...)` | `GET /api/portfolio/architecture` |
+| Three-hop | `app →(/api)→ apiRouter →(/repos)→ repoRouter →(/risk)→ riskRouter` → `router.get('/:id', ...)` | `GET /api/repos/risk/:id` |
+| N-hop (arbitrary depth) | any further chain | resolved via the same recursive traversal, no depth cap |
+| Same router, multiple prefixes | `app.use('/v1', apiRoutes); app.use('/v2', apiRoutes);` | both `GET /v1/x` and `GET /v2/x` retained |
+| Mount cycle | `aRoutes.js ↔ bRoutes.js` (mutual `router.use`) | terminates safely; each file's own routes still extracted once, with a safe root-prefix fallback for the cut cycle edge |
+
+#### Cycle Protection
+
+Per-resolution-path `visiting` `Set` passed through the recursive `_resolveEffectivePrefixes` calls (not a global "ever visited" set, so unrelated diamond-shaped mount graphs aren't over-pruned). A file already in the current path's `visiting` set contributes an empty prefix-set for that branch; if *all* of a file's parent branches are cut this way, it falls back to `''` (root/no-prefix) rather than an empty result — bounded recursion depth (at most the total file count), so termination is guaranteed with no `RangeError`/infinite loop and no unbounded route duplication.
+
+#### Deduplication Identity
+
+`method + ':' + finalPath + ':' + file` (HTTP method, normalized effective path, source file) — matches requirement 9 exactly: a route reached via two *different* effective prefixes (the `/v1`/`/v2` case) produces two distinct identities and both survive; the same `(method, path, file)` reached redundantly through equivalent graph paths collapses to one.
+
+#### Before/After Examples
+
+```
+server.js:            app.use('/api/repos', repoRoutes)
+repoRoutes.js:         router.use('/', repoCoreRoutes)
+repoCoreRoutes.js:     router.get('/summary', ...)  router.get('/:id/metrics', ...)
+
+BEFORE:  GET /summary            GET /:id/metrics
+AFTER:   GET /api/repos/summary  GET /api/repos/:id/metrics
+```
+```
+server.js:              app.use('/api/portfolio', portfolioRoutes)
+portfolioRoutes.js:      router.use(portfolioArchitectureRoutes)   // omitted prefix
+portfolioArchitectureRoutes.js: router.get('/architecture', ...)  router.get('/watchlists', ...)
+
+BEFORE:  GET /architecture            GET /watchlists
+AFTER:   GET /api/portfolio/architecture  GET /api/portfolio/watchlists
+```
+
+#### Not Changed
+
+- Backend route files (`repoCoreRoutes.js`, `portfolioArchitectureRoutes.js`, etc.), `backend/server.js`, route composition, actual API paths — zero lines touched in any of these; this is a read-only analyzer fix
+- `execution/architecture/linkFrontendBackendApis.js`, `execution/architecture/assessImplementationCompleteness.js` — not modified; two new tests (K, L below) exercise `linkFrontendBackendApis` as an unmodified downstream consumer to prove the fix flows through to real linkage, following the established precedent already used by the Step #5/#8 App Router linkage tests in this same test file
+- `frontend/dashboard.html`, architecture scoring formulas — untouched
+- NestJS `app.setGlobalPrefix(...)` handling, Next.js App Router path-from-file-location handling — both apply at a later pipeline stage, after this fix's expansion step, exactly as before
+
+#### Validation
+
+- **New `describe('extractRouteApiStructure — nested router mount-prefix resolution')` block** (13 tests) in `tests/unit/execution/architecture/extractRouteApiStructure.test.js` (233 → 246 tests): A (repoRoutes composition inherits `/api/repos`), B (portfolioRoutes composition inherits `/api/portfolio`), C (omitted-prefix `router.use(childRoutes)` equals `router.use('/', childRoutes)` byte-for-byte), D (explicit child prefix `/risk`), E (three-hop chain resolves the full transitive prefix, no depth cap), F (direct-mount regression: `app.use('/api/auth', authRoutes)` unaffected), G (`router.use(authenticate)`/`app.use(express.json())` never treated as mounts — `authenticate.js` never appears as a `backendRoutes` file), H (mutual `aRoutes.js`↔`bRoutes.js` cycle terminates without throwing, each route extracted exactly once), I (same router at `/v1` and `/v2` — both route sets retained, `filter().toHaveLength(2)`), J (no `//` in any resolved path at any composition depth), K (a template-literal frontend call to a nested child-router route links via the real, unmodified `linkFrontendBackendApis` — the `unresolvedFrontendCalls` false-negative found live is now resolved), L (the exact false-positive found live — `GET /api/repos/summary` no longer accidentally exact-links to `fetch('/summary')` — confirmed the legacy `/summary` link only ever carries `server.js`'s own route), and a **repoId=80-shaped fixture** (requirement 11) reproducing the real 5-file repo/portfolio composition at its actual route counts (7+9+3+6+6=31) proving `backendRoutes.length` is unchanged by nested resolution — only each route's effective path is corrected, with every one of the 31 correctly prefixed.
+- `npx jest tests/unit/execution/architecture/extractRouteApiStructure.test.js --runInBand` → **1/1 suite passing, 246/246 tests passing** (all 233 pre-existing tests pass unchanged, including every existing one-hop "mount prefix resolution" test)
+- `npx jest tests/unit/execution/architecture --runInBand` (all 24 architecture unit test files, including `buildRepositoryArchitectureSnapshot.test.js`, `assessImplementationCompleteness.test.js`, `verifyArchitectureBoundaries.test.js`, and `linkFrontendBackendApis.test.js` — every downstream consumer of `routeApiStructure`/`backendRoutes`) → **24/24 suites passing, 2290/2290 tests passing** — no regression in any consumer
+- `npm test -- --runInBand` (full suite) → **110/115 suites passing, 7251/7321 tests passing** (5 suites / 70 tests skipped — pre-existing opt-in integration tests, unrelated; prior baseline was 110/115 suites, 7238/7308 tests — net +13 tests, no new suites, from the new nested-mount-resolution test block)
+- `extractRouteApiStructure.js` coverage: 90.92% statements / 81.26% branches / 100% functions / 93.76% lines (uncovered lines are pre-existing defensive branches unrelated to this change)
+
+#### Expected repoId=80 Snapshot Impact (not regenerated in this step, per scope)
+
+Based on the live validation findings this fix directly targets: `apiLinkage.linkageScore` and `implementationCompleteness.completenessScore` should recover substantially toward (or above) the pre-split 77/52 baseline, since the 36-of-39 `orphanedBackendRoutes` entries that were real routes with lost prefixes (`repoCoreRoutes.js`, `repoRiskRoutes.js`, `repoArchitectureRoutes.js`, `portfolioArchitectureRoutes.js`, `portfolioGovernanceRoutes.js`, `legacySummaryRoutes.js`) should now resolve to their correct `/api/repos`/`/api/portfolio`/root prefixes and match the real frontend calls that were already correctly extracted. The one confirmed false-positive link (`repoCoreRoutes.js`'s `/api/repos/summary` incorrectly exact-linking to the unrelated legacy `fetch('/summary')` call) is also directly fixed (test L). This fix does **not** address the separate, still-open finding from that same validation — `PROGRESS.md` prose being misread as real frontend `fetch()` calls by this module's own frontend-call extractor (9 of that run's 22 `unresolvedFrontendCalls`) — which remains a candidate follow-up, out of scope for this step. Per instructions, repoId=80's live snapshot was not regenerated as part of this change; the next architecture-coupling-validation pass should confirm these figures directly.
+
+---
+
 ### 2026-07-11 — Coupling Refinement #4: Exclude Documentation from Dependency Extraction
 
 **Capability:** Architecture Intelligence data-quality fix (`execution/architecture/buildImportDependencyGraph.js`) — confirmed issue, not part of the original three coupling-review refactoring opportunities: `buildImportDependencyGraph` was scanning Markdown/documentation content as executable source, so `require(...)`/`import ...` syntax appearing as illustrative code samples inside README/PROGRESS.md/CLAUDE.md-style files was parsed as real dependency edges and unresolved imports.
