@@ -1941,8 +1941,7 @@
         <div class="panel-body">
           <div class="filter-bar">
             <button class="filter-btn active" data-filter="All">All</button>
-            <button class="filter-btn" data-filter="At Risk">At Risk</button>
-            <button class="filter-btn" data-filter="Healthy">Healthy</button>
+            <button class="filter-btn" data-filter="Needs Attention">Needs Attention</button>
             <input type="search" id="repo-search-input" placeholder="Search repositories…">
             <select id="repo-recency-select">
               <option value="">Any time</option>
@@ -6198,6 +6197,37 @@
       return 'healthy';
     }
 
+    // resolveRepoPriorityInputs(repo) — resolves the aq/archData/fcData triple
+    // computeRepoPriority() needs, from the same caches renderReposTable() uses
+    // (attention queue + portfolio architecture intelligence). Shared by
+    // applyFilter() (to filter on Architectural Priority) and renderReposTable()
+    // (to render it) so the priority-input resolution logic exists in one place.
+    function resolveRepoPriorityInputs(r) {
+      var aq    = _attentionMap[r.id];
+      var intel = _repoIntelligenceById[String(r.id)] || null;
+
+      var archData;
+      if (intel && (intel.architectureHealthLevel || intel.architectureHealthScore != null)) {
+        archData = {
+          architectureHealthLevel: intel.architectureHealthLevel || null,
+          architectureHealthScore: intel.architectureHealthScore != null ? intel.architectureHealthScore : null,
+        };
+      } else {
+        archData = null;  // no portfolio arch intel → Coverage Gap
+      }
+
+      var fcData = (intel && intel.forecastLevel)
+        ? { forecastLevel: intel.forecastLevel }
+        : null;
+
+      return { aq: aq, archData: archData, fcData: fcData };
+    }
+
+    function getRepoPriority(r) {
+      var inputs = resolveRepoPriorityInputs(r);
+      return computeRepoPriority(r, inputs.aq, inputs.archData, inputs.fcData);
+    }
+
     function renderReposTable(filtered) {
       var countEl = document.getElementById('projects-count');
       if (countEl) {
@@ -6244,26 +6274,8 @@
       var PRIORITY_LABEL = { critical: 'Critical', elevated: 'Elevated', watch: 'Watch', healthy: 'Healthy' };
 
       var withPri = filtered.map(function(r) {
-        var aq    = _attentionMap[r.id];
-        var intel = _repoIntelligenceById[String(r.id)] || null;
-
-        // Build archData from portfolio intelligence (source of truth for the table).
-        var archData;
-        if (intel && (intel.architectureHealthLevel || intel.architectureHealthScore != null)) {
-          archData = {
-            architectureHealthLevel: intel.architectureHealthLevel || null,
-            architectureHealthScore: intel.architectureHealthScore != null ? intel.architectureHealthScore : null,
-          };
-        } else {
-          archData = null;  // no portfolio arch intel → Coverage Gap
-        }
-
-        // Build fcData from portfolio intelligence.
-        var fcData = (intel && intel.forecastLevel)
-          ? { forecastLevel: intel.forecastLevel }
-          : null;
-
-        return { r: r, aq: aq, archData: archData, fcData: fcData, pri: computeRepoPriority(r, aq, archData, fcData) };
+        var inputs = resolveRepoPriorityInputs(r);
+        return { r: r, aq: inputs.aq, archData: inputs.archData, fcData: inputs.fcData, pri: computeRepoPriority(r, inputs.aq, inputs.archData, inputs.fcData) };
       });
       withPri.sort(function(a, b) {
         var pd = (PRIORITY_ORDER[a.pri] != null ? PRIORITY_ORDER[a.pri] : 3)
@@ -6323,8 +6335,10 @@
       });
       var filtered = _repos.filter(function(r) {
         if (_activeFilter === 'All')      return true;
-        if (_activeFilter === 'At Risk')  return r.label === 'critical' || r.label === 'at-risk';
-        if (_activeFilter === 'Healthy')  return r.label === 'healthy';
+        if (_activeFilter === 'Needs Attention') {
+          var pri = getRepoPriority(r);
+          return pri === 'critical' || pri === 'elevated';
+        }
         return true;
       });
       renderReposTable(filtered);
@@ -6436,7 +6450,6 @@
     }
 
     function filterToLoadOptions(activeFilter) {
-      if (activeFilter === 'Healthy') return { riskLevel: 'healthy' };
       return null;
     }
 

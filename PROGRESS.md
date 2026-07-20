@@ -140,21 +140,21 @@ They are not bugs — they are implementation decisions that have been formally 
   - Recent Version Changes card in Remediation tab
   - Top Risk Drivers (sorted by contribution)
 - **Capability:** Search and Filtering (FR-009 — Partially Implemented; risk-level filtering + repository name search + activity recency: Integrated / Tested)
-  - Label filter: All / At Risk / Healthy (client-side, `applyFilter()` in `frontend/dashboard.html`)
+  - Repository Status filter (finalized 2026-07-20, see history entry below): `All` / `Needs Attention` (client-side, `applyFilter()` in `frontend/dashboard.html`) — the dedicated `Healthy` control has been removed. `Needs Attention` uses Architectural Priority via `getRepoPriority(r)` → `computeRepoPriority()`, matching `critical`/`elevated` only (excludes `watch`/`healthy`); operational `repo.label` is no longer read for filter membership. `All` shows all repositories.
   - Backend riskLevel filter: `GET /api/repos?riskLevel=healthy|at-risk|critical` — user-scoped SQL filter (`AND ($2::varchar IS NULL OR rs.label = $2)`); invalid values return HTTP 400 without hitting db; absent param returns all repos (backward compatible); RBAC boundary preserved
   - **Backend repository name search (added 2026-06-17):** `GET /api/repos?search=<term>` — `search` extracted from `req.query`; validated (non-string → 400; trimmed length > 200 → 400; db.query not called for invalid); trimmed before SQL; SQL clause `AND ($3::varchar IS NULL OR r.github_full_name ILIKE '%' || $3 || '%')`; `$2` (riskLevel) position preserved; `riskLevel + search` can be combined; authorization unchanged (`WHERE r.user_id = $1 AND r.is_active = true`)
-  - Frontend integration (Option A, 2026-06-12): `buildReposUrl(options)` and `filterToLoadOptions(activeFilter)` pure helpers; Healthy filter calls `GET /api/repos?riskLevel=healthy`; All and At Risk intentionally call without riskLevel (At Risk semantics preserved: client-side `critical || at-risk`)
-  - **Frontend repository search (added 2026-06-17):** `<input type="search" id="repo-search-input" placeholder="Search repositories…">` added to `.filter-bar`; `buildReposUrl` rewritten to build `params[]` array — appends `riskLevel=<encoded>` then `search=<encoded>`; trims search before encoding; omits when empty after trim; filter button click handler merges current search value with `filterToLoadOptions` result; `input` event listener on `#repo-search-input` calls `loadRepos()` on every keystroke; At Risk + search passes `{ search: term }` (no riskLevel) — client-side predicate still applies
+  - Frontend integration (Option A, 2026-06-12; Repository Status filter finalized 2026-07-20): `buildReposUrl(options)` and `filterToLoadOptions(activeFilter)` pure helpers; `filterToLoadOptions()` no longer has a Repository Status `Healthy`→`riskLevel` branch — both `All` and `Needs Attention` return `null`, so the Repository Status filter remains entirely client-side and sends no `riskLevel` query parameter. The generic `riskLevel` option/query-string support in `buildReposUrl()` and the backend `GET /api/repos?riskLevel=` endpoint (above) are unrelated capabilities and are unchanged.
+  - **Frontend repository search (added 2026-06-17):** `<input type="search" id="repo-search-input" placeholder="Search repositories…">` added to `.filter-bar`; `buildReposUrl` rewritten to build `params[]` array — appends `riskLevel=<encoded>` then `search=<encoded>`; trims search before encoding; omits when empty after trim; filter button click handler merges current search value with `filterToLoadOptions` result; `input` event listener on `#repo-search-input` calls `loadRepos()` on every keystroke; Needs Attention + search passes `{ search: term }` (no riskLevel) — client-side Architectural Priority predicate still applies
   - **Backend activity recency filter (added 2026-06-17):** `GET /api/repos?activeSince=<value>` — `activeSince` extracted from `req.query`; validated against allowlist `Set(['7d', '30d', '90d', 'stale'])`; empty string treated as absent; invalid values → HTTP 400 (no db.query); maps to lowerBound/upperBound UTC ISO timestamps; SQL clauses `AND ($4::timestamptz IS NULL OR r.last_synced_at >= $4::timestamptz)` and `AND ($5::timestamptz IS NULL OR r.last_synced_at IS NULL OR r.last_synced_at < $5::timestamptz)`; stale includes `last_synced_at IS NULL` (never-synced repos always stale); parameter array extended from 3 to 5 elements
-  - **Frontend activity recency filter (added 2026-06-17):** `<select id="repo-recency-select">` added after `#repo-search-input` in `.filter-bar`; options: Any time (empty), Last 7 days (7d), Last 30 days (30d), Last 90 days (90d), Stale 30+ days (stale); CSS pill style mirrors `#repo-search-input`; `buildReposUrl` extended with third `activeSince` branch (ordering: riskLevel, search, activeSince); filter button click handler + search `input` listener both read recency value; new `change` event listener on `#repo-recency-select` calls `loadRepos()` with combined opts; existing At Risk / Healthy / All behavior preserved
-  - Tests: `tests/unit/frontend/dashboardFilter.test.js` — **29/29 passing** (added 2026-06-12); covers All, At Risk, Healthy, empty result, count display
+  - **Frontend activity recency filter (added 2026-06-17):** `<select id="repo-recency-select">` added after `#repo-search-input` in `.filter-bar`; options: Any time (empty), Last 7 days (7d), Last 30 days (30d), Last 90 days (90d), Stale 30+ days (stale); CSS pill style mirrors `#repo-search-input`; `buildReposUrl` extended with third `activeSince` branch (ordering: riskLevel, search, activeSince); filter button click handler + search `input` listener both read recency value; new `change` event listener on `#repo-recency-select` calls `loadRepos()` with combined opts; existing All / Needs Attention behavior preserved (Healthy control removed 2026-07-20)
+  - Tests: `tests/unit/frontend/dashboardFilter.test.js` — **30/30 passing** (rewritten 2026-07-20 for the finalized `All` / `Needs Attention` model; was 29/29); covers All, Needs Attention (Architectural Priority via `critical`/`elevated`), empty result, count display
   - **Backend project status filter (added 2026-06-18):** `GET /api/repos?projectStatus=active|inactive|archived|unknown` — `projectStatus` extracted from `req.query`; validated against `Set(['active','inactive','archived','unknown'])` (invalid → HTTP 400, db.query not called); SQL clause `AND ($6::varchar IS NULL OR r.project_status = $6)` appended; `r.project_status AS "projectStatus"` added to SELECT; parameter array extended from 5 to 6 elements; absent `projectStatus` passes `null` → filter is no-op (all existing filters unaffected); `projectStatus` can be combined with all existing filters; `migration/0014_add_project_status_to_repositories.js` adds `project_status varchar(20) NOT NULL DEFAULT 'active' CHECK(IN 'active','inactive','archived','unknown')` with reversible `down()`; no data migration required (default covers all existing rows)
   - Tests: `tests/unit/backend/routes/repoRoutes.test.js` — **268/268 passing** (updated 2026-06-18: 11 new projectStatus unit tests added; all 5-element param arrays updated to 6-element)
-  - Tests: `tests/unit/frontend/dashboardFilterLoad.test.js` — **36/36 passing** (updated 2026-06-17: `buildReposUrl` verbatim copy updated; 9 new activeSince-parameter tests + 3 new filter+activeSince composition tests added; was 24/24)
+  - Tests: `tests/unit/frontend/dashboardFilterLoad.test.js` — **31/31 passing** (was 36/36 as of 2026-06-17; reduced 2026-07-20 by removing the Repository Status `Healthy`→`riskLevel` branch tests as part of the filter finalization; 2026-06-17 detail: `buildReposUrl` verbatim copy updated; 9 new activeSince-parameter tests + 3 new filter+activeSince composition tests added; was 24/24 before that)
   - Tests: `tests/unit/backend/routes/repoRoutes.http.test.js` — **35/35 passing** (updated 2026-06-18: 9 new projectStatus HTTP contract tests added; all 5-element param arrays updated to 6-element; was 26/26)
   - Tests: `tests/unit/migrations/0014_project_status.test.js` — **9/9 passing** (added 2026-06-18): module structure (up/down/shorthands), addColumn called once, targets repositories table, notNull, default contains 'active', check constraint contains all four allowed values, down calls dropColumn
   - Tests: `tests/integration/repoFilters.db.integration.test.js` — **24/24 passing in isolation** (updated 2026-06-18: 5 new projectStatus integration tests added to Block 5; `buildParams` extended to 6-element; `seedRepo` accepts `projectStatus`; fixtures assigned projectStatus values; was 19 tests)
-  - Missing: At Risk toggle intentionally uses client-side `critical || at-risk` (by design in Option A); filter by assigned manager, intern contributor absent; no frontend `projectStatus` UI control (backend-only implementation per approved scope)
+  - Missing: filter by assigned manager, intern contributor absent; no frontend `projectStatus` UI control (backend-only implementation per approved scope)
 - **Tests:** 17 frontend unit test files; all pure renderer and filter functions covered.
 - **Gaps:** ~~No Playwright / E2E toolchain~~ — **scaffolded 2026-06-16** (`@playwright/test` installed, `playwright.config.js` created, `test:e2e` script added); ~~no E2E test files~~ — **first smoke tests passing 2026-06-16** (`tests/e2e/dashboard.smoke.spec.js`; 8/8 unauthenticated; Chromium headless; `npm run test:e2e` exits 0 in 14.8 s); ~~authenticated E2E requires a session seeding strategy~~ — **session bootstrap complete 2026-06-17** (`tests/e2e/globalSetup.js` seeds `upsertUser` + `createSession`; storageState to `tests/e2e/.auth/user.json`; gitignored; no backend route added); ~~authenticated dashboard E2E test specs not yet written~~ — **resolved 2026-06-17**: `tests/e2e/notifications.authenticated.spec.js` added (2/2 passing); ~~DB-seeded notification panel E2E not yet written~~ — **resolved 2026-06-17**: direct SQL seeding + storageState + badge count + mark-read PATCH flow verified in Chromium headless; ~~`#notif-badge` CSS visual-hide defect~~ — **resolved 2026-06-17**: `#notif-badge[hidden] { display: none !important }` added; `not.toBeVisible()` passes; 10/10 E2E. FR-009 multi-dimension filter not implemented. Vanilla JS frontend is accepted for Phases 1–5 (see ADR-001).
 
@@ -330,6 +330,90 @@ They are not bugs — they are implementation decisions that have been formally 
 ---
 
 ## Recent Implementation History
+
+### 2026-07-20 — Repository Status Filter Finalization: "Needs Attention" Realigned to Architectural Priority; "Healthy" Filter Removed
+
+**Capability:** FR-009 Search and Filtering — Repository Status umbrella filter (`applyFilter()` in `frontend/dashboard.html`)
+**Deliverable status:** Required (FR-009) — filter *membership semantics* changed; client-side only, no backend/API changes
+
+#### Background
+
+The 2026-07-18 entry below renamed the umbrella filter button from "At Risk" to "Needs Attention" while explicitly preserving the old operational-risk predicate (`r.label === 'critical' || r.label === 'at-risk'`). Subsequent visual validation of that rename surfaced a mismatch: the Repository Status table itself had already evolved to be driven by the **Architectural Priority** model (`computeRepoPriority()` / `getRepoPriority(r)`, priorities `critical` / `elevated` / `watch` / `healthy`) rather than the older operational `risk_scores.label` band. A user viewing "Needs Attention" therefore saw a filter that did not correspond to the priority values displayed in the same table. The user reviewed both models and approved switching "Needs Attention" to filter on Architectural Priority instead, and removing the separate "Healthy" filter control (Architectural Priority is already visible per-row, making a dedicated Healthy toggle redundant now that "Needs Attention" is priority-based). **This finalization supersedes the operational-label predicate described in the 2026-07-18 entry below — see the superseded notice added to that entry.**
+
+#### What Changed
+
+- **`frontend/dashboard.html`**:
+  1. Filter bar now offers exactly two controls: `All` and `Needs Attention` (`data-filter="All"` / `data-filter="Needs Attention"`, line ~1943-1944). The prior dedicated `Healthy` filter button has been removed.
+  2. `applyFilter()` (line ~6332): the `Needs Attention` branch no longer reads `r.label`. It now calls `getRepoPriority(r)` (line ~6226, which delegates to the existing `computeRepoPriority(r, inputs.aq, inputs.archData, inputs.fcData)`, line ~6130) and matches `pri === 'critical' || pri === 'elevated'`. `All` is unchanged — it returns every repository regardless of priority (`critical`, `elevated`, `watch`, and `healthy` all included).
+- **`tests/unit/frontend/dashboardFilter.test.js`** and **`tests/unit/frontend/dashboardFilterLoad.test.js`** — updated to assert the new Architectural-Priority-driven `Needs Attention` membership (`critical`/`elevated` in, `watch`/`healthy` out) and the removal of the standalone Healthy control, in place of the old operational-label assertions.
+
+#### Not Changed
+
+- `computeRepoPriority()` — its weighting, thresholds, scoring logic, and sort order are untouched; this change only alters which of its output values the filter treats as a match.
+- Backend `GET /api/repos` `riskLevel` query parameter, SQL clause, and RBAC scoping — untouched. The filter remains **client-side only**; no request parameters changed.
+- `execution/risk/scoreRepo.js` `LABEL_THRESHOLDS` and the operational risk-scoring rules that produce `risk_scores.label` — untouched. Operational `repo.label` (`healthy`/`monitor`/`at-risk`/`critical`) still exists in the data model and still drives per-repository status badges (`operationalState()`); it is simply **no longer read by the Repository Status filter's membership test**.
+
+#### Validation
+
+- **Visual validation:**
+  - `All` view: 12 / 12 repositories shown; visible dataset composition: 3 Critical, 1 Elevated, 8 Watch (by Architectural Priority).
+  - `Needs Attention` view: 4 / 12 repositories shown; exactly the 3 Critical + 1 Elevated repositories — no Watch repositories appeared.
+- **Automated validation:** `npx jest --testPathPattern="dashboardFilter\.test\.js|dashboardFilterLoad\.test\.js|dashboardRepoPriority|dashboardOperationalStatus\.test\.js" --no-coverage` → **4 suites passed, 448/448 tests passed**.
+
+#### Risks / Limitations
+
+- Operational risk severity (`critical`/`at-risk` per `risk_scores.label`) and Architectural Priority (`critical`/`elevated` per `computeRepoPriority()`) are related but distinct models; a repository can in principle be operationally `at-risk` yet architecturally `watch` (or vice versa), so a repo that would have appeared under the old "Needs Attention"/"At Risk" predicate may no longer appear, and vice versa. This is an intentional, user-approved product decision, not a defect — see Background.
+- The current-state FR-009 capability description elsewhere in this file (Phase 1 capability summary, "Search and Filtering (FR-009 ...)") was refreshed on 2026-07-20 to match this finalization — it now documents `All` / `Needs Attention` and the Architectural Priority predicate rather than the superseded `All` / `At Risk` / `Healthy` label-based set.
+
+#### Capability Maturity Change
+
+FR-009 Search and Filtering: no change to overall maturity (Partially Implemented) — this is a filter-membership-source change (operational label → architectural priority) plus removal of a redundant control, not new filter functionality or a backend integration change. The "At Risk semantic mismatch (by design)" note against the prior operational predicate is now moot for the `Needs Attention` control, since that control no longer reads the operational label at all.
+
+#### Next Actions
+
+- None required to close this refinement; documented here as complete and validated per the structure above.
+
+---
+
+### 2026-07-18 — Repository Status Filter Terminology Refinement: "At Risk" → "Needs Attention"
+
+> **⚠️ SUPERSEDED (2026-07-20):** This entry documents the *rename only* — the button label changed from "At Risk" to "Needs Attention" while the underlying predicate was deliberately kept as the operational-risk union `r.label === 'critical' || r.label === 'at-risk'`. That operational predicate is **no longer in effect**. Visual validation performed after this rename found the Repository Status table had evolved to be Architectural-Priority-focused, creating a mismatch between the table's displayed priorities and what this filter matched. The filter was subsequently finalized to use `getRepoPriority(r)` (Architectural Priority: `critical`/`elevated`), and the separate "Healthy" filter control was removed. See the **2026-07-20 — Repository Status Filter Finalization** entry above for the current, authoritative behavior. Everything below is preserved as historical record of the terminology-only rename step; treat its "Not Changed" and predicate claims as describing the state *as of 2026-07-18*, not the current state.
+
+**Capability:** FR-009 Search and Filtering — Repository Status umbrella filter label (`applyFilter()` in `frontend/dashboard.html`)
+**Deliverable status:** UI-label refinement only — filter predicate, backend query behavior, and risk-scoring model untouched (at the time of this entry; predicate was changed in the 2026-07-20 finalization above)
+
+#### Background
+
+An investigation of the Repository Status "At Risk" filter button confirmed it invoked `r.label === 'critical' || r.label === 'at-risk'` — a client-side union of two distinct operational-risk severity bands (`critical` 75–100 and `at-risk` 50–74, per `execution/risk/scoreRepo.js` `LABEL_THRESHOLDS`) that the rest of the dashboard treats as separate states. Per-repository badges (`operationalState()`) render these two bands with different text ("Critical" vs. "At Risk") and different severity CSS classes, so the button's label was semantically ambiguous: a user could reasonably read "At Risk" as meaning only the `at-risk` band, not realizing `critical` repos were folded in too. This was documented as an intentional scope decision ("Option A") in the 2026-06-12 FR-009 Frontend Backend-Filter Integration entry below, but the umbrella button's own label had never been revisited. The user approved renaming the umbrella button to "Needs Attention" to remove the ambiguity without touching behavior.
+
+#### What Changed
+
+- **`frontend/dashboard.html`**:
+  1. Filter bar button: `<button class="filter-btn" data-filter="At Risk">At Risk</button>` → `<button class="filter-btn" data-filter="Needs Attention">Needs Attention</button>` (line ~1944)
+  2. `applyFilter()`: `if (_activeFilter === 'At Risk') return r.label === 'critical' || r.label === 'at-risk';` → `if (_activeFilter === 'Needs Attention') return r.label === 'critical' || r.label === 'at-risk';` (line ~6326) — only the `_activeFilter` string literal changed; the right-hand predicate is byte-for-byte identical
+- **`tests/unit/frontend/dashboardFilter.test.js`** — copied `filterRepos()` helper's `activeFilter === 'At Risk'` branch renamed to `'Needs Attention'`; all `filterRepos(REPOS/repos, 'At Risk')` call sites and describe/test names renamed to `'Needs Attention'`. Data-model fixture values (`label: 'critical'`, `label: 'at-risk'`) left unchanged.
+- **`tests/unit/frontend/dashboardFilterLoad.test.js`** — all `filterToLoadOptions('At Risk')` call sites and describe/test names renamed to `'Needs Attention'`. Generic `riskLevel: 'at-risk'` URL-encoding tests (unrelated to this button; they test `buildReposUrl`'s handling of an arbitrary `riskLevel` option value) left unchanged.
+
+#### Not Changed
+
+- Filter predicate/behavior: "Needs Attention" still matches exactly the repositories whose stored risk label is `critical` or `at-risk` — identical match set to the old "At Risk" button, verified via unchanged predicate source and passing tests
+- `filterToLoadOptions()` — no literal `'At Risk'` existed in its body (it only special-cases `'Healthy'`); "Needs Attention" falls through to its existing `return null`, so the filter remains **client-side only** and continues to send **no** `riskLevel=at-risk` (or any `riskLevel`) query parameter to the backend
+- `backend/routes/repoCoreRoutes.js` — `GET /api/repos` handler, its `riskLevel` query-param validation/SQL clause, and RBAC scoping — untouched
+- `execution/risk/scoreRepo.js` — `LABEL_THRESHOLDS` (`healthy`/`monitor`/`at-risk`/`critical` bands and score cutoffs) and the scoring rules that produce them — untouched
+- Per-repository status badges (`operationalState()`, `frontend/dashboard.html` lines ~2081/2089) — "Critical" still renders "Critical"; "At Risk" (for the `at-risk` band / `aq.attentionLevel === 'high'`) still renders "At Risk"; no badge text or CSS class changed
+- Portfolio-history `LEVEL_LABEL` map (`'at-risk': 'At Risk'`, line ~6586) — a separate, unrelated feature (portfolio-level history feed), left unchanged
+- Underlying data-model label values `'critical'` and `'at-risk'` (as stored in `risk_scores.label` and returned by the API) — not merged, not renamed
+
+#### Validation
+
+- `npx jest --testPathPattern="dashboardFilter\.test\.js|dashboardFilterLoad\.test\.js" --no-coverage` → **2 suites passed, 65/65 tests passed**
+- `npx jest --testPathPattern="dashboardOperationalStatus" --no-coverage` (regression check confirming per-repo badge logic is unaffected) → **1 suite passed, 8/8 tests passed**
+
+#### Capability Maturity Change
+
+FR-009 Search and Filtering: no change to overall maturity (Partially Implemented) — this is a label-only refinement resolving a documented UI semantic-mismatch note, not new filter functionality. The "At Risk semantic mismatch (by design)" note against the old button label is superseded by this renaming; the client-side-union architecture (Option A) itself is unchanged and remains documented above.
+
+---
 
 ### 2026-07-12 — Analyzer Improvement: Composition-Router Awareness for route_without_service_path
 

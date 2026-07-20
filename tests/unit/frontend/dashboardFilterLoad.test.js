@@ -26,8 +26,9 @@ function buildReposUrl(options) {
 }
 
 // ── filterToLoadOptions (copied verbatim from dashboard.html) ─────────────────
+// The "Healthy" filter button/state has been removed — only All and Needs
+// Attention remain, and both are client-side (no server-side riskLevel param).
 function filterToLoadOptions(activeFilter) {
-  if (activeFilter === 'Healthy') return { riskLevel: 'healthy' };
   return null;
 }
 
@@ -59,19 +60,14 @@ describe('buildReposUrl — URL construction', () => {
   });
 });
 
-// ── filterToLoadOptions — Healthy filter ──────────────────────────────────────
+// ── filterToLoadOptions — Healthy filter control removed ──────────────────────
+// The Healthy button/state no longer exists. filterToLoadOptions() has no
+// branch for it, so passing 'Healthy' now returns null — identical to any
+// other unrecognized filter name.
 
-describe('filterToLoadOptions — Healthy filter', () => {
-  test('Healthy returns { riskLevel: "healthy" }', () => {
-    expect(filterToLoadOptions('Healthy')).toEqual({ riskLevel: 'healthy' });
-  });
-
-  test('Healthy result has exactly the riskLevel property', () => {
-    expect(Object.keys(filterToLoadOptions('Healthy'))).toEqual(['riskLevel']);
-  });
-
-  test('Healthy result riskLevel value is the lowercase DB label', () => {
-    expect(filterToLoadOptions('Healthy').riskLevel).toBe('healthy');
+describe('filterToLoadOptions — Healthy filter control no longer exists', () => {
+  test('"Healthy" now returns null (no dedicated branch remains)', () => {
+    expect(filterToLoadOptions('Healthy')).toBeNull();
   });
 });
 
@@ -83,27 +79,23 @@ describe('filterToLoadOptions — All filter', () => {
   });
 });
 
-// ── filterToLoadOptions — At Risk filter ─────────────────────────────────────
+// ── filterToLoadOptions — Needs Attention filter ─────────────────────────────
 
-describe('filterToLoadOptions — At Risk filter', () => {
-  test('At Risk returns null (client-side filter; no server param)', () => {
-    expect(filterToLoadOptions('At Risk')).toBeNull();
+describe('filterToLoadOptions — Needs Attention filter', () => {
+  test('Needs Attention returns null (client-side filter; no server param)', () => {
+    expect(filterToLoadOptions('Needs Attention')).toBeNull();
   });
 });
 
 // ── filterToLoadOptions + buildReposUrl — end-to-end URL ─────────────────────
 
 describe('filterToLoadOptions + buildReposUrl — end-to-end URL', () => {
-  test('Healthy maps to /api/repos?riskLevel=healthy', () => {
-    expect(buildReposUrl(filterToLoadOptions('Healthy'))).toBe('/api/repos?riskLevel=healthy');
-  });
-
   test('All maps to /api/repos', () => {
     expect(buildReposUrl(filterToLoadOptions('All'))).toBe('/api/repos');
   });
 
-  test('At Risk maps to /api/repos', () => {
-    expect(buildReposUrl(filterToLoadOptions('At Risk'))).toBe('/api/repos');
+  test('Needs Attention maps to /api/repos', () => {
+    expect(buildReposUrl(filterToLoadOptions('Needs Attention'))).toBe('/api/repos');
   });
 });
 
@@ -146,20 +138,14 @@ describe('buildReposUrl — search parameter', () => {
 // ── filterToLoadOptions + buildReposUrl — filter with search ─────────────────
 
 describe('filterToLoadOptions + buildReposUrl — filter with search composition', () => {
-  test('Healthy + search produces ?riskLevel=healthy&search=myrepo', () => {
-    var opts = filterToLoadOptions('Healthy') || {};
-    opts.search = 'myrepo';
-    expect(buildReposUrl(opts)).toBe('/api/repos?riskLevel=healthy&search=myrepo');
-  });
-
   test('All + search produces ?search=myrepo (no riskLevel)', () => {
     var opts = filterToLoadOptions('All') || {};
     opts.search = 'myrepo';
     expect(buildReposUrl(opts)).toBe('/api/repos?search=myrepo');
   });
 
-  test('At Risk + search produces ?search=myrepo (no riskLevel, client-side filter)', () => {
-    var opts = filterToLoadOptions('At Risk') || {};
+  test('Needs Attention + search produces ?search=myrepo (no riskLevel, client-side filter)', () => {
+    var opts = filterToLoadOptions('Needs Attention') || {};
     opts.search = 'myrepo';
     expect(buildReposUrl(opts)).toBe('/api/repos?search=myrepo');
   });
@@ -214,14 +200,8 @@ describe('buildReposUrl — activeSince parameter', () => {
 // ── filterToLoadOptions + buildReposUrl — filter with activeSince ─────────────
 
 describe('filterToLoadOptions + buildReposUrl — filter with activeSince composition', () => {
-  test('Healthy + activeSince=30d produces ?riskLevel=healthy&activeSince=30d', () => {
-    var opts = filterToLoadOptions('Healthy') || {};
-    opts.activeSince = '30d';
-    expect(buildReposUrl(opts)).toBe('/api/repos?riskLevel=healthy&activeSince=30d');
-  });
-
-  test('At Risk + activeSince=stale produces ?activeSince=stale (no riskLevel, client-side filter)', () => {
-    var opts = filterToLoadOptions('At Risk') || {};
+  test('Needs Attention + activeSince=stale produces ?activeSince=stale (no riskLevel, client-side filter)', () => {
+    var opts = filterToLoadOptions('Needs Attention') || {};
     opts.activeSince = 'stale';
     expect(buildReposUrl(opts)).toBe('/api/repos?activeSince=stale');
   });
